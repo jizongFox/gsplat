@@ -1,9 +1,10 @@
-from typing import Callable, Optional, Tuple, Any
 import warnings
-from typing_extensions import Literal
+from typing import Callable, Optional, Tuple, Any
 
 import torch
+from jaxtyping import Float
 from torch import Tensor
+from typing_extensions import Literal
 
 
 def _make_lazy_cuda_func(name: str) -> Callable:
@@ -861,13 +862,54 @@ class _FullyFusedProjection(torch.autograd.Function):
             v_scales = None
         if not ctx.needs_input_grad[4]:
             v_viewmats = None
+        if not ctx.needs_input_grad[5]:
+            grad_K = None
+        # compute the gradient with respect to K.
+        else:
+
+            def amplify_grad(grad):
+                grad[..., 0] *= width * 0.5
+                grad[..., 1] *= height * 0.5
+                return grad
+
+            v_means2d_ = amplify_grad(v_means2d)
+            means3d_cam = torch.matmul(
+                means, viewmats[:, :3, :3].transpose(1, 2)
+            ) + viewmats[:, :3, 3].unsqueeze(1)
+
+            grad_uv_k4: Float[Tensor, "n 2 4"] = torch.zeros(
+                *means3d_cam.shape[:2],
+                2,
+                4,
+                device=viewmats.device,
+                dtype=torch.float32,
+            )
+            grad_uv_k4[..., 0, 0] = means3d_cam[..., 0] / (
+                means3d_cam[..., 2] + 1e-4
+            )  # du/dfx
+            grad_uv_k4[..., 1, 1] = means3d_cam[..., 1] / (
+                means3d_cam[..., 2] + 1e-4
+            )  # dv/dfy
+            grad_uv_k4[..., 0, 2] = 1  # du/dcx
+            grad_uv_k4[..., 1, 3] = 1  # dv/dcy
+
+            grad_k = torch.einsum(
+                "bnj,bnjk->bnk", v_means2d_[:, :, :2], grad_uv_k4
+            ).sum(dim=1)
+            grad_K = torch.zeros(
+                viewmats.shape[0], 3, 3, device=viewmats.device, dtype=torch.float32
+            )
+            grad_K[:, 0, 0] = grad_k[:, 0]
+            grad_K[:, 1, 1] = grad_k[:, 1]
+            grad_K[:, 0, 2] = grad_k[:, 2]
+            grad_K[:, 1, 2] = grad_k[:, 3]
         return (
             v_means,
             v_covars,
             v_quats,
             v_scales,
             v_viewmats,
-            None,
+            grad_K,
             None,
             None,
             None,
