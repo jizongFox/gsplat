@@ -1494,12 +1494,96 @@ class _FullyFusedProjection2DGS(torch.autograd.Function):
         if not ctx.needs_input_grad[3]:
             v_viewmats = None
 
+        if viewmats.requires_grad:
+            with torch.no_grad():
+                """
+                means_camera = torch.matmul(
+                    means, viewmats[:, :3, :3].transpose(1, 2)
+                ) + viewmats[:, :3, 3].unsqueeze(1)
+                rot = viewmats[:, :3, :3]
+                v_trans = torch.einsum("ni,bij->bj", v_means, rot.transpose(1, 2))
+                v_rot =
+                """
+                # import timeit
+                #
+                # # Method 1
+                # start_time = timeit.default_timer()
+                v_viewmats = torch.zeros_like(viewmats)
+                R = viewmats[..., :3, :3]
+                v_mean3d_cam = torch.matmul(v_means, R.transpose(-1, -2))
+                # # gradient w.r.t. view matrix translation
+                # v_viewmats[..., :3, 3] = v_mean3d_cam.sum(-2)
+                #
+                # # gradent w.r.t. view matrix rotation
+                # for j in range(3):
+                #     for l in range(3):
+                #         v_viewmats[..., j, l] = torch.einsum(
+                #             "ni,i->n", v_mean3d_cam[..., j], means[..., l]
+                #         )
+                # end_time = timeit.default_timer()
+                # print("Method 1: ", end_time - start_time)
+                # method2:
+                # start_time = timeit.default_timer()
+                v_rotation = torch.zeros(means.shape[0], 3, 9, device=means.device)
+                v_rotation[:, 0, :3] = means
+                v_rotation[:, 1, 3:6] = means
+                v_rotation[:, 2, 6:9] = means
+                v_rot = torch.einsum("cni,nik->cnk", v_mean3d_cam, v_rotation)
+                v_rot = v_rot.sum(1).reshape(-1, 3, 3)
+                v_viewmats[..., :3, :3] = v_rot
+                # method3:
+                # v_rot2 = torch.zeros(viewmats.shape[0], 3, 3, device=viewmats.device)
+                # for i in range(3):
+                #     v_mean3d_cam
+
+        if not ctx.needs_input_grad[4]:
+            grad_K = None
+            # compute the gradient with respect to K.
+        else:
+
+            def amplify_grad(grad):
+                grad[..., 0] *= width * 0.5
+                grad[..., 1] *= height * 0.5
+                return grad
+
+            v_means2d_ = amplify_grad(v_means2d)
+            means3d_cam = torch.matmul(
+                means, viewmats[:, :3, :3].transpose(1, 2)
+            ) + viewmats[:, :3, 3].unsqueeze(1)
+
+            grad_uv_k4: Float[Tensor, "n 2 4"] = torch.zeros(
+                *means3d_cam.shape[:2],
+                2,
+                4,
+                device=viewmats.device,
+                dtype=torch.float32,
+            )
+            grad_uv_k4[..., 0, 0] = means3d_cam[..., 0] / (
+                means3d_cam[..., 2] + 1e-4
+            )  # du/dfx
+            grad_uv_k4[..., 1, 1] = means3d_cam[..., 1] / (
+                means3d_cam[..., 2] + 1e-4
+            )  # dv/dfy
+            grad_uv_k4[..., 0, 2] = 1  # du/dcx
+            grad_uv_k4[..., 1, 3] = 1  # dv/dcy
+
+            grad_k = torch.einsum(
+                "bnj,bnjk->bnk", v_means2d_[:, :, :2], grad_uv_k4
+            ).sum(dim=1)
+            grad_K = torch.zeros(
+                viewmats.shape[0], 3, 3, device=viewmats.device, dtype=torch.float32
+            )
+            grad_K[:, 0, 0] = grad_k[:, 0]
+            grad_K[:, 1, 1] = grad_k[:, 1]
+            grad_K[:, 0, 2] = grad_k[:, 2]
+            grad_K[:, 1, 2] = grad_k[:, 3]
+
         return (
             v_means,
             v_quats,
             v_scales,
             v_viewmats,
-            None,
+            grad_K,
             None,
             None,
             None,
@@ -1726,7 +1810,7 @@ def rasterize_to_pixels_2dgs(
         assert colors.shape[:2] == (C, N), colors.shape
         assert opacities.shape == (C, N), opacities.shape
     if backgrounds is not None:
-        assert backgrounds.shape == (C, colors.shape[-1]), backgrounds.shape
+        # assert backgrounds.shape == (C, colors.shape[-1]), backgrounds.shape
         backgrounds = backgrounds.contiguous()
 
     # Pad the channels to the nearest supported number if necessary

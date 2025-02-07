@@ -1123,6 +1123,7 @@ def rasterization_2dgs(
         'gradient_2dgs'])
 
     """
+    assert packed is not True, "packed mode is not supported in 2DGS"
 
     N = means.shape[0]
     C = viewmats.shape[0]
