@@ -1512,7 +1512,7 @@ class _FullyFusedProjection2DGS(torch.autograd.Function):
                 R = viewmats[..., :3, :3]
                 v_mean3d_cam = torch.matmul(v_means, R.transpose(-1, -2))
                 # # gradient w.r.t. view matrix translation
-                # v_viewmats[..., :3, 3] = v_mean3d_cam.sum(-2)
+                v_viewmats[..., :3, 3] = v_mean3d_cam.sum(-2)
                 #
                 # # gradent w.r.t. view matrix rotation
                 # for j in range(3):
