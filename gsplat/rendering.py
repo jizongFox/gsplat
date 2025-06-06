@@ -1022,6 +1022,7 @@ def rasterization_2dgs(
     absgrad: bool = False,
     distloss: bool = False,
     depth_mode: Literal["expected", "median"] = "expected",
+    normals_coordinate: Literal["world", "camera"] = "world",
 ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Dict]:
     """Rasterize a set of 2D Gaussians (N) to a batch of image planes (C).
 
@@ -1069,6 +1070,7 @@ def rasterization_2dgs(
             will be done looply in chunks.
         distloss: If true, use distortion regularization to get better geometry detail.
         depth_mode: render depth mode. Choose from expected depth and median depth.
+        normals_coordinate: the coordinate system of the normals.
 
     Returns:
         A tuple:
@@ -1279,10 +1281,19 @@ def rasterization_2dgs(
             depth_for_normal = render_colors[..., -1:]
         elif depth_mode == "median":
             depth_for_normal = render_median
-
-        render_normals_from_depth = depth_to_normal(
+        else:
+            raise ValueError(f"Unknown depth_mode: {depth_mode}")
+        if normals_coordinate == "world":
+            render_normals_from_depth = depth_to_normal(
             depth_for_normal, torch.linalg.inv(viewmats), Ks
         ).squeeze(0)
+        elif normals_coordinate == "camera":
+            render_normals_from_depth = depth_to_normal(
+                depth_for_normal, torch.eye(4, device="cuda", dtype=torch.float32)[None, ...].repeat(C, 1, 1),
+                Ks
+            ).squeeze(0)
+        else:
+            raise ValueError(f"Unknown normals_coordinate: {normals_coordinate}")
 
     meta = {
         "camera_ids": camera_ids,
@@ -1306,10 +1317,14 @@ def rasterization_2dgs(
         "render_distort": render_distort,
         "gradient_2dgs": densify,  # This holds the gradient used for densification for 2dgs
     }
-
-    render_normals = torch.einsum(
+    if normals_coordinate == "world":
+        render_normals = torch.einsum(
         "...ij,...hwj->...hwi", torch.linalg.inv(viewmats)[..., :3, :3], render_normals
     )
+    elif normals_coordinate == "camera":
+        render_normals = render_normals
+    else:
+        raise ValueError(f"Unknown normals_coordinate: {normals_coordinate}")
 
     return (
         render_colors,
