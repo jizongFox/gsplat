@@ -1236,11 +1236,16 @@ def rasterization_2dgs(
     # Rasterize to pixels
     if render_mode in ["RGB+D", "RGB+ED"]:
         colors = torch.cat((colors, depths[..., None]), dim=-1)
-        # backgrounds = torch.cat((backgrounds, torch.zeros((C, 1), device="cuda")), dim=-1)
+        backgrounds = torch.cat(
+            (backgrounds, torch.zeros((C, 1), device="cuda", dtype=torch.float)), dim=-1
+        ).contiguous()
     elif render_mode in ["D", "ED"]:
         colors = depths[..., None]
+        backgrounds = torch.zeros((C, 1), device="cuda", dtype=torch.float).contiguous()
     else:  # RGB
         pass
+    if backgrounds is not None:
+        assert backgrounds.shape == (C, colors.shape[-1]), backgrounds.shape
 
     (
         render_colors,
@@ -1285,12 +1290,15 @@ def rasterization_2dgs(
             raise ValueError(f"Unknown depth_mode: {depth_mode}")
         if normals_coordinate == "world":
             render_normals_from_depth = depth_to_normal(
-            depth_for_normal, torch.linalg.inv(viewmats), Ks
-        ).squeeze(0)
+                depth_for_normal, torch.linalg.inv(viewmats), Ks
+            ).squeeze(0)
         elif normals_coordinate == "camera":
             render_normals_from_depth = depth_to_normal(
-                depth_for_normal, torch.eye(4, device="cuda", dtype=torch.float32)[None, ...].repeat(C, 1, 1),
-                Ks
+                depth_for_normal,
+                torch.eye(4, device="cuda", dtype=torch.float32)[None, ...].repeat(
+                    C, 1, 1
+                ),
+                Ks,
             ).squeeze(0)
         else:
             raise ValueError(f"Unknown normals_coordinate: {normals_coordinate}")
@@ -1319,8 +1327,10 @@ def rasterization_2dgs(
     }
     if normals_coordinate == "world":
         render_normals = torch.einsum(
-        "...ij,...hwj->...hwi", torch.linalg.inv(viewmats)[..., :3, :3], render_normals
-    )
+            "...ij,...hwj->...hwi",
+            torch.linalg.inv(viewmats)[..., :3, :3],
+            render_normals,
+        )
     elif normals_coordinate == "camera":
         render_normals = render_normals
     else:
