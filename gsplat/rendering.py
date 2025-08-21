@@ -600,8 +600,11 @@ def _rasterization(
     backgrounds: Optional[Tensor] = None,
     render_mode: Literal["RGB", "D", "ED", "RGB+D", "RGB+ED"] = "RGB",
     rasterize_mode: Literal["classic", "antialiased"] = "classic",
+    camera_model: Literal["pinhole", "ortho", "fisheye"] = "pinhole",
+    camera_params: Optional[Dict] = None,
     channel_chunk: int = 32,
     batch_per_iter: int = 100,
+
 ) -> Tuple[Tensor, Tensor, Dict]:
     """A version of rasterization() that utilies on PyTorch's autograd.
 
@@ -663,6 +666,8 @@ def _rasterization(
         near_plane=near_plane,
         far_plane=far_plane,
         calc_compensations=(rasterize_mode == "antialiased"),
+        camera_model=camera_model,
+        camera_params=camera_params
     )
     opacities = opacities.repeat(C, 1)  # [C, N]
     camera_ids, gaussian_ids = None, None
