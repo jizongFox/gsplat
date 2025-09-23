@@ -1162,6 +1162,10 @@ def rasterization_2dgs(
         ), colors.shape
         assert (sh_degree + 1) ** 2 <= colors.shape[1], colors.shape
 
+    densify = torch.zeros(
+        1, N, 2, dtype=means.dtype, requires_grad=True, device="cuda"
+    )
+
     # Compute Ray-Splat intersection transformation.
     proj_results = fully_fused_projection_2dgs(
         means,
@@ -1177,6 +1181,7 @@ def rasterization_2dgs(
         radius_clip,
         packed,
         sparse_grad,
+        densify
     )
 
     if packed:
@@ -1191,13 +1196,11 @@ def rasterization_2dgs(
         ) = proj_results
         opacities = opacities[gaussian_ids]
     else:
-        radii, means2d, depths, ray_transforms, normals = proj_results
+        radii, means2d, depths, ray_transforms, normals, densify = proj_results
         opacities = opacities.repeat(C, 1)
         camera_ids, gaussian_ids = None, None
 
-    densify = torch.zeros_like(
-        means2d, dtype=means.dtype, requires_grad=True, device="cuda"
-    )
+
     # Identify intersecting tiles
     tile_width = math.ceil(width / float(tile_size))
     tile_height = math.ceil(height / float(tile_size))
