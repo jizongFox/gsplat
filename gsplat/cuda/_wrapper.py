@@ -1313,7 +1313,6 @@ def fully_fused_projection_2dgs(
     radius_clip: float = 0.0,
     packed: bool = False,
     sparse_grad: bool = False,
-    densify: Tensor = None,
 ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
     """Prepare Gaussians for rasterization
 
@@ -1401,7 +1400,6 @@ def fully_fused_projection_2dgs(
             near_plane,
             far_plane,
             radius_clip,
-            densify,
         )
 
 
@@ -1422,7 +1420,6 @@ class _FullyFusedProjection2DGS(torch.autograd.Function):
         near_plane: float,
         far_plane: float,
         radius_clip: float,
-        densify: Tensor,
     ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
         radii, means2d, depths, ray_transforms, normals = _make_lazy_cuda_func(
             "fully_fused_projection_fwd_2dgs"
@@ -1440,18 +1437,23 @@ class _FullyFusedProjection2DGS(torch.autograd.Function):
             radius_clip,
         )
         ctx.save_for_backward(
-            means, quats, scales, viewmats, Ks, radii, ray_transforms, normals, densify
+            means,
+            quats,
+            scales,
+            viewmats,
+            Ks,
+            radii,
+            ray_transforms,
+            normals,
         )
         ctx.width = width
         ctx.height = height
         ctx.eps2d = eps2d
 
-        return radii, means2d, depths, ray_transforms, normals, densify
+        return radii, means2d, depths, ray_transforms, normals
 
     @staticmethod
-    def backward(
-        ctx, v_radii, v_means2d, v_depths, v_ray_transforms, v_normals, v_densify
-    ):
+    def backward(ctx, v_radii, v_means2d, v_depths, v_ray_transforms, v_normals):
         (
             means,
             quats,
@@ -1461,12 +1463,10 @@ class _FullyFusedProjection2DGS(torch.autograd.Function):
             radii,
             ray_transforms,
             normals,
-            densify,
         ) = ctx.saved_tensors
         width = ctx.width
         height = ctx.height
         eps2d = ctx.eps2d
-
         v_means, v_quats, v_scales, v_viewmats = _make_lazy_cuda_func(
             "fully_fused_projection_bwd_2dgs"
         )(
@@ -1542,14 +1542,9 @@ class _FullyFusedProjection2DGS(torch.autograd.Function):
         else:
 
             def amplify_grad(grad):
-                new_grad = grad.clone()
-                new_grad[..., 0] *= width * 0.5
-                new_grad[..., 1] *= height * 0.5
-                return new_grad
-
-            # replace by v_densify
-
-            v_means2d = v_densify
+                grad[..., 0] *= width * 0.5
+                grad[..., 1] *= height * 0.5
+                return grad
 
             v_means2d_ = amplify_grad(v_means2d)
             means3d_cam = torch.matmul(
