@@ -2,9 +2,6 @@ import math
 
 import pytest
 import torch
-import pdb
-
-from gsplat._helper import load_test_data
 
 device = torch.device("cuda:0")
 
@@ -63,8 +60,8 @@ def test_projection_2dgs(test_data):
     means.requires_grad = True
 
     # forward
-    _radii, _means2d, _depths, _ray_transforms, _normals = _fully_fused_projection_2dgs(
-        means, quats, scales, viewmats, Ks, width, height
+    _radii, _means2d, _depths, _ray_transforms, _normals, *_ = (
+        _fully_fused_projection_2dgs(means, quats, scales, viewmats, Ks, width, height)
     )
     _ray_transforms = _ray_transforms.permute(
         (0, 1, 3, 2)
@@ -239,7 +236,6 @@ def test_rasterize_to_pixels_2dgs(test_data):
         isect_tiles,
         rasterize_to_pixels_2dgs,
     )
-    from gsplat.rendering import rasterization_2dgs_inria_wrapper
 
     Ks = test_data["Ks"]
     viewmats = test_data["viewmats"]

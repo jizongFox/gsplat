@@ -1466,7 +1466,7 @@ class _FullyFusedProjection2DGS(torch.autograd.Function):
         ) = ctx.saved_tensors
         width = ctx.width
         height = ctx.height
-        eps2d = ctx.eps2d
+
         v_means, v_quats, v_scales, v_viewmats = _make_lazy_cuda_func(
             "fully_fused_projection_bwd_2dgs"
         )(
@@ -1541,45 +1541,87 @@ class _FullyFusedProjection2DGS(torch.autograd.Function):
             # compute the gradient with respect to K.
         else:
 
-            def amplify_grad(grad):
-                grad[..., 0] *= width * 0.5
-                grad[..., 1] *= height * 0.5
-                return grad
+            T_cl = Ks.inverse() @ ray_transforms  # this matches exactly.
 
-            v_means2d_ = amplify_grad(v_means2d)
-            means3d_cam = torch.matmul(
-                means, viewmats[:, :3, :3].transpose(1, 2)
-            ) + viewmats[:, :3, 3].unsqueeze(1)
+            def _compute_dK(v_ray_transforms):
+                # m = ray_transforms
+                T = T_cl
 
-            grad_uv_k4: Float[Tensor, "n 2 4"] = torch.zeros(
-                *means3d_cam.shape[:2],
-                2,
-                4,
-                device=viewmats.device,
-                dtype=torch.float32,
-            )
-            grad_uv_k4[..., 0, 0] = means3d_cam[..., 0] / (
-                means3d_cam[..., 2] + 1e-4
-            )  # du/dfx
-            grad_uv_k4[..., 1, 1] = means3d_cam[..., 1] / (
-                means3d_cam[..., 2] + 1e-4
-            )  # dv/dfy
-            grad_uv_k4[..., 0, 2] = 1  # du/dcx
-            grad_uv_k4[..., 1, 3] = 1  # dv/dcy
+                dM_dfx = torch.zeros_like(T)
+                dM_dfy = torch.zeros_like(T)
+                dM_dcx = torch.zeros_like(T)
+                dM_dcy = torch.zeros_like(T)
+                dM_dfx[:, :, :, 0] = T[:, :, 0]
+                dM_dfy[:, :, :, 1] = T[:, :, 1]
+                dM_dcx[:, :, :, 0] = T[:, :, 2]
+                dM_dcy[:, :, :, 1] = T[:, :, 2]
 
-            grad_k = torch.einsum(
-                "bnj,bnjk->bnk", v_means2d_[:, :, :2], grad_uv_k4
-            ).sum(dim=1)
-            grad_K = torch.zeros(
-                viewmats.shape[0], 3, 3, device=viewmats.device, dtype=torch.float32
-            )
-            grad_K[:, 0, 0] = grad_k[:, 0]
-            grad_K[:, 1, 1] = grad_k[:, 1]
-            grad_K[:, 0, 2] = grad_k[:, 2]
-            grad_K[:, 1, 2] = grad_k[:, 3]
+                """
+                  dM_dfx[:, :, :, 0] = data.value[:, :, 0]
+                # dM_dfy[:, :, :, 1] = data.value[:, :, 1]
+                # dM_dcx[:, :, :, 0] = data.value[:, :, 2]
+                # dM_dcy[:, :, :, 1] = data.value[:, :, 2]
+                """
+
+                dM_dK = torch.stack(
+                    [dM_dfx, dM_dfy, dM_dcx, dM_dcy], dim=-1
+                )  # c n 3 3X4
+
+                dL_dK = torch.einsum(
+                    "cnijk,cnij->ck", dM_dK, v_ray_transforms.transpose(-1, -2)
+                )
+
+                return dL_dK
+
+            _grad_K = _compute_dK(v_ray_transforms)
+            # c 4
+            grad_K = torch.zeros_like(Ks)
+            grad_K[:, 0, 0] = _grad_K[:, 0]
+            grad_K[:, 1, 1] = _grad_K[:, 1]
+            grad_K[:, 0, 2] = _grad_K[:, 2]
+            grad_K[:, 1, 2] = _grad_K[:, 3]
+
+            # def amplify_grad(grad):
+            #     grad[..., 0] *= width * 0.5
+            #     grad[..., 1] *= height * 0.5
+            #     return grad
+            #
+            # v_means2d_ = amplify_grad(v_means2d)
+            # means3d_cam = torch.matmul(
+            #     means, viewmats[:, :3, :3].transpose(1, 2)
+            # ) + viewmats[:, :3, 3].unsqueeze(1)
+            #
+            # grad_uv_k4: Float[Tensor, "n 2 4"] = torch.zeros(
+            #     *means3d_cam.shape[:2],
+            #     2,
+            #     4,
+            #     device=viewmats.device,
+            #     dtype=torch.float32,
+            # )
+            # grad_uv_k4[..., 0, 0] = means3d_cam[..., 0] / (
+            #     means3d_cam[..., 2] + 1e-4
+            # )  # du/dfx
+            # grad_uv_k4[..., 1, 1] = means3d_cam[..., 1] / (
+            #     means3d_cam[..., 2] + 1e-4
+            # )  # dv/dfy
+            # grad_uv_k4[..., 0, 2] = 1  # du/dcx
+            # grad_uv_k4[..., 1, 3] = 1  # dv/dcy
+            #
+            # grad_k = torch.einsum(
+            #     "bnj,bnjk->bnk", v_means2d_[:, :, :2], grad_uv_k4
+            # ).sum(dim=1)
+            # grad_K = torch.zeros(
+            #     viewmats.shape[0], 3, 3, device=viewmats.device, dtype=torch.float32
+            # )
+            # grad_K[:, 0, 0] = grad_k[:, 0]
+            # grad_K[:, 1, 1] = grad_k[:, 1]
+            # grad_K[:, 0, 2] = grad_k[:, 2]
+            # grad_K[:, 1, 2] = grad_k[:, 3]
 
         if isinstance(v_viewmats, torch.Tensor):
-            torch.nan_to_num(v_viewmats, nan=0.0, posinf=0.0, neginf=0.0, out=v_viewmats)
+            torch.nan_to_num(
+                v_viewmats, nan=0.0, posinf=0.0, neginf=0.0, out=v_viewmats
+            )
         if isinstance(grad_K, torch.Tensor):
             torch.nan_to_num(grad_K, nan=0.0, posinf=0.0, neginf=0.0, out=grad_K)
 
