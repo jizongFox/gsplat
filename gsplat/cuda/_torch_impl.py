@@ -29,7 +29,7 @@ def _quat_to_rotmat(quats: Tensor) -> Tensor:
     return R.reshape(quats.shape[:-1] + (3, 3))
 
 
-@torch.compile(mode="reduce-overhead")
+# @torch.compile(mode="reduce-overhead") # you cannot put it here.
 def _quat_scale_to_matrix(
     quats: Tensor,  # [N, 4],
     scales: Tensor,  # [N, 3],

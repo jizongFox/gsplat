@@ -1315,7 +1315,7 @@ def fully_fused_projection_2dgs(
     radius_clip: float = 0.0,
     packed: bool = False,
     sparse_grad: bool = False,
-) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
     """Prepare Gaussians for rasterization
 
     This function prepares ray-splat intersection matrices, computes
@@ -1422,7 +1422,7 @@ class _FullyFusedProjection2DGS(torch.autograd.Function):
         near_plane: float,
         far_plane: float,
         radius_clip: float,
-    ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+    ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
         radii, means2d, depths, ray_transforms, normals = _make_lazy_cuda_func(
             "fully_fused_projection_fwd_2dgs"
         )(
