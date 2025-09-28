@@ -17,7 +17,7 @@ def _fully_fused_projection_2dgs(
     near_plane: float = 0.01,
     far_plane: float = 1e10,
     eps: float = 1e-6,
-) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
     """PyTorch implementation of `gsplat.cuda._wrapper.fully_fused_projection_2dgs()`
 
     .. note::
@@ -43,17 +43,56 @@ def _fully_fused_projection_2dgs(
     T_cl = torch.cat([RS_cl[..., :2], means_c[..., None]], dim=-1)  # [C, N, 3, 3]
     T_sl = torch.einsum("cij,cnjk->cnik", Ks[:, :3, :3], T_cl)  # [C, N, 3, 3]
     # in paper notation M = (WH)^T
-    # later h_u = M @ h_x, h_v = M @ h_y
+    # later h_u = M @ h_x, h_v = M @ h_y (from space space to local tangent space)
     M = torch.transpose(T_sl, -1, -2)  # [C, N, 3, 3]
 
+    t_u = RS_cl[..., 0]
+    t_v = RS_cl[..., 1]
+    P_c = means_c
+    T_cl2 = torch.cat([t_u[..., None], t_v[..., None], P_c[..., None]], dim=-1)
+    #
+    # # verify another way
+    #
+    # w2c = viewmats
+    # k = torch.zeros(1, 3, 4, device="cuda")
+    # k[:, :3, :3] = Ks
+    #
+    # SR_ = torch.zeros((N, 4, 3), device=means.device)
+    # SR_[:, :3, :2] = RS_wl[:, :3, :2]
+    # SR_[:, :3, 2] = means
+    # SR_[:, 3, 2] = 1
+    #
+    # T_sl3 = torch.einsum("cik,ckh,nho->cnio", k, w2c, SR_)
+
+    # M_t = Ks @ T_cl2
+    # M_t2 = torch.einsum("cij,cnjk->cnik", Ks, T_cl2)
+    # assert torch.allclose(M_t.transpose(-1, -2), M)
+    # assert torch.allclose(M_t2.transpose(-1, -2), M)
+
+    # M_t = torch.einsum("...ij,...njk->...nik", Ks, torch.stack([t_u, t_v, P_c], dim=-1))
+
+    # M:
+    # [
+    # s_u K t_u,
+    # s_v K t_v,
+    # K P_mean
+    # ]
+
     # compute the AABB of gaussian
-    test = torch.tensor([1.0, 1.0, -1.0], device=means.device).reshape(1, 1, 3)
+    test = torch.tensor([1.0, 1.0, -1.0], device=means.device).reshape(
+        1, 1, 3
+    )  # this is in local tangent space
+    # represent a circle of gaussian. and try to project it into screen space.
     d = (M[..., 2] * M[..., 2] * test).sum(dim=-1, keepdim=True)  # [C, N, 1]
+    # this is C22 of C_screen.
+
     valid = torch.abs(d) > eps
     f = torch.where(valid, test / d, torch.zeros_like(test)).unsqueeze(
         -1
     )  # (C, N, 3, 1)
+    # b = M[..., :2] * M[..., 2:3]
     means2d = (M[..., :2] * M[..., 2:3] * f).sum(dim=-2)  # [C, N, 2]
+
     extents = torch.sqrt(
         means2d**2 - (M[..., :2] * M[..., :2] * f).sum(dim=-2)
     )  # [C, N, 2]
@@ -72,7 +111,7 @@ def _fully_fused_projection_2dgs(
     )
     radius[~inside] = 0.0
     radii = radius.int()
-    return radii, means2d, depths, M, normals
+    return radii, means2d, depths, M, normals, T_cl2
 
 
 def accumulate_2dgs(
@@ -130,8 +169,15 @@ def accumulate_2dgs(
 
     M = ray_transforms[camera_ids, gaussian_ids]  # [M, 3, 3]
 
-    h_u = -M[..., 0, :3] + M[..., 2, :3] * pixel_ids_x[..., None]  # [M, 3]
-    h_v = -M[..., 1, :3] + M[..., 2, :3] * pixel_ids_y[..., None]  # [M, 3]
+    # M:
+    # [
+    # s_u K t_u,
+    # s_v K t_v,
+    # K P_mean
+    # ]
+
+    h_u = -M[..., 0, :3] + M[..., 2, :3] * pixel_ids_x[..., None]  # [M, 3] (-1, 0, x)
+    h_v = -M[..., 1, :3] + M[..., 2, :3] * pixel_ids_y[..., None]  # [M, 3] (0, -1, y)
     tmp = torch.cross(h_u, h_v, dim=-1)
     us = tmp[..., 0] / tmp[..., 2]
     vs = tmp[..., 1] / tmp[..., 2]
