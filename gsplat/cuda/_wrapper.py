@@ -1542,6 +1542,7 @@ class _FullyFusedProjection2DGS(torch.autograd.Function):
         else:
 
             T_cl = Ks.inverse() @ ray_transforms  # this matches exactly.
+            visibility_filter = radii > 0
 
             def _compute_dK(v_ray_transforms):
                 # m = ray_transforms
@@ -1566,7 +1567,9 @@ class _FullyFusedProjection2DGS(torch.autograd.Function):
                 dM_dK = torch.stack(
                     [dM_dfx, dM_dfy, dM_dcx, dM_dcy], dim=-1
                 )  # c n 3 3X4
-
+                dM_dK *= (
+                    visibility_filter.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).float()
+                )
                 dL_dK = torch.einsum(
                     "cnijk,cnij->ck", dM_dK, v_ray_transforms.transpose(-1, -2)
                 )

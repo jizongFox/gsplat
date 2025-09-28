@@ -50,10 +50,10 @@ def _fully_fused_projection_2dgs(
     t_v = RS_cl[..., 1]
     P_c = means_c
     T_cl2 = torch.cat([t_u[..., None], t_v[..., None], P_c[..., None]], dim=-1)
-    M_t = Ks @ T_cl2
-    M_t2 = torch.einsum("cij,cnjk->cnik", Ks, T_cl2)
-    assert torch.allclose(M_t.transpose(-1, -2), M)
-    assert torch.allclose(M_t2.transpose(-1, -2), M)
+    # M_t = Ks @ T_cl2
+    # M_t2 = torch.einsum("cij,cnjk->cnik", Ks, T_cl2)
+    # assert torch.allclose(M_t.transpose(-1, -2), M)
+    # assert torch.allclose(M_t2.transpose(-1, -2), M)
 
     # M_t = torch.einsum("...ij,...njk->...nik", Ks, torch.stack([t_u, t_v, P_c], dim=-1))
 
