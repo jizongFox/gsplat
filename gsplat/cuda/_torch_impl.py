@@ -29,6 +29,7 @@ def _quat_to_rotmat(quats: Tensor) -> Tensor:
     return R.reshape(quats.shape[:-1] + (3, 3))
 
 
+@torch.compile(mode="reduce-overhead")
 def _quat_scale_to_matrix(
     quats: Tensor,  # [N, 4],
     scales: Tensor,  # [N, 3],
@@ -128,7 +129,7 @@ def _fisheye_proj(
     width: int,
     height: int,
     *,
-    distort_params: Optional[Float[Tensor, "4"]]=None
+    distort_params: Optional[Float[Tensor, "4"]] = None
 ) -> Tuple[Tensor, Tensor]:
     """PyTorch implementation of fisheye projection for 3D Gaussians.
 
@@ -160,12 +161,14 @@ def _fisheye_proj(
 
     if distort_params is not None:
         k1, k2, k3, k4 = distort_params
-        theta = theta * (1 + k1 * theta**2 + k2 * theta**4 + k3 * theta**6 + k4 * theta**8)
+        theta = theta * (
+            1 + k1 * theta**2 + k2 * theta**4 + k3 * theta**6 + k4 * theta**8
+        )
 
     scale = theta / xy_len
     means2d = torch.stack(
         [
-            x * fx * scale+ cx,
+            x * fx * scale + cx,
             y * fy * scale + cy,
         ],
         dim=-1,
@@ -268,7 +271,7 @@ def _fully_fused_projection(
     far_plane: float = 1e10,
     calc_compensations: bool = False,
     camera_model: Literal["pinhole", "ortho", "fisheye"] = "pinhole",
-    camera_params: Optional[Dict[str, float]] = None
+    camera_params: Optional[Dict[str, float]] = None,
 ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Optional[Tensor]]:
     """PyTorch implementation of `gsplat.cuda._wrapper.fully_fused_projection()`
 
@@ -282,7 +285,9 @@ def _fully_fused_projection(
     if camera_model == "ortho":
         means2d, covars2d = _ortho_proj(means_c, covars_c, Ks, width, height)
     elif camera_model == "fisheye":
-        means2d, covars2d = _fisheye_proj(means_c, covars_c, Ks, width, height, **camera_params)
+        means2d, covars2d = _fisheye_proj(
+            means_c, covars_c, Ks, width, height, **camera_params
+        )
     elif camera_model == "pinhole":
         means2d, covars2d = _persp_proj(means_c, covars_c, Ks, width, height)
     else:

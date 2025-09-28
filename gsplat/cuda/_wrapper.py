@@ -6,6 +6,8 @@ from jaxtyping import Float
 from torch import Tensor
 from typing_extensions import Literal
 
+from ._torch_impl import _quat_scale_to_matrix
+
 
 def _make_lazy_cuda_func(name: str) -> Callable:
     def call_cuda(*args, **kwargs):
@@ -1495,47 +1497,63 @@ class _FullyFusedProjection2DGS(torch.autograd.Function):
             v_viewmats = None
 
         if viewmats.requires_grad:
-            with torch.no_grad():
-                """
-                means_camera = torch.matmul(
-                    means, viewmats[:, :3, :3].transpose(1, 2)
-                ) + viewmats[:, :3, 3].unsqueeze(1)
-                rot = viewmats[:, :3, :3]
-                v_trans = torch.einsum("ni,bij->bj", v_means, rot.transpose(1, 2))
-                v_rot =
-                """
-                # import timeit
-                #
-                # # Method 1
-                # start_time = timeit.default_timer()
-                v_viewmats = torch.zeros_like(viewmats)
-                R = viewmats[..., :3, :3]
-                v_mean3d_cam = torch.matmul(v_means, R.transpose(-1, -2))
-                # # gradient w.r.t. view matrix translation
-                v_viewmats[..., :3, 3] = v_mean3d_cam.sum(-2)
-                #
-                # # gradent w.r.t. view matrix rotation
-                # for j in range(3):
-                #     for l in range(3):
-                #         v_viewmats[..., j, l] = torch.einsum(
-                #             "ni,i->n", v_mean3d_cam[..., j], means[..., l]
-                #         )
-                # end_time = timeit.default_timer()
-                # print("Method 1: ", end_time - start_time)
-                # method2:
-                # start_time = timeit.default_timer()
-                v_rotation = torch.zeros(means.shape[0], 3, 9, device=means.device)
-                v_rotation[:, 0, :3] = means
-                v_rotation[:, 1, 3:6] = means
-                v_rotation[:, 2, 6:9] = means
-                v_rot = torch.einsum("cni,nik->cnk", v_mean3d_cam, v_rotation)
-                v_rot = v_rot.sum(1).reshape(-1, 3, 3)
-                v_viewmats[..., :3, :3] = v_rot
-                # method3:
-                # v_rot2 = torch.zeros(viewmats.shape[0], 3, 3, device=viewmats.device)
-                # for i in range(3):
-                #     v_mean3d_cam
+            C = Ks.shape[0]
+            N = means.shape[0]
 
+            @torch.no_grad()
+            def _compute_v_viewmat(v_ray_transforms: Tensor):
+                # Build Kt4 = K3x4^T in shape (C,4,3)
+                Kt4 = torch.zeros(C, 4, 3, device=means.device, dtype=means.dtype)
+                Kt4[:, :3, :3] = Ks.transpose(-1, -2)
+                # Build RS_t = RS_4x3^T in shape (N,3,4)
+                RS_wl = _quat_scale_to_matrix(quats, scales)  # (N,3,3)
+                RS_t = torch.zeros(N, 3, 4, device=means.device, dtype=means.dtype)
+                # Place RS_wl's first two columns into the first two rows across cols 0..2
+                RS_t[:, :2, :3] = RS_wl[:, :, :2].transpose(-1, -2)
+                # Third row for cols 0..2 is means
+                RS_t[:, 2, :3] = means
+                RS_t[:, 2, 3] = 1
+                # Compute sum_N Kt4 @ v_ray_transforms @ RS_t -> (C,4,4)
+                return torch.einsum("cab,cnbd,nde->cae", Kt4, v_ray_transforms, RS_t)
+
+            v_viewmats = _compute_v_viewmat(v_ray_transforms)
+
+            # with torch.no_grad():
+            #     """
+            #     means_camera = torch.matmul(
+            #         means, viewmats[:, :3, :3].transpose(1, 2)
+            #     ) + viewmats[:, :3, 3].unsqueeze(1)
+            #     rot = viewmats[:, :3, :3]
+            #     v_trans = torch.einsum("ni,bij->bj", v_means, rot.transpose(1, 2))
+            #     v_rot =
+            #     """
+            #     # import timeit
+            #     #
+            #     # # Method 1
+            #     # start_time = timeit.default_timer()
+            #     v_viewmats = torch.zeros_like(viewmats)
+            #     R = viewmats[..., :3, :3]
+            #     v_mean3d_cam = torch.matmul(v_means, R.transpose(-1, -2))
+            #     # # gradient w.r.t. view matrix translation
+            #     v_viewmats[..., :3, 3] = v_mean3d_cam.sum(-2)
+            #     #
+            #     # # gradent w.r.t. view matrix rotation
+            #     # for j in range(3):
+            #     #     for l in range(3):
+            #     #         v_viewmats[..., j, l] = torch.einsum(
+            #     #             "ni,i->n", v_mean3d_cam[..., j], means[..., l]
+            #     #         )
+            #     # end_time = timeit.default_timer()
+            #     # print("Method 1: ", end_time - start_time)
+            #     # method2:
+            #     # start_time = timeit.default_timer()
+            #     v_rotation = torch.zeros(means.shape[0], 3, 9, device=means.device)
+            #     v_rotation[:, 0, :3] = means
+            #     v_rotation[:, 1, 3:6] = means
+            #     v_rotation[:, 2, 6:9] = means
+            #     v_rot = torch.einsum("cni,nik->cnk", v_mean3d_cam, v_rotation)
+            #     v_rot = v_rot.sum(1).reshape(-1, 3, 3)
+            #     v_viewmats[..., :3, :3] = v_rot
         if not ctx.needs_input_grad[4]:
             grad_K = None
             # compute the gradient with respect to K.
