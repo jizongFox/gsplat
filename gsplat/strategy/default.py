@@ -2,10 +2,10 @@ from dataclasses import dataclass
 from typing import Any, Dict, Tuple, Union
 
 import torch
+from typing_extensions import Literal
 
 from .base import Strategy
 from .ops import duplicate, remove, reset_opa, split
-from typing_extensions import Literal
 
 
 @dataclass
@@ -222,6 +222,7 @@ class DefaultStrategy(Strategy):
             grads = info[self.key_for_gradient].absgrad.clone()
         else:
             grads = info[self.key_for_gradient].grad.clone()
+        # this is to convert the gradient into ndc space.
         grads[..., 0] *= info["width"] / 2.0 * info["n_cameras"]
         grads[..., 1] *= info["height"] / 2.0 * info["n_cameras"]
 
