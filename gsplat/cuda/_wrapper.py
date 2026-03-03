@@ -1640,11 +1640,14 @@ class _FullyFusedProjection2DGS(torch.autograd.Function):
             # grad_K[:, 1, 2] = grad_k[:, 3]
 
         if isinstance(v_viewmats, torch.Tensor):
-            torch.nan_to_num(
-                v_viewmats, nan=0.0, posinf=0.0, neginf=0.0, out=v_viewmats
+            v_viewmats = torch.nan_to_num(
+                v_viewmats,
+                nan=0.0,
+                posinf=0.0,
+                neginf=0.0,
             )
         if isinstance(grad_K, torch.Tensor):
-            torch.nan_to_num(grad_K, nan=0.0, posinf=0.0, neginf=0.0, out=grad_K)
+            grad_K = torch.nan_to_num(grad_K, nan=0.0, posinf=0.0, neginf=0.0)
 
         return (
             v_means,
