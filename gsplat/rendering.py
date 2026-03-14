@@ -45,6 +45,7 @@ def rasterization(
     compact_box: bool = False,
     compact_box_mult: float = 1.0,
     compact_box_tau2: Optional[float] = None,
+    compact_box_impl: Literal["rect_min", "sweep"] = "sweep",
     backgrounds: Optional[Tensor] = None,
     render_mode: Literal["RGB", "D", "ED", "RGB+D", "RGB+ED"] = "RGB",
     sparse_grad: bool = False,
@@ -171,6 +172,9 @@ def rasterization(
             Default is 1.0.
         compact_box_tau2: Explicit squared Mahalanobis threshold for Compact Box.
             If set, this overrides `compact_box_mult`.
+        compact_box_impl: Compact Box implementation. "rect_min" uses
+            per-tile rectangle minimum testing while "sweep" uses slice-based
+            span traversal for lower overhead. Default is "sweep".
         backgrounds: The background colors. [C, D]. Default is None.
         render_mode: The rendering mode. Supported modes are "RGB", "D", "ED", "RGB+D",
             and "RGB+ED". "RGB" renders the colored image, "D" renders the accumulated depth, and
@@ -521,6 +525,7 @@ def rasterization(
         compact_box=compact_box,
         compact_box_mult=compact_box_mult,
         compact_box_tau2=compact_box_tau2,
+        compact_box_impl=compact_box_impl,
     )
     # print("rank", world_rank, "Before isect_offset_encode")
     isect_offsets = isect_offset_encode(isect_ids, C, tile_width, tile_height)

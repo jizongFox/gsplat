@@ -160,6 +160,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
     const float compact_box_mult,
     const float compact_box_tau2,
     const bool compact_box_use_global_tau2,
+    const bool compact_box_use_sweep,
     const bool sort,
     const bool double_buffer
 );

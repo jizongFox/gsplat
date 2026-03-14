@@ -360,6 +360,7 @@ def isect_tiles(
     compact_box: bool = False,
     compact_box_mult: float = 1.0,
     compact_box_tau2: Optional[float] = None,
+    compact_box_impl: Literal["rect_min", "sweep"] = "sweep",
 ) -> Tuple[Tensor, Tensor, Tensor]:
     """Maps projected Gaussians to intersecting tiles.
 
@@ -386,6 +387,9 @@ def isect_tiles(
             opacity. Default: 1.0.
         compact_box_tau2: Explicit squared Mahalanobis threshold. If provided,
             this overrides compact_box_mult.
+        compact_box_impl: Compact Box implementation. "rect_min" uses
+            per-tile rectangle minimum testing, "sweep" uses a slice-based
+            span traversal. Default: "sweep".
 
     Returns:
         A tuple:
@@ -431,12 +435,15 @@ def isect_tiles(
             assert opacities.shape == (C, N), opacities.size()
             assert conics.shape == (C, N, 3), conics.size()
         compact_box_mult = float(compact_box_mult)
+        assert compact_box_impl in ("rect_min", "sweep"), compact_box_impl
+        compact_box_use_sweep = compact_box_impl == "sweep"
         compact_box_use_global_tau2 = compact_box_tau2 is not None
         compact_box_tau2 = (
             float(compact_box_tau2) if compact_box_use_global_tau2 else 0.0
         )
     else:
         compact_box_use_global_tau2 = False
+        compact_box_use_sweep = False
         compact_box_tau2 = 0.0
         compact_box_mult = 1.0
 
@@ -457,6 +464,7 @@ def isect_tiles(
         compact_box_mult,
         compact_box_tau2,
         compact_box_use_global_tau2,
+        compact_box_use_sweep,
         sort,
         True,  # DoubleBuffer: memory efficient radixsort
     )

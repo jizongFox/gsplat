@@ -36,6 +36,7 @@ class Config:
     packed: bool = False
     compact_box_mult: float = 1.0
     compact_box_tau2: Optional[float] = None
+    compact_box_impl: str = "sweep"
     sweep_mults: Optional[list[float]] = None
     device: str = "cuda"
 
@@ -93,6 +94,7 @@ def run_mode(
     compact_box: bool,
     compact_box_mult: float,
     compact_box_tau2: Optional[float],
+    compact_box_impl: str,
 ) -> ModeResult:
     last_render = None
     last_meta = None
@@ -114,6 +116,7 @@ def run_mode(
         "compact_box": compact_box,
         "compact_box_mult": compact_box_mult,
         "compact_box_tau2": compact_box_tau2,
+        "compact_box_impl": compact_box_impl,
     }
 
     for _ in range(warmup):
@@ -213,6 +216,7 @@ def main(cfg: Config) -> None:
         compact_box=False,
         compact_box_mult=1,
         compact_box_tau2=None,
+        compact_box_impl=cfg.compact_box_impl,
     )
     print("\n[Baseline]")
     print_mode("baseline", base)
@@ -239,6 +243,7 @@ def main(cfg: Config) -> None:
                 compact_box=True,
                 compact_box_mult=float(mult),
                 compact_box_tau2=None,
+                compact_box_impl=cfg.compact_box_impl,
             )
             diff = image_diff_metrics(base["render"], cb["render"])
             speedup = base["avg_ms"] / cb["avg_ms"] if cb["avg_ms"] > 0 else 0.0
@@ -264,6 +269,7 @@ def main(cfg: Config) -> None:
         compact_box=True,
         compact_box_mult=cfg.compact_box_mult,
         compact_box_tau2=cfg.compact_box_tau2,
+        compact_box_impl=cfg.compact_box_impl,
     )
 
     diff = image_diff_metrics(base["render"], cb["render"])
@@ -274,7 +280,11 @@ def main(cfg: Config) -> None:
         if cfg.compact_box_tau2 is not None
         else "tau2=mult*2*log(opacity*255)"
     )
-    print_mode("compact_box", cb, extra=f"mult={cfg.compact_box_mult:.4f} {tau_text}")
+    print_mode(
+        "compact_box",
+        cb,
+        extra=f"impl={cfg.compact_box_impl} mult={cfg.compact_box_mult:.4f} {tau_text}",
+    )
 
     isect_delta = cb["n_isects"] - base["n_isects"]
     isect_ratio = 0.0

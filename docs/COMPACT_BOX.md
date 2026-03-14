@@ -24,6 +24,7 @@ intersection for `gsplat`.
 - `compact_box: bool = False`
 - `compact_box_mult: float = 1.0`
 - `compact_box_tau2: Optional[float] = None`
+- `compact_box_impl: Literal["rect_min", "sweep"] = "sweep"`
 
 These are passed through to `isect_tiles()`.
 
@@ -39,6 +40,11 @@ These are passed through to `isect_tiles()`.
 
 Gaussians with invalid conics (`q00 <= 0`, `q11 <= 0`, or `q00*q11-q01*q01 <= 0`)
 or non-positive `tau2_i` are hard-skipped in CB mode.
+
+`compact_box_impl` controls pruning implementation:
+
+- `rect_min`: per-tile rectangle minimum test (reference path)
+- `sweep`: slice-based span traversal (faster path)
 
 ## Tile predicate
 

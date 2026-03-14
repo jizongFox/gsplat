@@ -506,6 +506,20 @@ def test_isect_compact_box(test_data):
         conics=conics,
         compact_box=True,
         compact_box_tau2=1e9,
+        compact_box_impl="rect_min",
+    )
+    loose_sweep_tiles, loose_sweep_isect_ids, loose_sweep_flatten_ids = isect_tiles(
+        means2d,
+        radii,
+        depths,
+        tile_size,
+        tile_width,
+        tile_height,
+        opacities=opacities,
+        conics=conics,
+        compact_box=True,
+        compact_box_tau2=1e9,
+        compact_box_impl="sweep",
     )
     tight_tiles, tight_isect_ids, tight_flatten_ids = isect_tiles(
         means2d,
@@ -518,11 +532,15 @@ def test_isect_compact_box(test_data):
         conics=conics,
         compact_box=True,
         compact_box_tau2=0.0,
+        compact_box_impl="rect_min",
     )
 
     torch.testing.assert_close(base_tiles, loose_tiles)
     torch.testing.assert_close(base_isect_ids, loose_isect_ids)
     torch.testing.assert_close(base_flatten_ids, loose_flatten_ids)
+    torch.testing.assert_close(base_tiles, loose_sweep_tiles)
+    torch.testing.assert_close(base_isect_ids, loose_sweep_isect_ids)
+    torch.testing.assert_close(base_flatten_ids, loose_sweep_flatten_ids)
     assert tight_tiles.sum() <= base_tiles.sum()
     assert tight_isect_ids.numel() <= base_isect_ids.numel()
     assert tight_flatten_ids.numel() <= base_flatten_ids.numel()
@@ -560,6 +578,7 @@ def test_isect_compact_box_opacity_sensitive(test_data):
         conics=conics,
         compact_box=True,
         compact_box_mult=1.0,
+        compact_box_impl="sweep",
     )
     low_tiles, low_isect_ids, low_flatten_ids = isect_tiles(
         means2d,
@@ -572,6 +591,7 @@ def test_isect_compact_box_opacity_sensitive(test_data):
         conics=conics,
         compact_box=True,
         compact_box_mult=1.0,
+        compact_box_impl="sweep",
     )
 
     assert low_tiles.sum() <= high_tiles.sum()
@@ -613,6 +633,7 @@ def test_isect_compact_box_invalid_conic_skip(test_data):
         conics=valid_conics,
         compact_box=True,
         compact_box_mult=1.0,
+        compact_box_impl="sweep",
     )
     invalid_tiles, invalid_isect_ids, invalid_flatten_ids = isect_tiles(
         means2d,
@@ -625,6 +646,7 @@ def test_isect_compact_box_invalid_conic_skip(test_data):
         conics=invalid_conics,
         compact_box=True,
         compact_box_mult=1.0,
+        compact_box_impl="sweep",
     )
 
     assert torch.count_nonzero(invalid_tiles[0]).item() == 0

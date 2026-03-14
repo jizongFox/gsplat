@@ -116,6 +116,309 @@ __device__ inline bool tile_intersects_cb(
 }
 
 template <typename T>
+__device__ inline void cb_intersect_fixed_x(
+    const T x,
+    const T mean_x,
+    const T mean_y,
+    const T q00,
+    const T q01,
+    const T q11,
+    const T det,
+    const T tau2,
+    bool &has,
+    T &y0,
+    T &y1
+) {
+    const T dx = x - mean_x;
+    const T sqrt_term2 = q11 * tau2 - det * dx * dx;
+    if (sqrt_term2 < static_cast<T>(0.0)) {
+        has = false;
+        return;
+    }
+    const T sqrt_term = sqrt(max(sqrt_term2, static_cast<T>(0.0)));
+    const T yc = mean_y - q01 * dx / q11;
+    y0 = yc - sqrt_term / q11;
+    y1 = yc + sqrt_term / q11;
+    has = true;
+}
+
+template <typename T>
+__device__ inline void cb_intersect_fixed_y(
+    const T y,
+    const T mean_x,
+    const T mean_y,
+    const T q00,
+    const T q01,
+    const T q11,
+    const T det,
+    const T tau2,
+    bool &has,
+    T &x0,
+    T &x1
+) {
+    const T dy = y - mean_y;
+    const T sqrt_term2 = q00 * tau2 - det * dy * dy;
+    if (sqrt_term2 < static_cast<T>(0.0)) {
+        has = false;
+        return;
+    }
+    const T sqrt_term = sqrt(max(sqrt_term2, static_cast<T>(0.0)));
+    const T xc = mean_x - q01 * dy / q00;
+    x0 = xc - sqrt_term / q00;
+    x1 = xc + sqrt_term / q00;
+    has = true;
+}
+
+template <typename T>
+__device__ inline int32_t cb_emit_or_count_sweep(
+    const T mean_x,
+    const T mean_y,
+    const uint32_t tile_size,
+    const uint32_t tile_width,
+    const uint32_t tile_height,
+    const uint32_t coarse_min_x,
+    const uint32_t coarse_min_y,
+    const uint32_t coarse_max_x,
+    const uint32_t coarse_max_y,
+    const T q00,
+    const T q01,
+    const T q11,
+    const T det,
+    const T tau2,
+    const int64_t cid_enc,
+    const int64_t depth_id_enc,
+    const int32_t flatten_idx,
+    const int64_t out_start,
+    const bool write_out,
+    int64_t *__restrict__ isect_ids,
+    int32_t *__restrict__ flatten_ids
+) {
+    const T tsize = static_cast<T>(tile_size);
+
+    const T x_ext = sqrt(max(tau2 * q11 / det, static_cast<T>(0.0)));
+    const T y_ext = sqrt(max(tau2 * q00 / det, static_cast<T>(0.0)));
+
+    int32_t rect_min_x = max(
+        static_cast<int32_t>(coarse_min_x),
+        static_cast<int32_t>(floor((mean_x - x_ext) / tsize))
+    );
+    int32_t rect_max_x = min(
+        static_cast<int32_t>(coarse_max_x),
+        static_cast<int32_t>(ceil((mean_x + x_ext) / tsize))
+    );
+    int32_t rect_min_y = max(
+        static_cast<int32_t>(coarse_min_y),
+        static_cast<int32_t>(floor((mean_y - y_ext) / tsize))
+    );
+    int32_t rect_max_y = min(
+        static_cast<int32_t>(coarse_max_y),
+        static_cast<int32_t>(ceil((mean_y + y_ext) / tsize))
+    );
+
+    const int32_t x_span = rect_max_x - rect_min_x;
+    const int32_t y_span = rect_max_y - rect_min_y;
+    if (x_span <= 0 || y_span <= 0) {
+        return 0;
+    }
+
+    // Global y extrema and corresponding x locations.
+    const T arg_x_ymin = mean_x + q01 * y_ext / q00;
+    const T arg_x_ymax = mean_x - q01 * y_ext / q00;
+    const T y_min_global = mean_y - y_ext;
+    const T y_max_global = mean_y + y_ext;
+
+    // Global x extrema and corresponding y locations.
+    const T arg_y_xmin = mean_y + q01 * x_ext / q11;
+    const T arg_y_xmax = mean_y - q01 * x_ext / q11;
+    const T x_min_global = mean_x - x_ext;
+    const T x_max_global = mean_x + x_ext;
+
+    const bool sweep_y = y_span < x_span;
+    int64_t cur = out_start;
+    int32_t n_tiles = 0;
+
+    if (!sweep_y) {
+        // Sweep x-slices and compute covered y tile span for each x tile.
+        for (int32_t tx = rect_min_x; tx < rect_max_x; ++tx) {
+            const T x0 = tx * tsize;
+            const T x1 = x0 + tsize;
+
+            T v_min = static_cast<T>(1e30);
+            T v_max = static_cast<T>(-1e30);
+            bool has_any = false;
+
+            bool has = false;
+            T a = static_cast<T>(0.0), b = static_cast<T>(0.0);
+            cb_intersect_fixed_x(
+                x0,
+                mean_x,
+                mean_y,
+                q00,
+                q01,
+                q11,
+                det,
+                tau2,
+                has,
+                a,
+                b
+            );
+            if (has) {
+                v_min = min(v_min, min(a, b));
+                v_max = max(v_max, max(a, b));
+                has_any = true;
+            }
+            cb_intersect_fixed_x(
+                x1,
+                mean_x,
+                mean_y,
+                q00,
+                q01,
+                q11,
+                det,
+                tau2,
+                has,
+                a,
+                b
+            );
+            if (has) {
+                v_min = min(v_min, min(a, b));
+                v_max = max(v_max, max(a, b));
+                has_any = true;
+            }
+            if (x0 <= arg_x_ymin && arg_x_ymin < x1) {
+                v_min = min(v_min, y_min_global);
+                has_any = true;
+            }
+            if (x0 <= arg_x_ymax && arg_x_ymax < x1) {
+                v_max = max(v_max, y_max_global);
+                has_any = true;
+            }
+            if (!has_any) {
+                continue;
+            }
+
+            int32_t ty_min = max(
+                rect_min_y,
+                min(
+                    rect_max_y,
+                    static_cast<int32_t>(floor(v_min / tsize))
+                )
+            );
+            int32_t ty_max = min(
+                rect_max_y,
+                max(
+                    rect_min_y,
+                    static_cast<int32_t>(floor(v_max / tsize)) + 1
+                )
+            );
+            if (ty_max <= ty_min) {
+                continue;
+            }
+
+            n_tiles += (ty_max - ty_min);
+            if (write_out) {
+                for (int32_t ty = ty_min; ty < ty_max; ++ty) {
+                    const int64_t tile_id = ty * tile_width + tx;
+                    isect_ids[cur] = cid_enc | (tile_id << 32) | depth_id_enc;
+                    flatten_ids[cur] = flatten_idx;
+                    ++cur;
+                }
+            }
+        }
+    } else {
+        // Sweep y-slices and compute covered x tile span for each y tile.
+        for (int32_t ty = rect_min_y; ty < rect_max_y; ++ty) {
+            const T y0 = ty * tsize;
+            const T y1 = y0 + tsize;
+
+            T v_min = static_cast<T>(1e30);
+            T v_max = static_cast<T>(-1e30);
+            bool has_any = false;
+
+            bool has = false;
+            T a = static_cast<T>(0.0), b = static_cast<T>(0.0);
+            cb_intersect_fixed_y(
+                y0,
+                mean_x,
+                mean_y,
+                q00,
+                q01,
+                q11,
+                det,
+                tau2,
+                has,
+                a,
+                b
+            );
+            if (has) {
+                v_min = min(v_min, min(a, b));
+                v_max = max(v_max, max(a, b));
+                has_any = true;
+            }
+            cb_intersect_fixed_y(
+                y1,
+                mean_x,
+                mean_y,
+                q00,
+                q01,
+                q11,
+                det,
+                tau2,
+                has,
+                a,
+                b
+            );
+            if (has) {
+                v_min = min(v_min, min(a, b));
+                v_max = max(v_max, max(a, b));
+                has_any = true;
+            }
+            if (y0 <= arg_y_xmin && arg_y_xmin < y1) {
+                v_min = min(v_min, x_min_global);
+                has_any = true;
+            }
+            if (y0 <= arg_y_xmax && arg_y_xmax < y1) {
+                v_max = max(v_max, x_max_global);
+                has_any = true;
+            }
+            if (!has_any) {
+                continue;
+            }
+
+            int32_t tx_min = max(
+                rect_min_x,
+                min(
+                    rect_max_x,
+                    static_cast<int32_t>(floor(v_min / tsize))
+                )
+            );
+            int32_t tx_max = min(
+                rect_max_x,
+                max(
+                    rect_min_x,
+                    static_cast<int32_t>(floor(v_max / tsize)) + 1
+                )
+            );
+            if (tx_max <= tx_min) {
+                continue;
+            }
+
+            n_tiles += (tx_max - tx_min);
+            if (write_out) {
+                for (int32_t tx = tx_min; tx < tx_max; ++tx) {
+                    const int64_t tile_id = ty * tile_width + tx;
+                    isect_ids[cur] = cid_enc | (tile_id << 32) | depth_id_enc;
+                    flatten_ids[cur] = flatten_idx;
+                    ++cur;
+                }
+            }
+        }
+    }
+
+    return n_tiles;
+}
+
+template <typename T>
 __global__ void isect_tiles(
     // if the data is [C, N, ...] or [nnz, ...] (packed)
     const bool packed,
@@ -141,6 +444,7 @@ __global__ void isect_tiles(
     const float compact_box_mult,
     const float compact_box_tau2,
     const bool compact_box_use_global_tau2,
+    const bool compact_box_use_sweep,
     int32_t *__restrict__ tiles_per_gauss, // [C, N] or [nnz]
     int64_t *__restrict__ isect_ids,       // [n_isects]
     int32_t *__restrict__ flatten_ids      // [n_isects]
@@ -227,24 +531,50 @@ __global__ void isect_tiles(
         }
 
         int32_t n_tiles = 0;
-        for (int32_t i = tile_min.y; i < tile_max.y; ++i) {
-            for (int32_t j = tile_min.x; j < tile_max.x; ++j) {
-                // Keep if tile rectangle's minimum Mahalanobis distance
-                // is within threshold.
-                if (!tile_intersects_cb(
-                        mean2d.x,
-                        mean2d.y,
-                        j,
-                        i,
-                        tile_size,
-                        q00,
-                        q01,
-                        q11,
-                        cb_tau2
-                    )) {
-                    continue;
+        if (compact_box_use_sweep) {
+            n_tiles = cb_emit_or_count_sweep(
+                mean2d.x,
+                mean2d.y,
+                tile_size,
+                tile_width,
+                tile_height,
+                tile_min.x,
+                tile_min.y,
+                tile_max.x,
+                tile_max.y,
+                q00,
+                q01,
+                q11,
+                q00 * q11 - q01 * q01,
+                cb_tau2,
+                0,
+                0,
+                0,
+                0,
+                false,
+                nullptr,
+                nullptr
+            );
+        } else {
+            for (int32_t i = tile_min.y; i < tile_max.y; ++i) {
+                for (int32_t j = tile_min.x; j < tile_max.x; ++j) {
+                    // Keep if tile rectangle's minimum Mahalanobis distance
+                    // is within threshold.
+                    if (!tile_intersects_cb(
+                            mean2d.x,
+                            mean2d.y,
+                            j,
+                            i,
+                            tile_size,
+                            q00,
+                            q01,
+                            q11,
+                            cb_tau2
+                        )) {
+                        continue;
+                    }
+                    ++n_tiles;
                 }
-                ++n_tiles;
             }
         }
         tiles_per_gauss[idx] = n_tiles;
@@ -268,6 +598,32 @@ __global__ void isect_tiles(
     int64_t depth_id_enc = (int64_t) * (int32_t *)&(depths[idx]);
     int64_t cur_idx = (idx == 0) ? 0 : cum_tiles_per_gauss[idx - 1];
     if (compact_box && !cb_valid) {
+        return;
+    }
+    if (compact_box && compact_box_use_sweep) {
+        cb_emit_or_count_sweep(
+            mean2d.x,
+            mean2d.y,
+            tile_size,
+            tile_width,
+            tile_height,
+            tile_min.x,
+            tile_min.y,
+            tile_max.x,
+            tile_max.y,
+            q00,
+            q01,
+            q11,
+            q00 * q11 - q01 * q01,
+            cb_tau2,
+            cid_enc,
+            depth_id_enc,
+            static_cast<int32_t>(idx),
+            cur_idx,
+            true,
+            isect_ids,
+            flatten_ids
+        );
         return;
     }
     for (int32_t i = tile_min.y; i < tile_max.y; ++i) {
@@ -314,6 +670,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
     const float compact_box_mult,
     const float compact_box_tau2,
     const bool compact_box_use_global_tau2,
+    const bool compact_box_use_sweep,
     const bool sort,
     const bool double_buffer
 ) {
@@ -467,6 +824,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
                     compact_box_mult,
                     compact_box_tau2,
                     compact_box_use_global_tau2,
+                    compact_box_use_sweep,
                     tiles_per_gauss.data_ptr<int32_t>(),
                     nullptr,
                     nullptr
@@ -525,6 +883,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
                     compact_box_mult,
                     compact_box_tau2,
                     compact_box_use_global_tau2,
+                    compact_box_use_sweep,
                     nullptr,
                     isect_ids.data_ptr<int64_t>(),
                     flatten_ids.data_ptr<int32_t>()
