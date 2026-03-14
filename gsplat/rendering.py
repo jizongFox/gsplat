@@ -42,6 +42,9 @@ def rasterization(
     sh_degree: Optional[int] = None,
     packed: bool = True,
     tile_size: int = 16,
+    compact_box: bool = False,
+    compact_box_mult: float = 1.0,
+    compact_box_tau2: Optional[float] = None,
     backgrounds: Optional[Tensor] = None,
     render_mode: Literal["RGB", "D", "ED", "RGB+D", "RGB+ED"] = "RGB",
     sparse_grad: bool = False,
@@ -160,6 +163,12 @@ def rasterization(
             might not be as fast. Default is True.
         tile_size: The size of the tiles for rasterization. Default is 16.
             (Note: other values are not tested)
+        compact_box: Enable Compact Box tile pruning based on projected Gaussian
+            Mahalanobis distance. Default is False.
+        compact_box_mult: User-facing compactness multiplier used only when
+            `compact_box_tau2` is None. Default is 1.0.
+        compact_box_tau2: Explicit squared Mahalanobis threshold for Compact Box.
+            If set, this overrides `compact_box_mult`.
         backgrounds: The background colors. [C, D]. Default is None.
         render_mode: The rendering mode. Supported modes are "RGB", "D", "ED", "RGB+D",
             and "RGB+ED". "RGB" renders the colored image, "D" renders the accumulated depth, and
@@ -256,9 +265,9 @@ def rasterization(
             colors.dim() == 3 and colors.shape[:2] == (C, N)
         ), colors.shape
         if distributed:
-            assert (
-                colors.dim() == 2
-            ), "Distributed mode only supports per-Gaussian colors."
+            assert colors.dim() == 2, (
+                "Distributed mode only supports per-Gaussian colors."
+            )
     else:
         # treat colors as SH coefficients, should be in shape [N, K, 3] or [C, N, K, 3]
         # Allowing for activating partial SH bands
@@ -269,9 +278,9 @@ def rasterization(
         ), colors.shape
         assert (sh_degree + 1) ** 2 <= colors.shape[-2], colors.shape
         if distributed:
-            assert (
-                colors.dim() == 3
-            ), "Distributed mode only supports per-Gaussian colors."
+            assert colors.dim() == 3, (
+                "Distributed mode only supports per-Gaussian colors."
+            )
 
     if absgrad:
         assert not distributed, "AbsGrad is not supported in distributed mode."
@@ -505,6 +514,10 @@ def rasterization(
         n_cameras=C,
         camera_ids=camera_ids,
         gaussian_ids=gaussian_ids,
+        conics=conics,
+        compact_box=compact_box,
+        compact_box_mult=compact_box_mult,
+        compact_box_tau2=compact_box_tau2,
     )
     # print("rank", world_rank, "Before isect_offset_encode")
     isect_offsets = isect_offset_encode(isect_ids, C, tile_width, tile_height)
@@ -604,7 +617,6 @@ def _rasterization(
     camera_params: Optional[Dict] = None,
     channel_chunk: int = 32,
     batch_per_iter: int = 100,
-
 ) -> Tuple[Tensor, Tensor, Dict]:
     """A version of rasterization() that utilies on PyTorch's autograd.
 
@@ -667,7 +679,7 @@ def _rasterization(
         far_plane=far_plane,
         calc_compensations=(rasterize_mode == "antialiased"),
         camera_model=camera_model,
-        camera_params=camera_params
+        camera_params=camera_params,
     )
     opacities = opacities.repeat(C, 1)  # [C, N]
     camera_ids, gaussian_ids = None, None
@@ -1147,7 +1159,9 @@ def rasterization_2dgs(
             "ED",
             "RGB+D",
             "RGB+ED",
-        ], f"distloss requires depth rendering, render_mode should be D, ED, RGB+D, RGB+ED, but got {render_mode}"
+        ], (
+            f"distloss requires depth rendering, render_mode should be D, ED, RGB+D, RGB+ED, but got {render_mode}"
+        )
 
     if sh_degree is None:
         # treat colors as post-activation values
@@ -1157,9 +1171,9 @@ def rasterization_2dgs(
         ), colors.shape
     else:
         # treat colors as SH coefficients. Allowing for activating partial SH bands
-        assert (
-            colors.dim() == 3 and colors.shape[0] == N and colors.shape[2] == 3
-        ), colors.shape
+        assert colors.dim() == 3 and colors.shape[0] == N and colors.shape[2] == 3, (
+            colors.shape
+        )
         assert (sh_degree + 1) ** 2 <= colors.shape[1], colors.shape
 
     # Compute Ray-Splat intersection transformation.

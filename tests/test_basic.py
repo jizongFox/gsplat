@@ -473,6 +473,59 @@ def test_isect(test_data):
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
+def test_isect_compact_box(test_data):
+    from gsplat.cuda._wrapper import isect_tiles
+
+    torch.manual_seed(0)
+
+    C, N = 2, 1024
+    width, height = 64, 48
+    tile_size = 16
+    tile_width = math.ceil(width / tile_size)
+    tile_height = math.ceil(height / tile_size)
+
+    means2d = torch.randn(C, N, 2, device=device) * width
+    radii = torch.randint(0, width, (C, N), device=device, dtype=torch.int32)
+    depths = torch.rand(C, N, device=device)
+    conics = torch.zeros(C, N, 3, device=device)
+    conics[..., 0] = 1.0
+    conics[..., 2] = 1.0
+
+    base_tiles, base_isect_ids, base_flatten_ids = isect_tiles(
+        means2d, radii, depths, tile_size, tile_width, tile_height
+    )
+    loose_tiles, loose_isect_ids, loose_flatten_ids = isect_tiles(
+        means2d,
+        radii,
+        depths,
+        tile_size,
+        tile_width,
+        tile_height,
+        conics=conics,
+        compact_box=True,
+        compact_box_tau2=1e9,
+    )
+    tight_tiles, tight_isect_ids, tight_flatten_ids = isect_tiles(
+        means2d,
+        radii,
+        depths,
+        tile_size,
+        tile_width,
+        tile_height,
+        conics=conics,
+        compact_box=True,
+        compact_box_tau2=0.0,
+    )
+
+    torch.testing.assert_close(base_tiles, loose_tiles)
+    torch.testing.assert_close(base_isect_ids, loose_isect_ids)
+    torch.testing.assert_close(base_flatten_ids, loose_flatten_ids)
+    assert tight_tiles.sum() <= base_tiles.sum()
+    assert tight_isect_ids.numel() <= base_isect_ids.numel()
+    assert tight_flatten_ids.numel() <= base_flatten_ids.numel()
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
 @pytest.mark.parametrize("channels", [3, 32, 128])
 def test_rasterize_to_pixels(test_data, channels: int):
     from gsplat.cuda._torch_impl import _rasterize_to_pixels

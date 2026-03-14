@@ -13,6 +13,109 @@ namespace cg = cooperative_groups;
  ****************************************************************************/
 
 template <typename T>
+__device__ inline T cb_eval_d2(
+    const T x,
+    const T y,
+    const T q00,
+    const T q01,
+    const T q11
+) {
+    // d2 = [x y] * Q * [x y]^T where Q = [[q00, q01], [q01, q11]]. // mahalanobis distance
+    return q00 * x * x + static_cast<T>(2.0) * q01 * x * y + q11 * y * y;
+}
+
+template <typename T>
+__device__ inline T cb_rect_min_d2(
+    const T x0,
+    const T x1,
+    const T y0,
+    const T y1,
+    const T q00,
+    const T q01,
+    const T q11
+) {
+    // Exact minimum of a convex quadratic over an axis-aligned rectangle.
+    // Candidate set for convex Q:
+    // 1) 4 corners,
+    // 2) unconstrained interior minimizer (0, 0) if inside,
+    // 3) edge-wise constrained minimizers on x=x0/x1 and y=y0/y1.
+    // This avoids iterative optimization and is branch-light for CUDA.
+    T min_d2 = cb_eval_d2(x0, y0, q00, q01, q11);
+
+    // Corners.
+    min_d2 = min(min_d2, cb_eval_d2(x0, y1, q00, q01, q11));
+    min_d2 = min(min_d2, cb_eval_d2(x1, y0, q00, q01, q11));
+    min_d2 = min(min_d2, cb_eval_d2(x1, y1, q00, q01, q11));
+
+    // Interior candidate: since f is quadratic with gradient 2Q[x,y]^T,
+    // unconstrained optimum is at (0,0) in Gaussian-local coordinates.
+    if (x0 <= static_cast<T>(0.0) && x1 >= static_cast<T>(0.0) &&
+        y0 <= static_cast<T>(0.0) && y1 >= static_cast<T>(0.0)) {
+        min_d2 = min(min_d2, static_cast<T>(0.0));
+    }
+
+    // Vertical edges: fix x and solve df/dy = 0 -> y* = -q01*x/q11.
+    // Guard division for numerically tiny q11.
+    constexpr T eps = static_cast<T>(1e-12);
+    if (fabs(q11) > eps) {
+        T yx0 = -q01 * x0 / q11;
+        yx0 = min(max(yx0, y0), y1);
+        min_d2 = min(min_d2, cb_eval_d2(x0, yx0, q00, q01, q11));
+
+        T yx1 = -q01 * x1 / q11;
+        yx1 = min(max(yx1, y0), y1);
+        min_d2 = min(min_d2, cb_eval_d2(x1, yx1, q00, q01, q11));
+    }
+
+    // Horizontal edges: fix y and solve df/dx = 0 -> x* = -q01*y/q00.
+    // Guard division for numerically tiny q00.
+    if (fabs(q00) > eps) {
+        T xy0 = -q01 * y0 / q00;
+        xy0 = min(max(xy0, x0), x1);
+        min_d2 = min(min_d2, cb_eval_d2(xy0, y0, q00, q01, q11));
+
+        T xy1 = -q01 * y1 / q00;
+        xy1 = min(max(xy1, x0), x1);
+        min_d2 = min(min_d2, cb_eval_d2(xy1, y1, q00, q01, q11));
+    }
+
+    return min_d2;
+}
+
+template <typename T>
+__device__ inline bool tile_intersects_cb(
+    const T mean_x,
+    const T mean_y,
+    const int32_t tile_x,
+    const int32_t tile_y,
+    const uint32_t tile_size,
+    const T q00,
+    const T q01,
+    const T q11,
+    const T tau2
+) {
+    // Continuous tile rectangle in pixel-center coordinates.
+    // This keeps CB conservative w.r.t. rasterization at pixel centers.
+    // x in [tile_x * tile_size + 0.5, (tile_x + 1) * tile_size - 0.5]
+    // y in [tile_y * tile_size + 0.5, (tile_y + 1) * tile_size - 0.5]
+    const T tile_x0 = tile_x * static_cast<T>(tile_size) + static_cast<T>(0.5);
+    const T tile_x1 =
+        tile_x0 + static_cast<T>(tile_size) - static_cast<T>(1.0);
+    const T tile_y0 = tile_y * static_cast<T>(tile_size) + static_cast<T>(0.5);
+    const T tile_y1 =
+        tile_y0 + static_cast<T>(tile_size) - static_cast<T>(1.0);
+
+    // Shift tile bounds to Gaussian-local coordinates before evaluating d2.
+    const T x0 = tile_x0 - mean_x;
+    const T x1 = tile_x1 - mean_x;
+    const T y0 = tile_y0 - mean_y;
+    const T y1 = tile_y1 - mean_y;
+
+    const T min_d2 = cb_rect_min_d2(x0, x1, y0, y1, q00, q01, q11);
+    return min_d2 <= tau2;
+}
+
+template <typename T>
 __global__ void isect_tiles(
     // if the data is [C, N, ...] or [nnz, ...] (packed)
     const bool packed,
@@ -27,11 +130,14 @@ __global__ void isect_tiles(
     const T *__restrict__ means2d,                   // [C, N, 2] or [nnz, 2]
     const int32_t *__restrict__ radii,               // [C, N] or [nnz]
     const T *__restrict__ depths,                    // [C, N] or [nnz]
+    const T *__restrict__ conics,                    // [C, N, 3] or [nnz, 3]
     const int64_t *__restrict__ cum_tiles_per_gauss, // [C, N] or [nnz]
     const uint32_t tile_size,
     const uint32_t tile_width,
     const uint32_t tile_height,
     const uint32_t tile_n_bits,
+    const bool compact_box,
+    const float compact_box_tau2,
     int32_t *__restrict__ tiles_per_gauss, // [C, N] or [nnz]
     int64_t *__restrict__ isect_ids,       // [n_isects]
     int32_t *__restrict__ flatten_ids      // [n_isects]
@@ -41,6 +147,9 @@ __global__ void isect_tiles(
 
     // parallelize over C * N.
     uint32_t idx = cg::this_grid().thread_rank();
+    // two-pass kernel:
+    // pass 1: count intersections per Gaussian (cum ptr is null)
+    // pass 2: write encoded intersection tuples
     bool first_pass = cum_tiles_per_gauss == nullptr;
     if (idx >= (packed ? nnz : C * N)) {
         return;
@@ -60,7 +169,9 @@ __global__ void isect_tiles(
     OpT tile_x = mean2d.x / static_cast<OpT>(tile_size);
     OpT tile_y = mean2d.y / static_cast<OpT>(tile_size);
 
-    // tile_min is inclusive, tile_max is exclusive
+    // Coarse candidate tile box from radius:
+    // tile_min is inclusive, tile_max is exclusive.
+    // CB (if enabled) only prunes inside this coarse box.
     uint2 tile_min, tile_max;
     tile_min.x = min(max(0, (uint32_t)floor(tile_x - tile_radius)), tile_width);
     tile_min.y =
@@ -68,11 +179,47 @@ __global__ void isect_tiles(
     tile_max.x = min(max(0, (uint32_t)ceil(tile_x + tile_radius)), tile_width);
     tile_max.y = min(max(0, (uint32_t)ceil(tile_y + tile_radius)), tile_height);
 
+    OpT q00 = static_cast<OpT>(0.0), q01 = static_cast<OpT>(0.0),
+        q11 = static_cast<OpT>(0.0);
+    if (compact_box) {
+        // Conic layout is [q00, q01, q11] per projected Gaussian.
+        q00 = conics[3 * idx];
+        q01 = conics[3 * idx + 1];
+        q11 = conics[3 * idx + 2];
+    }
+
     if (first_pass) {
-        // first pass only writes out tiles_per_gauss
-        tiles_per_gauss[idx] = static_cast<int32_t>(
-            (tile_max.y - tile_min.y) * (tile_max.x - tile_min.x)
-        );
+        // First pass computes per-Gaussian pair counts used for prefix sum.
+        // It must use the same CB predicate as second pass to keep offsets valid.
+        if (!compact_box) {
+            tiles_per_gauss[idx] = static_cast<int32_t>(
+                (tile_max.y - tile_min.y) * (tile_max.x - tile_min.x)
+            );
+            return;
+        }
+
+        int32_t n_tiles = 0;
+        for (int32_t i = tile_min.y; i < tile_max.y; ++i) {
+            for (int32_t j = tile_min.x; j < tile_max.x; ++j) {
+                // Keep if tile rectangle's minimum Mahalanobis distance
+                // is within threshold.
+                if (!tile_intersects_cb(
+                        mean2d.x,
+                        mean2d.y,
+                        j,
+                        i,
+                        tile_size,
+                        q00,
+                        q01,
+                        q11,
+                        static_cast<OpT>(compact_box_tau2)
+                    )) {
+                    continue;
+                }
+                ++n_tiles;
+            }
+        }
+        tiles_per_gauss[idx] = n_tiles;
         return;
     }
 
@@ -86,12 +233,29 @@ __global__ void isect_tiles(
         cid = idx / N;
         // gid = idx % N;
     }
+    // Upper bits carry (camera, tile), lower 32 bits carry depth ordering key.
     const int64_t cid_enc = cid << (32 + tile_n_bits);
 
+    // Reinterpret depth bits and append to low 32 bits for stable depth sorting.
     int64_t depth_id_enc = (int64_t) * (int32_t *)&(depths[idx]);
     int64_t cur_idx = (idx == 0) ? 0 : cum_tiles_per_gauss[idx - 1];
     for (int32_t i = tile_min.y; i < tile_max.y; ++i) {
         for (int32_t j = tile_min.x; j < tile_max.x; ++j) {
+            if (compact_box &&
+                !tile_intersects_cb(
+                    mean2d.x,
+                    mean2d.y,
+                    j,
+                    i,
+                    tile_size,
+                    q00,
+                    q01,
+                    q11,
+                    static_cast<OpT>(compact_box_tau2)
+                )) {
+                continue;
+            }
+            // Emit only surviving (camera, gaussian, tile) pairs.
             int64_t tile_id = i * tile_width + j;
             // e.g. tile_n_bits = 22:
             // camera id (10 bits) | tile id (22 bits) | depth (32 bits)
@@ -107,12 +271,15 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
     const torch::Tensor &means2d,                    // [C, N, 2] or [nnz, 2]
     const torch::Tensor &radii,                      // [C, N] or [nnz]
     const torch::Tensor &depths,                     // [C, N] or [nnz]
+    const at::optional<torch::Tensor> &conics,       // [C, N, 3] or [nnz, 3]
     const at::optional<torch::Tensor> &camera_ids,   // [nnz]
     const at::optional<torch::Tensor> &gaussian_ids, // [nnz]
     const uint32_t C,
     const uint32_t tile_size,
     const uint32_t tile_width,
     const uint32_t tile_height,
+    const bool compact_box,
+    const float compact_box_tau2,
     const bool sort,
     const bool double_buffer
 ) {
@@ -120,6 +287,20 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
     GSPLAT_CHECK_INPUT(means2d);
     GSPLAT_CHECK_INPUT(radii);
     GSPLAT_CHECK_INPUT(depths);
+    if (compact_box) {
+        // CB needs conic Q to evaluate Mahalanobis tile distance.
+        TORCH_CHECK(
+            conics.has_value(),
+            "conics must be provided when compact_box is enabled"
+        );
+    }
+    if (conics.has_value()) {
+        GSPLAT_CHECK_INPUT(conics.value());
+        TORCH_CHECK(
+            conics.value().scalar_type() == means2d.scalar_type(),
+            "conics and means2d must have same dtype"
+        );
+    }
     if (camera_ids.has_value()) {
         GSPLAT_CHECK_INPUT(camera_ids.value());
     }
@@ -132,6 +313,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
     int64_t *camera_ids_ptr = nullptr;
     int64_t *gaussian_ids_ptr = nullptr;
     if (packed) {
+        // Packed layout: 1D nnz list with explicit camera/gaussian ids.
         nnz = means2d.size(0);
         total_elems = nnz;
         TORCH_CHECK(
@@ -140,10 +322,29 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
         );
         camera_ids_ptr = camera_ids.value().data_ptr<int64_t>();
         gaussian_ids_ptr = gaussian_ids.value().data_ptr<int64_t>();
+        if (conics.has_value()) {
+            TORCH_CHECK(
+                conics.value().dim() == 2 && conics.value().size(0) == nnz &&
+                    conics.value().size(1) == 3,
+                "Packed conics must have shape [nnz, 3]"
+            );
+        }
     } else {
+        // Unpacked layout: dense [C, N, ...] tensors.
         N = means2d.size(1); // number of gaussians
         total_elems = C * N;
+        if (conics.has_value()) {
+            TORCH_CHECK(
+                conics.value().dim() == 3 && conics.value().size(0) == C &&
+                    conics.value().size(1) == N && conics.value().size(2) == 3,
+                "Unpacked conics must have shape [C, N, 3]"
+            );
+        }
     }
+
+    // Empty tensor is safe because kernel receives nullptr when CB is off.
+    const auto conics_tensor =
+        conics.has_value() ? conics.value() : torch::Tensor();
 
     uint32_t n_tiles = tile_width * tile_height;
     at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
@@ -158,7 +359,8 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
     // check if we have enough bits for them.
     assert(tile_n_bits + cam_n_bits <= 32);
 
-    // first pass: compute number of tiles per gaussian
+    // First pass: count surviving tiles per gaussian.
+    // Counts include CB pruning so prefix sum reflects final output size.
     torch::Tensor tiles_per_gauss =
         torch::empty_like(depths, depths.options().dtype(torch::kInt32));
 
@@ -185,11 +387,19 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
                     reinterpret_cast<scalar_t *>(means2d.data_ptr<scalar_t>()),
                     radii.data_ptr<int32_t>(),
                     depths.data_ptr<scalar_t>(),
+                    compact_box
+                        // When CB is disabled, pass nullptr to skip conic loads.
+                        ? reinterpret_cast<scalar_t *>(
+                              conics_tensor.data_ptr<scalar_t>()
+                          )
+                        : nullptr,
                     nullptr,
                     tile_size,
                     tile_width,
                     tile_height,
                     tile_n_bits,
+                    compact_box,
+                    compact_box_tau2,
                     tiles_per_gauss.data_ptr<int32_t>(),
                     nullptr,
                     nullptr
@@ -202,7 +412,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
         n_isects = 0;
     }
 
-    // second pass: compute isect_ids and flatten_ids as a packed tensor
+    // Second pass: emit intersection records into compact arrays.
     torch::Tensor isect_ids =
         torch::empty({n_isects}, depths.options().dtype(torch::kInt64));
     torch::Tensor flatten_ids =
@@ -228,11 +438,19 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
                     reinterpret_cast<scalar_t *>(means2d.data_ptr<scalar_t>()),
                     radii.data_ptr<int32_t>(),
                     depths.data_ptr<scalar_t>(),
+                    compact_box
+                        // Keep same nullptr/valid-pointer contract as first pass.
+                        ? reinterpret_cast<scalar_t *>(
+                              conics_tensor.data_ptr<scalar_t>()
+                          )
+                        : nullptr,
                     cum_tiles_per_gauss.data_ptr<int64_t>(),
                     tile_size,
                     tile_width,
                     tile_height,
                     tile_n_bits,
+                    compact_box,
+                    compact_box_tau2,
                     nullptr,
                     isect_ids.data_ptr<int64_t>(),
                     flatten_ids.data_ptr<int32_t>()

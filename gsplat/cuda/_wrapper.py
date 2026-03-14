@@ -355,6 +355,10 @@ def isect_tiles(
     n_cameras: Optional[int] = None,
     camera_ids: Optional[Tensor] = None,
     gaussian_ids: Optional[Tensor] = None,
+    conics: Optional[Tensor] = None,
+    compact_box: bool = False,
+    compact_box_mult: float = 1.0,
+    compact_box_tau2: Optional[float] = None,
 ) -> Tuple[Tensor, Tensor, Tensor]:
     """Maps projected Gaussians to intersecting tiles.
 
@@ -370,6 +374,15 @@ def isect_tiles(
         n_cameras: Number of cameras. Required if packed is True.
         camera_ids: The row indices of the projected Gaussians. Required if packed is True.
         gaussian_ids: The column indices of the projected Gaussians. Required if packed is True.
+        conics: Inverse projected covariance values (q00, q01, q11). Required only
+            when compact_box is enabled.
+        compact_box: If True, enable Mahalanobis compact-box pruning at tile-pair
+            generation. Default: False.
+        compact_box_mult: User-facing compactness multiplier used only when
+            compact_box_tau2 is None. Provisional mapping: tau2 = 9 * mult^2.
+            Default: 1.0.
+        compact_box_tau2: Explicit squared Mahalanobis threshold. If provided,
+            this overrides compact_box_mult.
 
     Returns:
         A tuple:
@@ -400,16 +413,33 @@ def isect_tiles(
         assert radii.shape == (C, N), radii.size()
         assert depths.shape == (C, N), depths.size()
 
+    if compact_box:
+        assert conics is not None, "conics is required when compact_box is True"
+        if packed:
+            assert conics.shape == (nnz, 3), conics.size()
+        else:
+            assert conics.shape == (C, N, 3), conics.size()
+        if compact_box_tau2 is None:
+            compact_box_tau2 = 9.0 * float(compact_box_mult) * float(compact_box_mult)
+        compact_box_tau2 = float(compact_box_tau2)
+        assert compact_box_tau2 >= 0.0, compact_box_tau2
+        conics = conics.contiguous()
+    else:
+        compact_box_tau2 = 0.0
+
     tiles_per_gauss, isect_ids, flatten_ids = _make_lazy_cuda_func("isect_tiles")(
         means2d.contiguous(),
         radii.contiguous(),
         depths.contiguous(),
+        conics,
         camera_ids,
         gaussian_ids,
         C,
         tile_size,
         tile_width,
         tile_height,
+        compact_box,
+        compact_box_tau2,
         sort,
         True,  # DoubleBuffer: memory efficient radixsort
     )
@@ -544,12 +574,12 @@ def rasterize_to_pixels(
         padded_channels = 0
 
     tile_height, tile_width = isect_offsets.shape[1:3]
-    assert (
-        tile_height * tile_size >= image_height
-    ), f"Assert Failed: {tile_height} * {tile_size} >= {image_height}"
-    assert (
-        tile_width * tile_size >= image_width
-    ), f"Assert Failed: {tile_width} * {tile_size} >= {image_width}"
+    assert tile_height * tile_size >= image_height, (
+        f"Assert Failed: {tile_height} * {tile_size} >= {image_height}"
+    )
+    assert tile_width * tile_size >= image_width, (
+        f"Assert Failed: {tile_width} * {tile_size} >= {image_width}"
+    )
 
     render_colors, render_alphas = _RasterizeToPixels.apply(
         means2d.contiguous(),
@@ -621,12 +651,12 @@ def rasterize_to_indices_in_range(
     assert isect_offsets.shape[0] == C, isect_offsets.shape
 
     tile_height, tile_width = isect_offsets.shape[1:3]
-    assert (
-        tile_height * tile_size >= image_height
-    ), f"Assert Failed: {tile_height} * {tile_size} >= {image_height}"
-    assert (
-        tile_width * tile_size >= image_width
-    ), f"Assert Failed: {tile_width} * {tile_size} >= {image_width}"
+    assert tile_height * tile_size >= image_height, (
+        f"Assert Failed: {tile_height} * {tile_size} >= {image_height}"
+    )
+    assert tile_width * tile_size >= image_width, (
+        f"Assert Failed: {tile_width} * {tile_size} >= {image_width}"
+    )
 
     out_gauss_ids, out_indices = _make_lazy_cuda_func("rasterize_to_indices_in_range")(
         range_start,
@@ -1558,7 +1588,6 @@ class _FullyFusedProjection2DGS(torch.autograd.Function):
             grad_K = None
             # compute the gradient with respect to K.
         else:
-
             T_cl = Ks.inverse() @ ray_transforms  # this matches exactly.
             visibility_filter = radii > 0
 
@@ -1908,12 +1937,12 @@ def rasterize_to_pixels_2dgs(
     else:
         padded_channels = 0
     tile_height, tile_width = isect_offsets.shape[1:3]
-    assert (
-        tile_height * tile_size >= image_height
-    ), f"Assert Failed: {tile_height} * {tile_size} >= {image_height}"
-    assert (
-        tile_width * tile_size >= image_width
-    ), f"Assert Failed: {tile_width} * {tile_size} >= {image_width}"
+    assert tile_height * tile_size >= image_height, (
+        f"Assert Failed: {tile_height} * {tile_size} >= {image_height}"
+    )
+    assert tile_width * tile_size >= image_width, (
+        f"Assert Failed: {tile_width} * {tile_size} >= {image_width}"
+    )
 
     (
         render_colors,
@@ -1995,12 +2024,12 @@ def rasterize_to_indices_in_range_2dgs(
     assert isect_offsets.shape[0] == C, isect_offsets.shape
 
     tile_height, tile_width = isect_offsets.shape[1:3]
-    assert (
-        tile_height * tile_size >= image_height
-    ), f"Assert Failed: {tile_height} * {tile_size} >= {image_height}"
-    assert (
-        tile_width * tile_size >= image_width
-    ), f"Assert Failed: {tile_width} * {tile_size} >= {image_width}"
+    assert tile_height * tile_size >= image_height, (
+        f"Assert Failed: {tile_height} * {tile_size} >= {image_height}"
+    )
+    assert tile_width * tile_size >= image_width, (
+        f"Assert Failed: {tile_width} * {tile_size} >= {image_width}"
+    )
 
     out_gauss_ids, out_indices = _make_lazy_cuda_func(
         "rasterize_to_indices_in_range_2dgs"
@@ -2108,7 +2137,6 @@ class _RasterizeToPixels2DGS(torch.autograd.Function):
         v_render_distort: Tensor,
         v_render_median: Tensor,
     ):
-
         (
             means2d,
             ray_transforms,
