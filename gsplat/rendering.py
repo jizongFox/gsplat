@@ -166,7 +166,9 @@ def rasterization(
         compact_box: Enable Compact Box tile pruning based on projected Gaussian
             Mahalanobis distance. Default is False.
         compact_box_mult: User-facing compactness multiplier used only when
-            `compact_box_tau2` is None. Default is 1.0.
+            `compact_box_tau2` is None. In that case, each Gaussian uses
+            `tau2 = compact_box_mult * 2 * log(opacity * 255)`.
+            Default is 1.0.
         compact_box_tau2: Explicit squared Mahalanobis threshold for Compact Box.
             If set, this overrides `compact_box_mult`.
         backgrounds: The background colors. [C, D]. Default is None.
@@ -514,6 +516,7 @@ def rasterization(
         n_cameras=C,
         camera_ids=camera_ids,
         gaussian_ids=gaussian_ids,
+        opacities=opacities,
         conics=conics,
         compact_box=compact_box,
         compact_box_mult=compact_box_mult,

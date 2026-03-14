@@ -355,6 +355,7 @@ def isect_tiles(
     n_cameras: Optional[int] = None,
     camera_ids: Optional[Tensor] = None,
     gaussian_ids: Optional[Tensor] = None,
+    opacities: Optional[Tensor] = None,
     conics: Optional[Tensor] = None,
     compact_box: bool = False,
     compact_box_mult: float = 1.0,
@@ -374,13 +375,15 @@ def isect_tiles(
         n_cameras: Number of cameras. Required if packed is True.
         camera_ids: The row indices of the projected Gaussians. Required if packed is True.
         gaussian_ids: The column indices of the projected Gaussians. Required if packed is True.
+        opacities: Gaussian opacities used by Compact Box thresholding.
+            Required only when compact_box is enabled.
         conics: Inverse projected covariance values (q00, q01, q11). Required only
             when compact_box is enabled.
         compact_box: If True, enable Mahalanobis compact-box pruning at tile-pair
             generation. Default: False.
         compact_box_mult: User-facing compactness multiplier used only when
-            compact_box_tau2 is None. Provisional mapping: tau2 = 9 * mult^2.
-            Default: 1.0.
+            compact_box_tau2 is None, where tau2 is derived per-Gaussian from
+            opacity. Default: 1.0.
         compact_box_tau2: Explicit squared Mahalanobis threshold. If provided,
             this overrides compact_box_mult.
 
@@ -413,25 +416,37 @@ def isect_tiles(
         assert radii.shape == (C, N), radii.size()
         assert depths.shape == (C, N), depths.size()
 
+    if conics is not None:
+        conics = conics.contiguous()
+    if opacities is not None:
+        opacities = opacities.contiguous()
+
     if compact_box:
+        assert opacities is not None, "opacities is required when compact_box is True"
         assert conics is not None, "conics is required when compact_box is True"
         if packed:
+            assert opacities.shape == (nnz,), opacities.size()
             assert conics.shape == (nnz, 3), conics.size()
         else:
+            assert opacities.shape == (C, N), opacities.size()
             assert conics.shape == (C, N, 3), conics.size()
-        if compact_box_tau2 is None:
-            compact_box_tau2 = 9.0 * float(compact_box_mult) * float(compact_box_mult)
-        compact_box_tau2 = float(compact_box_tau2)
-        assert compact_box_tau2 >= 0.0, compact_box_tau2
-        conics = conics.contiguous()
+        compact_box_mult = float(compact_box_mult)
+        compact_box_use_global_tau2 = compact_box_tau2 is not None
+        compact_box_tau2 = (
+            float(compact_box_tau2) if compact_box_use_global_tau2 else 0.0
+        )
     else:
+        compact_box_use_global_tau2 = False
         compact_box_tau2 = 0.0
+        compact_box_mult = 1.0
 
-    tiles_per_gauss, isect_ids, flatten_ids = _make_lazy_cuda_func("isect_tiles")(
+    isect_tiles_cuda = _make_lazy_cuda_func("isect_tiles")
+    tiles_per_gauss, isect_ids, flatten_ids = isect_tiles_cuda(
         means2d.contiguous(),
         radii.contiguous(),
         depths.contiguous(),
         conics,
+        opacities,
         camera_ids,
         gaussian_ids,
         C,
@@ -439,7 +454,9 @@ def isect_tiles(
         tile_width,
         tile_height,
         compact_box,
+        compact_box_mult,
         compact_box_tau2,
+        compact_box_use_global_tau2,
         sort,
         True,  # DoubleBuffer: memory efficient radixsort
     )

@@ -487,6 +487,7 @@ def test_isect_compact_box(test_data):
     means2d = torch.randn(C, N, 2, device=device) * width
     radii = torch.randint(0, width, (C, N), device=device, dtype=torch.int32)
     depths = torch.rand(C, N, device=device)
+    opacities = torch.full((C, N), 0.8, device=device)
     conics = torch.zeros(C, N, 3, device=device)
     conics[..., 0] = 1.0
     conics[..., 2] = 1.0
@@ -501,6 +502,7 @@ def test_isect_compact_box(test_data):
         tile_size,
         tile_width,
         tile_height,
+        opacities=opacities,
         conics=conics,
         compact_box=True,
         compact_box_tau2=1e9,
@@ -512,6 +514,7 @@ def test_isect_compact_box(test_data):
         tile_size,
         tile_width,
         tile_height,
+        opacities=opacities,
         conics=conics,
         compact_box=True,
         compact_box_tau2=0.0,
@@ -523,6 +526,111 @@ def test_isect_compact_box(test_data):
     assert tight_tiles.sum() <= base_tiles.sum()
     assert tight_isect_ids.numel() <= base_isect_ids.numel()
     assert tight_flatten_ids.numel() <= base_flatten_ids.numel()
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
+def test_isect_compact_box_opacity_sensitive(test_data):
+    from gsplat.cuda._wrapper import isect_tiles
+
+    torch.manual_seed(1)
+
+    C, N = 2, 1024
+    width, height = 64, 48
+    tile_size = 16
+    tile_width = math.ceil(width / tile_size)
+    tile_height = math.ceil(height / tile_size)
+
+    means2d = torch.randn(C, N, 2, device=device) * width
+    radii = torch.randint(1, width, (C, N), device=device, dtype=torch.int32)
+    depths = torch.rand(C, N, device=device)
+    conics = torch.zeros(C, N, 3, device=device)
+    conics[..., 0] = 1.0
+    conics[..., 2] = 1.0
+    high_opacity = torch.full((C, N), 0.8, device=device)
+    low_opacity = torch.full((C, N), 1.0 / 255.0, device=device)
+
+    high_tiles, high_isect_ids, high_flatten_ids = isect_tiles(
+        means2d,
+        radii,
+        depths,
+        tile_size,
+        tile_width,
+        tile_height,
+        opacities=high_opacity,
+        conics=conics,
+        compact_box=True,
+        compact_box_mult=1.0,
+    )
+    low_tiles, low_isect_ids, low_flatten_ids = isect_tiles(
+        means2d,
+        radii,
+        depths,
+        tile_size,
+        tile_width,
+        tile_height,
+        opacities=low_opacity,
+        conics=conics,
+        compact_box=True,
+        compact_box_mult=1.0,
+    )
+
+    assert low_tiles.sum() <= high_tiles.sum()
+    assert low_isect_ids.numel() <= high_isect_ids.numel()
+    assert low_flatten_ids.numel() <= high_flatten_ids.numel()
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
+def test_isect_compact_box_invalid_conic_skip(test_data):
+    from gsplat.cuda._wrapper import isect_tiles
+
+    torch.manual_seed(2)
+
+    C, N = 2, 256
+    width, height = 64, 48
+    tile_size = 16
+    tile_width = math.ceil(width / tile_size)
+    tile_height = math.ceil(height / tile_size)
+
+    means2d = torch.randn(C, N, 2, device=device) * width
+    radii = torch.randint(1, width, (C, N), device=device, dtype=torch.int32)
+    depths = torch.rand(C, N, device=device)
+    opacities = torch.full((C, N), 0.8, device=device)
+
+    valid_conics = torch.zeros(C, N, 3, device=device)
+    valid_conics[..., 0] = 1.0
+    valid_conics[..., 2] = 1.0
+    invalid_conics = valid_conics.clone()
+    invalid_conics[0, :, 0] = -1.0
+
+    valid_tiles, valid_isect_ids, valid_flatten_ids = isect_tiles(
+        means2d,
+        radii,
+        depths,
+        tile_size,
+        tile_width,
+        tile_height,
+        opacities=opacities,
+        conics=valid_conics,
+        compact_box=True,
+        compact_box_mult=1.0,
+    )
+    invalid_tiles, invalid_isect_ids, invalid_flatten_ids = isect_tiles(
+        means2d,
+        radii,
+        depths,
+        tile_size,
+        tile_width,
+        tile_height,
+        opacities=opacities,
+        conics=invalid_conics,
+        compact_box=True,
+        compact_box_mult=1.0,
+    )
+
+    assert torch.count_nonzero(invalid_tiles[0]).item() == 0
+    assert invalid_tiles.sum() <= valid_tiles.sum()
+    assert invalid_isect_ids.numel() <= valid_isect_ids.numel()
+    assert invalid_flatten_ids.numel() <= valid_flatten_ids.numel()
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")

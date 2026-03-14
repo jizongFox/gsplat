@@ -131,13 +131,16 @@ __global__ void isect_tiles(
     const int32_t *__restrict__ radii,               // [C, N] or [nnz]
     const T *__restrict__ depths,                    // [C, N] or [nnz]
     const T *__restrict__ conics,                    // [C, N, 3] or [nnz, 3]
+    const T *__restrict__ opacities,                 // [C, N] or [nnz]
     const int64_t *__restrict__ cum_tiles_per_gauss, // [C, N] or [nnz]
     const uint32_t tile_size,
     const uint32_t tile_width,
     const uint32_t tile_height,
     const uint32_t tile_n_bits,
     const bool compact_box,
+    const float compact_box_mult,
     const float compact_box_tau2,
+    const bool compact_box_use_global_tau2,
     int32_t *__restrict__ tiles_per_gauss, // [C, N] or [nnz]
     int64_t *__restrict__ isect_ids,       // [n_isects]
     int32_t *__restrict__ flatten_ids      // [n_isects]
@@ -181,11 +184,32 @@ __global__ void isect_tiles(
 
     OpT q00 = static_cast<OpT>(0.0), q01 = static_cast<OpT>(0.0),
         q11 = static_cast<OpT>(0.0);
+    OpT cb_tau2 = static_cast<OpT>(0.0);
+    bool cb_valid = compact_box;
     if (compact_box) {
         // Conic layout is [q00, q01, q11] per projected Gaussian.
         q00 = conics[3 * idx];
         q01 = conics[3 * idx + 1];
         q11 = conics[3 * idx + 2];
+
+        constexpr OpT cb_eps = static_cast<OpT>(1e-12);
+        const OpT det = q00 * q11 - q01 * q01;
+        cb_valid = (q00 > static_cast<OpT>(0.0)) &&
+                   (q11 > static_cast<OpT>(0.0)) && (det > cb_eps);
+        if (cb_valid) {
+            if (compact_box_use_global_tau2) {
+                cb_tau2 = static_cast<OpT>(compact_box_tau2);
+            } else {
+                const OpT opacity_safe = max(
+                    opacities[idx],
+                    static_cast<OpT>(1e-9)
+                );
+                cb_tau2 = static_cast<OpT>(compact_box_mult) *
+                          static_cast<OpT>(2.0) *
+                          log(opacity_safe * static_cast<OpT>(255.0));
+            }
+            cb_valid = cb_tau2 > static_cast<OpT>(0.0);
+        }
     }
 
     if (first_pass) {
@@ -195,6 +219,10 @@ __global__ void isect_tiles(
             tiles_per_gauss[idx] = static_cast<int32_t>(
                 (tile_max.y - tile_min.y) * (tile_max.x - tile_min.x)
             );
+            return;
+        }
+        if (!cb_valid) {
+            tiles_per_gauss[idx] = 0;
             return;
         }
 
@@ -212,7 +240,7 @@ __global__ void isect_tiles(
                         q00,
                         q01,
                         q11,
-                        static_cast<OpT>(compact_box_tau2)
+                        cb_tau2
                     )) {
                     continue;
                 }
@@ -239,6 +267,9 @@ __global__ void isect_tiles(
     // Reinterpret depth bits and append to low 32 bits for stable depth sorting.
     int64_t depth_id_enc = (int64_t) * (int32_t *)&(depths[idx]);
     int64_t cur_idx = (idx == 0) ? 0 : cum_tiles_per_gauss[idx - 1];
+    if (compact_box && !cb_valid) {
+        return;
+    }
     for (int32_t i = tile_min.y; i < tile_max.y; ++i) {
         for (int32_t j = tile_min.x; j < tile_max.x; ++j) {
             if (compact_box &&
@@ -251,7 +282,7 @@ __global__ void isect_tiles(
                     q00,
                     q01,
                     q11,
-                    static_cast<OpT>(compact_box_tau2)
+                    cb_tau2
                 )) {
                 continue;
             }
@@ -272,6 +303,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
     const torch::Tensor &radii,                      // [C, N] or [nnz]
     const torch::Tensor &depths,                     // [C, N] or [nnz]
     const at::optional<torch::Tensor> &conics,       // [C, N, 3] or [nnz, 3]
+    const at::optional<torch::Tensor> &opacities,    // [C, N] or [nnz]
     const at::optional<torch::Tensor> &camera_ids,   // [nnz]
     const at::optional<torch::Tensor> &gaussian_ids, // [nnz]
     const uint32_t C,
@@ -279,7 +311,9 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
     const uint32_t tile_width,
     const uint32_t tile_height,
     const bool compact_box,
+    const float compact_box_mult,
     const float compact_box_tau2,
+    const bool compact_box_use_global_tau2,
     const bool sort,
     const bool double_buffer
 ) {
@@ -293,12 +327,23 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
             conics.has_value(),
             "conics must be provided when compact_box is enabled"
         );
+        TORCH_CHECK(
+            opacities.has_value(),
+            "opacities must be provided when compact_box is enabled"
+        );
     }
     if (conics.has_value()) {
         GSPLAT_CHECK_INPUT(conics.value());
         TORCH_CHECK(
             conics.value().scalar_type() == means2d.scalar_type(),
             "conics and means2d must have same dtype"
+        );
+    }
+    if (opacities.has_value()) {
+        GSPLAT_CHECK_INPUT(opacities.value());
+        TORCH_CHECK(
+            opacities.value().scalar_type() == means2d.scalar_type(),
+            "opacities and means2d must have same dtype"
         );
     }
     if (camera_ids.has_value()) {
@@ -329,6 +374,12 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
                 "Packed conics must have shape [nnz, 3]"
             );
         }
+        if (opacities.has_value()) {
+            TORCH_CHECK(
+                opacities.value().dim() == 1 && opacities.value().size(0) == nnz,
+                "Packed opacities must have shape [nnz]"
+            );
+        }
     } else {
         // Unpacked layout: dense [C, N, ...] tensors.
         N = means2d.size(1); // number of gaussians
@@ -340,11 +391,20 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
                 "Unpacked conics must have shape [C, N, 3]"
             );
         }
+        if (opacities.has_value()) {
+            TORCH_CHECK(
+                opacities.value().dim() == 2 && opacities.value().size(0) == C &&
+                    opacities.value().size(1) == N,
+                "Unpacked opacities must have shape [C, N]"
+            );
+        }
     }
 
     // Empty tensor is safe because kernel receives nullptr when CB is off.
     const auto conics_tensor =
         conics.has_value() ? conics.value() : torch::Tensor();
+    const auto opacities_tensor =
+        opacities.has_value() ? opacities.value() : torch::Tensor();
 
     uint32_t n_tiles = tile_width * tile_height;
     at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
@@ -393,13 +453,20 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
                               conics_tensor.data_ptr<scalar_t>()
                           )
                         : nullptr,
+                    compact_box
+                        ? reinterpret_cast<scalar_t *>(
+                              opacities_tensor.data_ptr<scalar_t>()
+                          )
+                        : nullptr,
                     nullptr,
                     tile_size,
                     tile_width,
                     tile_height,
                     tile_n_bits,
                     compact_box,
+                    compact_box_mult,
                     compact_box_tau2,
+                    compact_box_use_global_tau2,
                     tiles_per_gauss.data_ptr<int32_t>(),
                     nullptr,
                     nullptr
@@ -444,13 +511,20 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
                               conics_tensor.data_ptr<scalar_t>()
                           )
                         : nullptr,
+                    compact_box
+                        ? reinterpret_cast<scalar_t *>(
+                              opacities_tensor.data_ptr<scalar_t>()
+                          )
+                        : nullptr,
                     cum_tiles_per_gauss.data_ptr<int64_t>(),
                     tile_size,
                     tile_width,
                     tile_height,
                     tile_n_bits,
                     compact_box,
+                    compact_box_mult,
                     compact_box_tau2,
+                    compact_box_use_global_tau2,
                     nullptr,
                     isect_ids.data_ptr<int64_t>(),
                     flatten_ids.data_ptr<int32_t>()

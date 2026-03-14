@@ -36,6 +36,7 @@ class Config:
     packed: bool = False
     compact_box_mult: float = 1.0
     compact_box_tau2: Optional[float] = None
+    sweep_mults: Optional[list[float]] = None
     device: str = "cuda"
 
 
@@ -173,6 +174,15 @@ def format_float(x: float) -> str:
     return f"{x:.6f}"
 
 
+def print_mode(name: str, result: ModeResult, extra: str = "") -> None:
+    suffix = f" {extra}" if extra else ""
+    print(
+        f"{name}: avg_render_ms={result['avg_ms']:.3f} "
+        f"n_isects={result['n_isects']} "
+        f"tiles_per_gauss_mean={result['tiles_mean']:.4f}{suffix}"
+    )
+
+
 def main(cfg: Config) -> None:
     device = torch.device(cfg.device)
     if device.type == "cuda" and not torch.cuda.is_available():
@@ -201,9 +211,49 @@ def main(cfg: Config) -> None:
         warmup=cfg.warmup,
         iters=cfg.iters,
         compact_box=False,
-        compact_box_mult=1.0,
+        compact_box_mult=1,
         compact_box_tau2=None,
     )
+    print("\n[Baseline]")
+    print_mode("baseline", base)
+
+    if cfg.sweep_mults is not None and cfg.compact_box_tau2 is not None:
+        raise ValueError(
+            "sweep_mults and compact_box_tau2 cannot be used together. "
+            "Set compact_box_tau2=None for mult sweep."
+        )
+
+    if cfg.sweep_mults:
+        print("\n[Sweep: CompactBox mult]")
+        print(
+            "mult, avg_render_ms, n_isects, tiles_per_gauss_mean, speedup_x, n_isects_delta_pct, psnr"
+        )
+        for mult in cfg.sweep_mults:
+            cb = run_mode(
+                scene=scene,
+                width=cfg.width,
+                height=cfg.height,
+                packed=cfg.packed,
+                warmup=cfg.warmup,
+                iters=cfg.iters,
+                compact_box=True,
+                compact_box_mult=float(mult),
+                compact_box_tau2=None,
+            )
+            diff = image_diff_metrics(base["render"], cb["render"])
+            speedup = base["avg_ms"] / cb["avg_ms"] if cb["avg_ms"] > 0 else 0.0
+            isect_ratio = (
+                100.0 * (cb["n_isects"] / base["n_isects"] - 1.0)
+                if base["n_isects"] > 0
+                else 0.0
+            )
+            print(
+                f"{mult:.4f}, {cb['avg_ms']:.3f}, {cb['n_isects']}, "
+                f"{cb['tiles_mean']:.4f}, {speedup:.4f}, {isect_ratio:+.2f}, "
+                f"{format_float(diff['psnr'])}"
+            )
+        return
+
     cb = run_mode(
         scene=scene,
         width=cfg.width,
@@ -218,21 +268,13 @@ def main(cfg: Config) -> None:
 
     diff = image_diff_metrics(base["render"], cb["render"])
 
-    print("\n[Baseline]")
-    print(
-        f"avg_render_ms={base['avg_ms']:.3f} n_isects={base['n_isects']} "
-        f"tiles_per_gauss_mean={base['tiles_mean']:.4f}"
-    )
-
     print("\n[CompactBox]")
-    tau2_display = cfg.compact_box_tau2
-    if tau2_display is None:
-        tau2_display = 9.0 * cfg.compact_box_mult * cfg.compact_box_mult
-    print(
-        f"avg_render_ms={cb['avg_ms']:.3f} n_isects={cb['n_isects']} "
-        f"tiles_per_gauss_mean={cb['tiles_mean']:.4f} "
-        f"mult={cfg.compact_box_mult:.4f} tau2={tau2_display:.6f}"
+    tau_text = (
+        f"tau2_override={cfg.compact_box_tau2:.6f}"
+        if cfg.compact_box_tau2 is not None
+        else "tau2=mult*2*log(opacity*255)"
     )
+    print_mode("compact_box", cb, extra=f"mult={cfg.compact_box_mult:.4f} {tau_text}")
 
     isect_delta = cb["n_isects"] - base["n_isects"]
     isect_ratio = 0.0

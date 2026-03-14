@@ -149,6 +149,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
     const torch::Tensor &radii,                      // [C, N] or [nnz]
     const torch::Tensor &depths,                     // [C, N] or [nnz]
     const at::optional<torch::Tensor> &conics,       // [C, N, 3] or [nnz, 3]
+    const at::optional<torch::Tensor> &opacities,    // [C, N] or [nnz]
     const at::optional<torch::Tensor> &camera_ids,   // [nnz]
     const at::optional<torch::Tensor> &gaussian_ids, // [nnz]
     const uint32_t C,
@@ -156,7 +157,9 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
     const uint32_t tile_width,
     const uint32_t tile_height,
     const bool compact_box,
+    const float compact_box_mult,
     const float compact_box_tau2,
+    const bool compact_box_use_global_tau2,
     const bool sort,
     const bool double_buffer
 );

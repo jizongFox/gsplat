@@ -32,13 +32,13 @@ These are passed through to `isect_tiles()`.
 - If `compact_box=False`, no CB pruning is applied.
 - If `compact_box=True` and `compact_box_tau2` is provided, that value is used
   directly as the squared Mahalanobis threshold.
-- If `compact_box=True` and `compact_box_tau2` is `None`, a provisional mapping
-  is used:
+- If `compact_box=True` and `compact_box_tau2` is `None`, a FastGS-style
+  per-Gaussian threshold is used:
 
-  `tau2 = 9.0 * compact_box_mult^2`
+  `tau2_i = compact_box_mult * 2 * log(opacity_i * 255)`
 
-This mapping is intentionally simple for PoC and can be replaced later with an
-exact FastGS-equivalent formula if needed.
+Gaussians with invalid conics (`q00 <= 0`, `q11 <= 0`, or `q00*q11-q01*q01 <= 0`)
+or non-positive `tau2_i` are hard-skipped in CB mode.
 
 ## Tile predicate
 
@@ -77,7 +77,7 @@ render_colors, render_alphas, meta = rasterization(
     packed=False,
     compact_box=True,
     compact_box_mult=1.0,
-    # compact_box_tau2=9.0,  # optional explicit threshold
+    # compact_box_tau2=9.0,  # optional explicit global threshold override
 )
 
 print(meta["tiles_per_gauss"].float().mean(), meta["isect_ids"].numel())
@@ -102,3 +102,13 @@ The script reports:
 - mean `tiles_per_gauss`
 - average render time
 - image difference (`max_abs`, `mean_abs`, `rmse`, `psnr`) between baseline and CB
+
+You can also sweep compactness multipliers in one run:
+
+```bash
+PYTHONPATH=. python examples/benchmark_compact_box.py \
+  --sweep-mults 0.7 1.0 1.3
+```
+
+Note: `--sweep-mults` requires `--compact-box-tau2 None` (default), because
+explicit `tau2` override disables mult-based thresholding.
