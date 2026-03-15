@@ -115,6 +115,81 @@ __device__ inline bool tile_intersects_cb(
     return min_d2 <= tau2;
 }
 
+template <typename InT, typename OutT>
+__device__ inline bool cb_derive_q_from_ray_transform(
+    const InT *__restrict__ ray_transform,
+    OutT &mean_x,
+    OutT &mean_y,
+    OutT &q00,
+    OutT &q01,
+    OutT &q11
+) {
+    // Build the dual conic S from ray transform rows (u, v, w) using
+    // S = M * diag(1, 1, -1) * M^T, where M stores rows of KWH.
+    const OutT u0 = static_cast<OutT>(ray_transform[0]);
+    const OutT u1 = static_cast<OutT>(ray_transform[1]);
+    const OutT u2 = static_cast<OutT>(ray_transform[2]);
+    const OutT v0 = static_cast<OutT>(ray_transform[3]);
+    const OutT v1 = static_cast<OutT>(ray_transform[4]);
+    const OutT v2 = static_cast<OutT>(ray_transform[5]);
+    const OutT w0 = static_cast<OutT>(ray_transform[6]);
+    const OutT w1 = static_cast<OutT>(ray_transform[7]);
+    const OutT w2 = static_cast<OutT>(ray_transform[8]);
+
+    const OutT s00 = u0 * u0 + u1 * u1 - u2 * u2;
+    const OutT s01 = u0 * v0 + u1 * v1 - u2 * v2;
+    const OutT s02 = u0 * w0 + u1 * w1 - u2 * w2;
+    const OutT s11 = v0 * v0 + v1 * v1 - v2 * v2;
+    const OutT s12 = v0 * w0 + v1 * w1 - v2 * w2;
+    const OutT s22 = w0 * w0 + w1 * w1 - w2 * w2;
+
+    constexpr OutT eps = static_cast<OutT>(1e-12);
+    if (fabs(s22) <= eps) {
+        return false;
+    }
+
+    // We only need C up to scale. Use adjugate(S) as primal conic matrix C.
+    // C = [[c00, c01, c02], [c01, c11, c12], [c02, c12, c22]].
+    const OutT c00 = s11 * s22 - s12 * s12;
+    const OutT c01 = s02 * s12 - s01 * s22;
+    const OutT c02 = s01 * s12 - s02 * s11;
+    const OutT c11 = s00 * s22 - s02 * s02;
+    const OutT c12 = s01 * s02 - s00 * s12;
+    const OutT c22 = s00 * s11 - s01 * s01;
+
+    // A = [[c00, c01], [c01, c11]], b = [c02, c12], c = c22.
+    // Center mu = -A^{-1} b, normalized precision Q = A / k,
+    // k = b^T A^{-1} b - c, so that (x-mu)^T Q (x-mu) <= 1.
+    const OutT detA = c00 * c11 - c01 * c01;
+    if (fabs(detA) <= eps) {
+        return false;
+    }
+
+    const OutT invA00 = c11 / detA;
+    const OutT invA01 = -c01 / detA;
+    const OutT invA11 = c00 / detA;
+
+    const OutT Ainv_b0 = invA00 * c02 + invA01 * c12;
+    const OutT Ainv_b1 = invA01 * c02 + invA11 * c12;
+
+    mean_x = -Ainv_b0;
+    mean_y = -Ainv_b1;
+
+    const OutT k = c02 * Ainv_b0 + c12 * Ainv_b1 - c22;
+    if (fabs(k) <= eps) {
+        return false;
+    }
+
+    q00 = c00 / k;
+    q01 = c01 / k;
+    q11 = c11 / k;
+
+    const OutT detQ = q00 * q11 - q01 * q01;
+    return (q00 > static_cast<OutT>(0.0)) &&
+           (q11 > static_cast<OutT>(0.0)) &&
+           (detQ > eps);
+}
+
 template <typename T>
 __device__ inline void cb_intersect_fixed_x(
     const T x,
@@ -434,6 +509,7 @@ __global__ void isect_tiles(
     const int32_t *__restrict__ radii,               // [C, N] or [nnz]
     const T *__restrict__ depths,                    // [C, N] or [nnz]
     const T *__restrict__ conics,                    // [C, N, 3] or [nnz, 3]
+    const T *__restrict__ ray_transforms,            // [C, N, 3, 3] or [nnz, 3, 3]
     const T *__restrict__ opacities,                 // [C, N] or [nnz]
     const int64_t *__restrict__ cum_tiles_per_gauss, // [C, N] or [nnz]
     const uint32_t tile_size,
@@ -486,55 +562,74 @@ __global__ void isect_tiles(
     tile_max.x = min(max(0, (uint32_t)ceil(tile_x + tile_radius)), tile_width);
     tile_max.y = min(max(0, (uint32_t)ceil(tile_y + tile_radius)), tile_height);
 
+    OpT cb_mean_x = mean2d.x;
+    OpT cb_mean_y = mean2d.y;
     OpT q00 = static_cast<OpT>(0.0), q01 = static_cast<OpT>(0.0),
         q11 = static_cast<OpT>(0.0);
     OpT cb_tau2 = static_cast<OpT>(0.0);
-    bool cb_valid = compact_box;
-    if (compact_box) {
-        // Conic layout is [q00, q01, q11] per projected Gaussian.
-        q00 = conics[3 * idx];
-        q01 = conics[3 * idx + 1];
-        q11 = conics[3 * idx + 2];
+    bool cb_can_prune = false;
+    bool cb_skip_all = false;
 
-        constexpr OpT cb_eps = static_cast<OpT>(1e-12);
-        const OpT det = q00 * q11 - q01 * q01;
-        cb_valid = (q00 > static_cast<OpT>(0.0)) &&
-                   (q11 > static_cast<OpT>(0.0)) && (det > cb_eps);
-        if (cb_valid) {
-            if (compact_box_use_global_tau2) {
-                cb_tau2 = static_cast<OpT>(compact_box_tau2);
-            } else {
-                const OpT opacity_safe = max(
-                    opacities[idx],
-                    static_cast<OpT>(1e-9)
-                );
-                cb_tau2 = static_cast<OpT>(compact_box_mult) *
-                          static_cast<OpT>(2.0) *
-                          log(opacity_safe * static_cast<OpT>(255.0));
+    if (compact_box) {
+        if (compact_box_use_global_tau2) {
+            cb_tau2 = static_cast<OpT>(compact_box_tau2);
+        } else {
+            const OpT opacity_safe = max(opacities[idx], static_cast<OpT>(1e-9));
+            cb_tau2 = static_cast<OpT>(compact_box_mult) *
+                      static_cast<OpT>(2.0) *
+                      log(opacity_safe * static_cast<OpT>(255.0));
+        }
+
+        // If alpha at zero distance is below the quantization threshold,
+        // this Gaussian contributes no visible pixels.
+        if (cb_tau2 <= static_cast<OpT>(0.0)) {
+            cb_skip_all = true;
+        } else if (conics != nullptr) {
+            // 3DGS path: use projected conic directly.
+            q00 = conics[3 * idx];
+            q01 = conics[3 * idx + 1];
+            q11 = conics[3 * idx + 2];
+
+            constexpr OpT cb_eps = static_cast<OpT>(1e-12);
+            const OpT det = q00 * q11 - q01 * q01;
+            cb_can_prune = (q00 > static_cast<OpT>(0.0)) &&
+                           (q11 > static_cast<OpT>(0.0)) && (det > cb_eps);
+
+            // Keep FastGS-aligned behavior for 3DGS: invalid conics are skipped.
+            if (!cb_can_prune) {
+                cb_skip_all = true;
             }
-            cb_valid = cb_tau2 > static_cast<OpT>(0.0);
+        } else if (ray_transforms != nullptr) {
+            // 2DGS path: derive a conic approximation from ray transforms.
+            cb_can_prune = cb_derive_q_from_ray_transform(
+                ray_transforms + 9 * idx,
+                cb_mean_x,
+                cb_mean_y,
+                q00,
+                q01,
+                q11
+            );
+            // If derivation fails, fall back to coarse radius-box traversal.
         }
     }
 
     if (first_pass) {
         // First pass computes per-Gaussian pair counts used for prefix sum.
         // It must use the same CB predicate as second pass to keep offsets valid.
-        if (!compact_box) {
+        if (!compact_box || !cb_can_prune) {
             tiles_per_gauss[idx] = static_cast<int32_t>(
-                (tile_max.y - tile_min.y) * (tile_max.x - tile_min.x)
+                cb_skip_all
+                    ? 0
+                    : (tile_max.y - tile_min.y) * (tile_max.x - tile_min.x)
             );
-            return;
-        }
-        if (!cb_valid) {
-            tiles_per_gauss[idx] = 0;
             return;
         }
 
         int32_t n_tiles = 0;
         if (compact_box_use_sweep) {
             n_tiles = cb_emit_or_count_sweep(
-                mean2d.x,
-                mean2d.y,
+                cb_mean_x,
+                cb_mean_y,
                 tile_size,
                 tile_width,
                 tile_height,
@@ -561,8 +656,8 @@ __global__ void isect_tiles(
                     // Keep if tile rectangle's minimum Mahalanobis distance
                     // is within threshold.
                     if (!tile_intersects_cb(
-                            mean2d.x,
-                            mean2d.y,
+                            cb_mean_x,
+                            cb_mean_y,
                             j,
                             i,
                             tile_size,
@@ -597,13 +692,13 @@ __global__ void isect_tiles(
     // Reinterpret depth bits and append to low 32 bits for stable depth sorting.
     int64_t depth_id_enc = (int64_t) * (int32_t *)&(depths[idx]);
     int64_t cur_idx = (idx == 0) ? 0 : cum_tiles_per_gauss[idx - 1];
-    if (compact_box && !cb_valid) {
+    if (cb_skip_all) {
         return;
     }
-    if (compact_box && compact_box_use_sweep) {
+    if (compact_box && cb_can_prune && compact_box_use_sweep) {
         cb_emit_or_count_sweep(
-            mean2d.x,
-            mean2d.y,
+            cb_mean_x,
+            cb_mean_y,
             tile_size,
             tile_width,
             tile_height,
@@ -628,10 +723,10 @@ __global__ void isect_tiles(
     }
     for (int32_t i = tile_min.y; i < tile_max.y; ++i) {
         for (int32_t j = tile_min.x; j < tile_max.x; ++j) {
-            if (compact_box &&
+            if (compact_box && cb_can_prune &&
                 !tile_intersects_cb(
-                    mean2d.x,
-                    mean2d.y,
+                    cb_mean_x,
+                    cb_mean_y,
                     j,
                     i,
                     tile_size,
@@ -659,6 +754,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
     const torch::Tensor &radii,                      // [C, N] or [nnz]
     const torch::Tensor &depths,                     // [C, N] or [nnz]
     const at::optional<torch::Tensor> &conics,       // [C, N, 3] or [nnz, 3]
+    const at::optional<torch::Tensor> &ray_transforms, // [C, N, 3, 3] or [nnz, 3, 3]
     const at::optional<torch::Tensor> &opacities,    // [C, N] or [nnz]
     const at::optional<torch::Tensor> &camera_ids,   // [nnz]
     const at::optional<torch::Tensor> &gaussian_ids, // [nnz]
@@ -679,10 +775,9 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
     GSPLAT_CHECK_INPUT(radii);
     GSPLAT_CHECK_INPUT(depths);
     if (compact_box) {
-        // CB needs conic Q to evaluate Mahalanobis tile distance.
         TORCH_CHECK(
-            conics.has_value(),
-            "conics must be provided when compact_box is enabled"
+            conics.has_value() || ray_transforms.has_value(),
+            "conics (3DGS) or ray_transforms (2DGS) must be provided when compact_box is enabled"
         );
         TORCH_CHECK(
             opacities.has_value(),
@@ -694,6 +789,13 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
         TORCH_CHECK(
             conics.value().scalar_type() == means2d.scalar_type(),
             "conics and means2d must have same dtype"
+        );
+    }
+    if (ray_transforms.has_value()) {
+        GSPLAT_CHECK_INPUT(ray_transforms.value());
+        TORCH_CHECK(
+            ray_transforms.value().scalar_type() == means2d.scalar_type(),
+            "ray_transforms and means2d must have same dtype"
         );
     }
     if (opacities.has_value()) {
@@ -731,6 +833,15 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
                 "Packed conics must have shape [nnz, 3]"
             );
         }
+        if (ray_transforms.has_value()) {
+            TORCH_CHECK(
+                ray_transforms.value().dim() == 3 &&
+                    ray_transforms.value().size(0) == nnz &&
+                    ray_transforms.value().size(1) == 3 &&
+                    ray_transforms.value().size(2) == 3,
+                "Packed ray_transforms must have shape [nnz, 3, 3]"
+            );
+        }
         if (opacities.has_value()) {
             TORCH_CHECK(
                 opacities.value().dim() == 1 && opacities.value().size(0) == nnz,
@@ -748,6 +859,16 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
                 "Unpacked conics must have shape [C, N, 3]"
             );
         }
+        if (ray_transforms.has_value()) {
+            TORCH_CHECK(
+                ray_transforms.value().dim() == 4 &&
+                    ray_transforms.value().size(0) == C &&
+                    ray_transforms.value().size(1) == N &&
+                    ray_transforms.value().size(2) == 3 &&
+                    ray_transforms.value().size(3) == 3,
+                "Unpacked ray_transforms must have shape [C, N, 3, 3]"
+            );
+        }
         if (opacities.has_value()) {
             TORCH_CHECK(
                 opacities.value().dim() == 2 && opacities.value().size(0) == C &&
@@ -760,6 +881,8 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
     // Empty tensor is safe because kernel receives nullptr when CB is off.
     const auto conics_tensor =
         conics.has_value() ? conics.value() : torch::Tensor();
+    const auto ray_transforms_tensor =
+        ray_transforms.has_value() ? ray_transforms.value() : torch::Tensor();
     const auto opacities_tensor =
         opacities.has_value() ? opacities.value() : torch::Tensor();
 
@@ -804,10 +927,15 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
                     reinterpret_cast<scalar_t *>(means2d.data_ptr<scalar_t>()),
                     radii.data_ptr<int32_t>(),
                     depths.data_ptr<scalar_t>(),
-                    compact_box
+                    compact_box && conics.has_value()
                         // When CB is disabled, pass nullptr to skip conic loads.
                         ? reinterpret_cast<scalar_t *>(
                               conics_tensor.data_ptr<scalar_t>()
+                          )
+                        : nullptr,
+                    compact_box && ray_transforms.has_value()
+                        ? reinterpret_cast<scalar_t *>(
+                              ray_transforms_tensor.data_ptr<scalar_t>()
                           )
                         : nullptr,
                     compact_box
@@ -863,10 +991,15 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
                     reinterpret_cast<scalar_t *>(means2d.data_ptr<scalar_t>()),
                     radii.data_ptr<int32_t>(),
                     depths.data_ptr<scalar_t>(),
-                    compact_box
+                    compact_box && conics.has_value()
                         // Keep same nullptr/valid-pointer contract as first pass.
                         ? reinterpret_cast<scalar_t *>(
                               conics_tensor.data_ptr<scalar_t>()
+                          )
+                        : nullptr,
+                    compact_box && ray_transforms.has_value()
+                        ? reinterpret_cast<scalar_t *>(
+                              ray_transforms_tensor.data_ptr<scalar_t>()
                           )
                         : nullptr,
                     compact_box

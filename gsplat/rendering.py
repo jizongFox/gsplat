@@ -1041,6 +1041,10 @@ def rasterization_2dgs(
     sh_degree: Optional[int] = None,
     packed: bool = False,
     tile_size: int = 16,
+    compact_box: bool = False,
+    compact_box_mult: float = 1.0,
+    compact_box_tau2: Optional[float] = None,
+    compact_box_impl: Literal["rect_min", "sweep"] = "sweep",
     backgrounds: Optional[Tensor] = None,
     render_mode: Literal["RGB", "D", "ED", "RGB+D", "RGB+ED"] = "RGB",
     sparse_grad: bool = False,
@@ -1081,6 +1085,17 @@ def rasterization_2dgs(
             might not be as fast. Default is True.
         tile_size: The size of the tiles for rasterization. Default is 16.
             (Note: other values are not tested)
+        compact_box: Enable Compact Box tile pruning based on a 2DGS conic
+            approximation derived from ray transforms. Default is False.
+        compact_box_mult: User-facing compactness multiplier used only when
+            `compact_box_tau2` is None. In that case, each Gaussian uses
+            `tau2 = compact_box_mult * 2 * log(opacity * 255)`.
+            Default is 1.0.
+        compact_box_tau2: Explicit squared Mahalanobis threshold for Compact Box.
+            If set, this overrides `compact_box_mult`.
+        compact_box_impl: Compact Box implementation. "rect_min" uses
+            per-tile rectangle minimum testing while "sweep" uses slice-based
+            span traversal for lower overhead. Default is "sweep".
         backgrounds: The background colors. [C, D]. Default is None.
         render_mode: The rendering mode. Supported modes are "RGB", "D", "ED", "RGB+D",
             and "RGB+ED". "RGB" renders the colored image, "D" renders the accumulated depth, and
@@ -1234,6 +1249,12 @@ def rasterization_2dgs(
         n_cameras=C,
         camera_ids=camera_ids,
         gaussian_ids=gaussian_ids,
+        opacities=opacities,
+        ray_transforms=ray_transforms,
+        compact_box=compact_box,
+        compact_box_mult=compact_box_mult,
+        compact_box_tau2=compact_box_tau2,
+        compact_box_impl=compact_box_impl,
     )
     isect_offsets = isect_offset_encode(isect_ids, C, tile_width, tile_height)
 

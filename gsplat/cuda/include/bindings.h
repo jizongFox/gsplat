@@ -149,6 +149,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
     const torch::Tensor &radii,                      // [C, N] or [nnz]
     const torch::Tensor &depths,                     // [C, N] or [nnz]
     const at::optional<torch::Tensor> &conics,       // [C, N, 3] or [nnz, 3]
+    const at::optional<torch::Tensor> &ray_transforms, // [C, N, 3, 3] or [nnz, 3, 3]
     const at::optional<torch::Tensor> &opacities,    // [C, N] or [nnz]
     const at::optional<torch::Tensor> &camera_ids,   // [nnz]
     const at::optional<torch::Tensor> &gaussian_ids, // [nnz]

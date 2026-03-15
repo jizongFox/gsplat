@@ -361,6 +361,7 @@ def isect_tiles(
     compact_box_mult: float = 1.0,
     compact_box_tau2: Optional[float] = None,
     compact_box_impl: Literal["rect_min", "sweep"] = "sweep",
+    ray_transforms: Optional[Tensor] = None,
 ) -> Tuple[Tensor, Tensor, Tensor]:
     """Maps projected Gaussians to intersecting tiles.
 
@@ -379,7 +380,10 @@ def isect_tiles(
         opacities: Gaussian opacities used by Compact Box thresholding.
             Required only when compact_box is enabled.
         conics: Inverse projected covariance values (q00, q01, q11). Required only
-            when compact_box is enabled.
+            when compact_box is enabled for 3DGS.
+        ray_transforms: 2DGS ray transforms used to derive Compact Box conics
+            from homography geometry. Required only when compact_box is enabled
+            for 2DGS.
         compact_box: If True, enable Mahalanobis compact-box pruning at tile-pair
             generation. Default: False.
         compact_box_mult: User-facing compactness multiplier used only when
@@ -420,20 +424,33 @@ def isect_tiles(
         assert radii.shape == (C, N), radii.size()
         assert depths.shape == (C, N), depths.size()
 
-    if conics is not None:
-        conics = conics.contiguous()
     if opacities is not None:
         opacities = opacities.contiguous()
+    if conics is not None:
+        conics = conics.contiguous()
+    if ray_transforms is not None:
+        ray_transforms = ray_transforms.contiguous()
+
+    if packed:
+        if conics is not None:
+            assert conics.shape == (nnz, 3), conics.size()
+        if opacities is not None:
+            assert opacities.shape == (nnz,), opacities.size()
+        if ray_transforms is not None:
+            assert ray_transforms.shape == (nnz, 3, 3), ray_transforms.size()
+    else:
+        if conics is not None:
+            assert conics.shape == (C, N, 3), conics.size()
+        if opacities is not None:
+            assert opacities.shape == (C, N), opacities.size()
+        if ray_transforms is not None:
+            assert ray_transforms.shape == (C, N, 3, 3), ray_transforms.size()
 
     if compact_box:
         assert opacities is not None, "opacities is required when compact_box is True"
-        assert conics is not None, "conics is required when compact_box is True"
-        if packed:
-            assert opacities.shape == (nnz,), opacities.size()
-            assert conics.shape == (nnz, 3), conics.size()
-        else:
-            assert opacities.shape == (C, N), opacities.size()
-            assert conics.shape == (C, N, 3), conics.size()
+        assert (conics is not None) or (ray_transforms is not None), (
+            "conics (3DGS) or ray_transforms (2DGS) is required when compact_box is True"
+        )
         compact_box_mult = float(compact_box_mult)
         assert compact_box_impl in ("rect_min", "sweep"), compact_box_impl
         compact_box_use_sweep = compact_box_impl == "sweep"
@@ -453,6 +470,7 @@ def isect_tiles(
         radii.contiguous(),
         depths.contiguous(),
         conics,
+        ray_transforms,
         opacities,
         camera_ids,
         gaussian_ids,

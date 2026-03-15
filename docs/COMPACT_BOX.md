@@ -118,3 +118,9 @@ PYTHONPATH=. python examples/benchmark_compact_box.py \
 
 Note: `--sweep-mults` requires `--compact-box-tau2 None` (default), because
 explicit `tau2` override disables mult-based thresholding.
+
+## 2DGS
+
+2DGS Compact Box support is documented separately in:
+
+- `docs/COMPACT_BOX_2DGS.md`

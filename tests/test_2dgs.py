@@ -389,8 +389,224 @@ def test_rasterize_to_pixels_2dgs(test_data):
     torch.testing.assert_close(v_normals, _v_normals, rtol=1e-3, atol=1e-3)
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
+def test_isect_compact_box_2dgs(test_data):
+    from gsplat.cuda._wrapper import fully_fused_projection_2dgs, isect_tiles
+
+    Ks = test_data["Ks"]
+    viewmats = test_data["viewmats"]
+    height = test_data["height"]
+    width = test_data["width"]
+    quats = test_data["quats"]
+    scales = test_data["scales"]
+    means = test_data["means"]
+
+    C = viewmats.shape[0]
+    radii, means2d, depths, ray_transforms, _ = fully_fused_projection_2dgs(
+        means, quats, scales, viewmats, Ks, width, height
+    )
+
+    tile_size = 16
+    tile_width = math.ceil(width / float(tile_size))
+    tile_height = math.ceil(height / float(tile_size))
+
+    opacities = torch.full_like(depths, 0.8)
+
+    base_tiles, base_isect_ids, base_flatten_ids = isect_tiles(
+        means2d, radii, depths, tile_size, tile_width, tile_height, n_cameras=C
+    )
+    loose_tiles, loose_isect_ids, loose_flatten_ids = isect_tiles(
+        means2d,
+        radii,
+        depths,
+        tile_size,
+        tile_width,
+        tile_height,
+        n_cameras=C,
+        opacities=opacities,
+        ray_transforms=ray_transforms,
+        compact_box=True,
+        compact_box_tau2=1e9,
+        compact_box_impl="sweep",
+    )
+    tight_tiles, tight_isect_ids, tight_flatten_ids = isect_tiles(
+        means2d,
+        radii,
+        depths,
+        tile_size,
+        tile_width,
+        tile_height,
+        n_cameras=C,
+        opacities=opacities,
+        ray_transforms=ray_transforms,
+        compact_box=True,
+        compact_box_tau2=0.0,
+        compact_box_impl="sweep",
+    )
+
+    torch.testing.assert_close(base_tiles, loose_tiles)
+    torch.testing.assert_close(base_isect_ids, loose_isect_ids)
+    torch.testing.assert_close(base_flatten_ids, loose_flatten_ids)
+    assert tight_tiles.sum() <= base_tiles.sum()
+    assert tight_isect_ids.numel() <= base_isect_ids.numel()
+    assert tight_flatten_ids.numel() <= base_flatten_ids.numel()
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
+def test_isect_compact_box_2dgs_invalid_ray_fallback(test_data):
+    from gsplat.cuda._wrapper import fully_fused_projection_2dgs, isect_tiles
+
+    Ks = test_data["Ks"]
+    viewmats = test_data["viewmats"]
+    height = test_data["height"]
+    width = test_data["width"]
+    quats = test_data["quats"]
+    scales = test_data["scales"]
+    means = test_data["means"]
+
+    C = viewmats.shape[0]
+    radii, means2d, depths, ray_transforms, _ = fully_fused_projection_2dgs(
+        means, quats, scales, viewmats, Ks, width, height
+    )
+    bad_ray_transforms = torch.zeros_like(ray_transforms)
+
+    tile_size = 16
+    tile_width = math.ceil(width / float(tile_size))
+    tile_height = math.ceil(height / float(tile_size))
+
+    opacities = torch.full_like(depths, 0.8)
+
+    base_tiles, base_isect_ids, base_flatten_ids = isect_tiles(
+        means2d, radii, depths, tile_size, tile_width, tile_height, n_cameras=C
+    )
+    fallback_tiles, fallback_isect_ids, fallback_flatten_ids = isect_tiles(
+        means2d,
+        radii,
+        depths,
+        tile_size,
+        tile_width,
+        tile_height,
+        n_cameras=C,
+        opacities=opacities,
+        ray_transforms=bad_ray_transforms,
+        compact_box=True,
+        compact_box_tau2=9.0,
+        compact_box_impl="sweep",
+    )
+
+    torch.testing.assert_close(base_tiles, fallback_tiles)
+    torch.testing.assert_close(base_isect_ids, fallback_isect_ids)
+    torch.testing.assert_close(base_flatten_ids, fallback_flatten_ids)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
+def test_isect_compact_box_2dgs_opacity_sensitive(test_data):
+    from gsplat.cuda._wrapper import fully_fused_projection_2dgs, isect_tiles
+
+    Ks = test_data["Ks"]
+    viewmats = test_data["viewmats"]
+    height = test_data["height"]
+    width = test_data["width"]
+    quats = test_data["quats"]
+    scales = test_data["scales"]
+    means = test_data["means"]
+
+    C = viewmats.shape[0]
+    radii, means2d, depths, ray_transforms, _ = fully_fused_projection_2dgs(
+        means, quats, scales, viewmats, Ks, width, height
+    )
+
+    tile_size = 16
+    tile_width = math.ceil(width / float(tile_size))
+    tile_height = math.ceil(height / float(tile_size))
+
+    high_opacity = torch.full_like(depths, 0.8)
+    low_opacity = torch.full_like(depths, 1.0 / 255.0)
+
+    high_tiles, high_isect_ids, high_flatten_ids = isect_tiles(
+        means2d,
+        radii,
+        depths,
+        tile_size,
+        tile_width,
+        tile_height,
+        n_cameras=C,
+        opacities=high_opacity,
+        ray_transforms=ray_transforms,
+        compact_box=True,
+        compact_box_mult=1.0,
+        compact_box_impl="sweep",
+    )
+    low_tiles, low_isect_ids, low_flatten_ids = isect_tiles(
+        means2d,
+        radii,
+        depths,
+        tile_size,
+        tile_width,
+        tile_height,
+        n_cameras=C,
+        opacities=low_opacity,
+        ray_transforms=ray_transforms,
+        compact_box=True,
+        compact_box_mult=1.0,
+        compact_box_impl="sweep",
+    )
+
+    assert low_tiles.sum() <= high_tiles.sum()
+    assert low_isect_ids.numel() <= high_isect_ids.numel()
+    assert low_flatten_ids.numel() <= high_flatten_ids.numel()
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
+def test_rasterization_2dgs_compact_box_api(test_data):
+    from gsplat.rendering import rasterization_2dgs
+
+    means = test_data["means"]
+    quats = test_data["quats"]
+    scales = test_data["scales"]
+    opacities = test_data["opacities"].squeeze(0)
+    colors = test_data["colors"].squeeze(0)
+    viewmats = test_data["viewmats"]
+    Ks = test_data["Ks"]
+    width = test_data["width"]
+    height = test_data["height"]
+
+    _, _, _, _, _, _, meta_base = rasterization_2dgs(
+        means,
+        quats,
+        scales,
+        opacities,
+        colors,
+        viewmats,
+        Ks,
+        width,
+        height,
+        compact_box=False,
+    )
+    _, _, _, _, _, _, meta_cb = rasterization_2dgs(
+        means,
+        quats,
+        scales,
+        opacities,
+        colors,
+        viewmats,
+        Ks,
+        width,
+        height,
+        compact_box=True,
+        compact_box_mult=1.0,
+        compact_box_impl="sweep",
+    )
+
+    assert meta_cb["isect_ids"].numel() <= meta_base["isect_ids"].numel()
+
+
 if __name__ == "__main__":
     test_projection_2dgs(test_data())
     test_rasterize_to_pixels_2dgs(test_data())
     test_fully_fused_projection_packed_2dgs(test_data())
+    test_isect_compact_box_2dgs(test_data())
+    test_isect_compact_box_2dgs_invalid_ray_fallback(test_data())
+    test_isect_compact_box_2dgs_opacity_sensitive(test_data())
+    test_rasterization_2dgs_compact_box_api(test_data())
     print("All tests passed.")

@@ -118,6 +118,14 @@ class Config:
     antialiased: bool = False
     # Whether to use revised opacity heuristic from arXiv:2404.06109 (experimental)
     revised_opacity: bool = False
+    # Enable Compact Box tile pruning in 2DGS rasterization.
+    compact_box: bool = False
+    # Compact Box opacity-coupled multiplier (used only when compact_box_tau2 is None).
+    compact_box_mult: float = 1.0
+    # Optional Compact Box tau2 override.
+    compact_box_tau2: Optional[float] = None
+    # Compact Box implementation.
+    compact_box_impl: Literal["rect_min", "sweep"] = "sweep"
 
     # Use random background for training to discourage transparency
     random_bkgd: bool = False
@@ -431,6 +439,10 @@ class Runner:
                 width=width,
                 height=height,
                 packed=self.cfg.packed,
+                compact_box=self.cfg.compact_box,
+                compact_box_mult=self.cfg.compact_box_mult,
+                compact_box_tau2=self.cfg.compact_box_tau2,
+                compact_box_impl=self.cfg.compact_box_impl,
                 absgrad=self.cfg.absgrad,
                 sparse_grad=self.cfg.sparse_grad,
                 **kwargs,
@@ -633,7 +645,7 @@ class Runner:
 
             loss.backward()
 
-            desc = f"loss={loss.item():.3f}| " f"sh degree={sh_degree_to_use}| "
+            desc = f"loss={loss.item():.3f}| sh degree={sh_degree_to_use}| "
             if cfg.depth_loss:
                 desc += f"depth loss={depthloss.item():.6f}| "
             if cfg.dist_loss:
