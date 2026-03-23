@@ -13,6 +13,487 @@ namespace cg = cooperative_groups;
  ****************************************************************************/
 
 template <typename T>
+__device__ inline T cb_eval_d2(
+    const T x,
+    const T y,
+    const T q00,
+    const T q01,
+    const T q11
+) {
+    // d2 = [x y] * Q * [x y]^T where Q = [[q00, q01], [q01, q11]]. // mahalanobis distance
+    return q00 * x * x + static_cast<T>(2.0) * q01 * x * y + q11 * y * y;
+}
+
+template <typename T>
+__device__ inline T cb_rect_min_d2(
+    const T x0,
+    const T x1,
+    const T y0,
+    const T y1,
+    const T q00,
+    const T q01,
+    const T q11
+) {
+    // Exact minimum of a convex quadratic over an axis-aligned rectangle.
+    // Candidate set for convex Q:
+    // 1) 4 corners,
+    // 2) unconstrained interior minimizer (0, 0) if inside,
+    // 3) edge-wise constrained minimizers on x=x0/x1 and y=y0/y1.
+    // This avoids iterative optimization and is branch-light for CUDA.
+    T min_d2 = cb_eval_d2(x0, y0, q00, q01, q11);
+
+    // Corners.
+    min_d2 = min(min_d2, cb_eval_d2(x0, y1, q00, q01, q11));
+    min_d2 = min(min_d2, cb_eval_d2(x1, y0, q00, q01, q11));
+    min_d2 = min(min_d2, cb_eval_d2(x1, y1, q00, q01, q11));
+
+    // Interior candidate: since f is quadratic with gradient 2Q[x,y]^T,
+    // unconstrained optimum is at (0,0) in Gaussian-local coordinates.
+    if (x0 <= static_cast<T>(0.0) && x1 >= static_cast<T>(0.0) &&
+        y0 <= static_cast<T>(0.0) && y1 >= static_cast<T>(0.0)) {
+        min_d2 = min(min_d2, static_cast<T>(0.0));
+    }
+
+    // Vertical edges: fix x and solve df/dy = 0 -> y* = -q01*x/q11.
+    // Guard division for numerically tiny q11.
+    constexpr T eps = static_cast<T>(1e-12);
+    if (fabs(q11) > eps) {
+        T yx0 = -q01 * x0 / q11;
+        yx0 = min(max(yx0, y0), y1);
+        min_d2 = min(min_d2, cb_eval_d2(x0, yx0, q00, q01, q11));
+
+        T yx1 = -q01 * x1 / q11;
+        yx1 = min(max(yx1, y0), y1);
+        min_d2 = min(min_d2, cb_eval_d2(x1, yx1, q00, q01, q11));
+    }
+
+    // Horizontal edges: fix y and solve df/dx = 0 -> x* = -q01*y/q00.
+    // Guard division for numerically tiny q00.
+    if (fabs(q00) > eps) {
+        T xy0 = -q01 * y0 / q00;
+        xy0 = min(max(xy0, x0), x1);
+        min_d2 = min(min_d2, cb_eval_d2(xy0, y0, q00, q01, q11));
+
+        T xy1 = -q01 * y1 / q00;
+        xy1 = min(max(xy1, x0), x1);
+        min_d2 = min(min_d2, cb_eval_d2(xy1, y1, q00, q01, q11));
+    }
+
+    return min_d2;
+}
+
+template <typename T>
+__device__ inline bool tile_intersects_cb(
+    const T mean_x,
+    const T mean_y,
+    const int32_t tile_x,
+    const int32_t tile_y,
+    const uint32_t tile_size,
+    const T q00,
+    const T q01,
+    const T q11,
+    const T tau2
+) {
+    // Continuous tile rectangle in pixel-center coordinates.
+    // This keeps CB conservative w.r.t. rasterization at pixel centers.
+    // x in [tile_x * tile_size + 0.5, (tile_x + 1) * tile_size - 0.5]
+    // y in [tile_y * tile_size + 0.5, (tile_y + 1) * tile_size - 0.5]
+    const T tile_x0 = tile_x * static_cast<T>(tile_size) + static_cast<T>(0.5);
+    const T tile_x1 =
+        tile_x0 + static_cast<T>(tile_size) - static_cast<T>(1.0);
+    const T tile_y0 = tile_y * static_cast<T>(tile_size) + static_cast<T>(0.5);
+    const T tile_y1 =
+        tile_y0 + static_cast<T>(tile_size) - static_cast<T>(1.0);
+
+    // Shift tile bounds to Gaussian-local coordinates before evaluating d2.
+    const T x0 = tile_x0 - mean_x;
+    const T x1 = tile_x1 - mean_x;
+    const T y0 = tile_y0 - mean_y;
+    const T y1 = tile_y1 - mean_y;
+
+    const T min_d2 = cb_rect_min_d2(x0, x1, y0, y1, q00, q01, q11);
+    return min_d2 <= tau2;
+}
+
+template <typename InT, typename OutT>
+__device__ inline bool cb_derive_q_from_ray_transform(
+    const InT *__restrict__ ray_transform,
+    OutT &mean_x,
+    OutT &mean_y,
+    OutT &q00,
+    OutT &q01,
+    OutT &q11
+) {
+    // Build the dual conic S from ray transform rows (u, v, w) using
+    // S = M * diag(1, 1, -1) * M^T, where M stores rows of KWH.
+    const OutT u0 = static_cast<OutT>(ray_transform[0]);
+    const OutT u1 = static_cast<OutT>(ray_transform[1]);
+    const OutT u2 = static_cast<OutT>(ray_transform[2]);
+    const OutT v0 = static_cast<OutT>(ray_transform[3]);
+    const OutT v1 = static_cast<OutT>(ray_transform[4]);
+    const OutT v2 = static_cast<OutT>(ray_transform[5]);
+    const OutT w0 = static_cast<OutT>(ray_transform[6]);
+    const OutT w1 = static_cast<OutT>(ray_transform[7]);
+    const OutT w2 = static_cast<OutT>(ray_transform[8]);
+
+    const OutT s00 = u0 * u0 + u1 * u1 - u2 * u2;
+    const OutT s01 = u0 * v0 + u1 * v1 - u2 * v2;
+    const OutT s02 = u0 * w0 + u1 * w1 - u2 * w2;
+    const OutT s11 = v0 * v0 + v1 * v1 - v2 * v2;
+    const OutT s12 = v0 * w0 + v1 * w1 - v2 * w2;
+    const OutT s22 = w0 * w0 + w1 * w1 - w2 * w2;
+
+    constexpr OutT eps = static_cast<OutT>(1e-12);
+    if (fabs(s22) <= eps) {
+        return false;
+    }
+
+    // We only need C up to scale. Use adjugate(S) as primal conic matrix C.
+    // C = [[c00, c01, c02], [c01, c11, c12], [c02, c12, c22]].
+    const OutT c00 = s11 * s22 - s12 * s12;
+    const OutT c01 = s02 * s12 - s01 * s22;
+    const OutT c02 = s01 * s12 - s02 * s11;
+    const OutT c11 = s00 * s22 - s02 * s02;
+    const OutT c12 = s01 * s02 - s00 * s12;
+    const OutT c22 = s00 * s11 - s01 * s01;
+
+    // A = [[c00, c01], [c01, c11]], b = [c02, c12], c = c22.
+    // Center mu = -A^{-1} b, normalized precision Q = A / k,
+    // k = b^T A^{-1} b - c, so that (x-mu)^T Q (x-mu) <= 1.
+    const OutT detA = c00 * c11 - c01 * c01;
+    if (fabs(detA) <= eps) {
+        return false;
+    }
+
+    const OutT invA00 = c11 / detA;
+    const OutT invA01 = -c01 / detA;
+    const OutT invA11 = c00 / detA;
+
+    const OutT Ainv_b0 = invA00 * c02 + invA01 * c12;
+    const OutT Ainv_b1 = invA01 * c02 + invA11 * c12;
+
+    mean_x = -Ainv_b0;
+    mean_y = -Ainv_b1;
+
+    const OutT k = c02 * Ainv_b0 + c12 * Ainv_b1 - c22;
+    if (fabs(k) <= eps) {
+        return false;
+    }
+
+    q00 = c00 / k;
+    q01 = c01 / k;
+    q11 = c11 / k;
+
+    const OutT detQ = q00 * q11 - q01 * q01;
+    return (q00 > static_cast<OutT>(0.0)) &&
+           (q11 > static_cast<OutT>(0.0)) &&
+           (detQ > eps);
+}
+
+template <typename T>
+__device__ inline void cb_intersect_fixed_x(
+    const T x,
+    const T mean_x,
+    const T mean_y,
+    const T q00,
+    const T q01,
+    const T q11,
+    const T det,
+    const T tau2,
+    bool &has,
+    T &y0,
+    T &y1
+) {
+    const T dx = x - mean_x;
+    const T sqrt_term2 = q11 * tau2 - det * dx * dx;
+    if (sqrt_term2 < static_cast<T>(0.0)) {
+        has = false;
+        return;
+    }
+    const T sqrt_term = sqrt(max(sqrt_term2, static_cast<T>(0.0)));
+    const T yc = mean_y - q01 * dx / q11;
+    y0 = yc - sqrt_term / q11;
+    y1 = yc + sqrt_term / q11;
+    has = true;
+}
+
+template <typename T>
+__device__ inline void cb_intersect_fixed_y(
+    const T y,
+    const T mean_x,
+    const T mean_y,
+    const T q00,
+    const T q01,
+    const T q11,
+    const T det,
+    const T tau2,
+    bool &has,
+    T &x0,
+    T &x1
+) {
+    const T dy = y - mean_y;
+    const T sqrt_term2 = q00 * tau2 - det * dy * dy;
+    if (sqrt_term2 < static_cast<T>(0.0)) {
+        has = false;
+        return;
+    }
+    const T sqrt_term = sqrt(max(sqrt_term2, static_cast<T>(0.0)));
+    const T xc = mean_x - q01 * dy / q00;
+    x0 = xc - sqrt_term / q00;
+    x1 = xc + sqrt_term / q00;
+    has = true;
+}
+
+template <typename T>
+__device__ inline int32_t cb_emit_or_count_sweep(
+    const T mean_x,
+    const T mean_y,
+    const uint32_t tile_size,
+    const uint32_t tile_width,
+    const uint32_t tile_height,
+    const uint32_t coarse_min_x,
+    const uint32_t coarse_min_y,
+    const uint32_t coarse_max_x,
+    const uint32_t coarse_max_y,
+    const T q00,
+    const T q01,
+    const T q11,
+    const T det,
+    const T tau2,
+    const int64_t cid_enc,
+    const int64_t depth_id_enc,
+    const int32_t flatten_idx,
+    const int64_t out_start,
+    const bool write_out,
+    int64_t *__restrict__ isect_ids,
+    int32_t *__restrict__ flatten_ids
+) {
+    const T tsize = static_cast<T>(tile_size);
+
+    const T x_ext = sqrt(max(tau2 * q11 / det, static_cast<T>(0.0)));
+    const T y_ext = sqrt(max(tau2 * q00 / det, static_cast<T>(0.0)));
+
+    int32_t rect_min_x = max(
+        static_cast<int32_t>(coarse_min_x),
+        static_cast<int32_t>(floor((mean_x - x_ext) / tsize))
+    );
+    int32_t rect_max_x = min(
+        static_cast<int32_t>(coarse_max_x),
+        static_cast<int32_t>(ceil((mean_x + x_ext) / tsize))
+    );
+    int32_t rect_min_y = max(
+        static_cast<int32_t>(coarse_min_y),
+        static_cast<int32_t>(floor((mean_y - y_ext) / tsize))
+    );
+    int32_t rect_max_y = min(
+        static_cast<int32_t>(coarse_max_y),
+        static_cast<int32_t>(ceil((mean_y + y_ext) / tsize))
+    );
+
+    const int32_t x_span = rect_max_x - rect_min_x;
+    const int32_t y_span = rect_max_y - rect_min_y;
+    if (x_span <= 0 || y_span <= 0) {
+        return 0;
+    }
+
+    // Global y extrema and corresponding x locations.
+    const T arg_x_ymin = mean_x + q01 * y_ext / q00;
+    const T arg_x_ymax = mean_x - q01 * y_ext / q00;
+    const T y_min_global = mean_y - y_ext;
+    const T y_max_global = mean_y + y_ext;
+
+    // Global x extrema and corresponding y locations.
+    const T arg_y_xmin = mean_y + q01 * x_ext / q11;
+    const T arg_y_xmax = mean_y - q01 * x_ext / q11;
+    const T x_min_global = mean_x - x_ext;
+    const T x_max_global = mean_x + x_ext;
+
+    const bool sweep_y = y_span < x_span;
+    int64_t cur = out_start;
+    int32_t n_tiles = 0;
+
+    if (!sweep_y) {
+        // Sweep x-slices and compute covered y tile span for each x tile.
+        for (int32_t tx = rect_min_x; tx < rect_max_x; ++tx) {
+            const T x0 = tx * tsize;
+            const T x1 = x0 + tsize;
+
+            T v_min = static_cast<T>(1e30);
+            T v_max = static_cast<T>(-1e30);
+            bool has_any = false;
+
+            bool has = false;
+            T a = static_cast<T>(0.0), b = static_cast<T>(0.0);
+            cb_intersect_fixed_x(
+                x0,
+                mean_x,
+                mean_y,
+                q00,
+                q01,
+                q11,
+                det,
+                tau2,
+                has,
+                a,
+                b
+            );
+            if (has) {
+                v_min = min(v_min, min(a, b));
+                v_max = max(v_max, max(a, b));
+                has_any = true;
+            }
+            cb_intersect_fixed_x(
+                x1,
+                mean_x,
+                mean_y,
+                q00,
+                q01,
+                q11,
+                det,
+                tau2,
+                has,
+                a,
+                b
+            );
+            if (has) {
+                v_min = min(v_min, min(a, b));
+                v_max = max(v_max, max(a, b));
+                has_any = true;
+            }
+            if (x0 <= arg_x_ymin && arg_x_ymin < x1) {
+                v_min = min(v_min, y_min_global);
+                has_any = true;
+            }
+            if (x0 <= arg_x_ymax && arg_x_ymax < x1) {
+                v_max = max(v_max, y_max_global);
+                has_any = true;
+            }
+            if (!has_any) {
+                continue;
+            }
+
+            int32_t ty_min = max(
+                rect_min_y,
+                min(
+                    rect_max_y,
+                    static_cast<int32_t>(floor(v_min / tsize))
+                )
+            );
+            int32_t ty_max = min(
+                rect_max_y,
+                max(
+                    rect_min_y,
+                    static_cast<int32_t>(floor(v_max / tsize)) + 1
+                )
+            );
+            if (ty_max <= ty_min) {
+                continue;
+            }
+
+            n_tiles += (ty_max - ty_min);
+            if (write_out) {
+                for (int32_t ty = ty_min; ty < ty_max; ++ty) {
+                    const int64_t tile_id = ty * tile_width + tx;
+                    isect_ids[cur] = cid_enc | (tile_id << 32) | depth_id_enc;
+                    flatten_ids[cur] = flatten_idx;
+                    ++cur;
+                }
+            }
+        }
+    } else {
+        // Sweep y-slices and compute covered x tile span for each y tile.
+        for (int32_t ty = rect_min_y; ty < rect_max_y; ++ty) {
+            const T y0 = ty * tsize;
+            const T y1 = y0 + tsize;
+
+            T v_min = static_cast<T>(1e30);
+            T v_max = static_cast<T>(-1e30);
+            bool has_any = false;
+
+            bool has = false;
+            T a = static_cast<T>(0.0), b = static_cast<T>(0.0);
+            cb_intersect_fixed_y(
+                y0,
+                mean_x,
+                mean_y,
+                q00,
+                q01,
+                q11,
+                det,
+                tau2,
+                has,
+                a,
+                b
+            );
+            if (has) {
+                v_min = min(v_min, min(a, b));
+                v_max = max(v_max, max(a, b));
+                has_any = true;
+            }
+            cb_intersect_fixed_y(
+                y1,
+                mean_x,
+                mean_y,
+                q00,
+                q01,
+                q11,
+                det,
+                tau2,
+                has,
+                a,
+                b
+            );
+            if (has) {
+                v_min = min(v_min, min(a, b));
+                v_max = max(v_max, max(a, b));
+                has_any = true;
+            }
+            if (y0 <= arg_y_xmin && arg_y_xmin < y1) {
+                v_min = min(v_min, x_min_global);
+                has_any = true;
+            }
+            if (y0 <= arg_y_xmax && arg_y_xmax < y1) {
+                v_max = max(v_max, x_max_global);
+                has_any = true;
+            }
+            if (!has_any) {
+                continue;
+            }
+
+            int32_t tx_min = max(
+                rect_min_x,
+                min(
+                    rect_max_x,
+                    static_cast<int32_t>(floor(v_min / tsize))
+                )
+            );
+            int32_t tx_max = min(
+                rect_max_x,
+                max(
+                    rect_min_x,
+                    static_cast<int32_t>(floor(v_max / tsize)) + 1
+                )
+            );
+            if (tx_max <= tx_min) {
+                continue;
+            }
+
+            n_tiles += (tx_max - tx_min);
+            if (write_out) {
+                for (int32_t tx = tx_min; tx < tx_max; ++tx) {
+                    const int64_t tile_id = ty * tile_width + tx;
+                    isect_ids[cur] = cid_enc | (tile_id << 32) | depth_id_enc;
+                    flatten_ids[cur] = flatten_idx;
+                    ++cur;
+                }
+            }
+        }
+    }
+
+    return n_tiles;
+}
+
+template <typename T>
 __global__ void isect_tiles(
     // if the data is [C, N, ...] or [nnz, ...] (packed)
     const bool packed,
@@ -27,11 +508,19 @@ __global__ void isect_tiles(
     const T *__restrict__ means2d,                   // [C, N, 2] or [nnz, 2]
     const int32_t *__restrict__ radii,               // [C, N] or [nnz]
     const T *__restrict__ depths,                    // [C, N] or [nnz]
+    const T *__restrict__ conics,                    // [C, N, 3] or [nnz, 3]
+    const T *__restrict__ ray_transforms,            // [C, N, 3, 3] or [nnz, 3, 3]
+    const T *__restrict__ opacities,                 // [C, N] or [nnz]
     const int64_t *__restrict__ cum_tiles_per_gauss, // [C, N] or [nnz]
     const uint32_t tile_size,
     const uint32_t tile_width,
     const uint32_t tile_height,
     const uint32_t tile_n_bits,
+    const bool compact_box,
+    const float compact_box_mult,
+    const float compact_box_tau2,
+    const bool compact_box_use_global_tau2,
+    const bool compact_box_use_sweep,
     int32_t *__restrict__ tiles_per_gauss, // [C, N] or [nnz]
     int64_t *__restrict__ isect_ids,       // [n_isects]
     int32_t *__restrict__ flatten_ids      // [n_isects]
@@ -41,6 +530,9 @@ __global__ void isect_tiles(
 
     // parallelize over C * N.
     uint32_t idx = cg::this_grid().thread_rank();
+    // two-pass kernel:
+    // pass 1: count intersections per Gaussian (cum ptr is null)
+    // pass 2: write encoded intersection tuples
     bool first_pass = cum_tiles_per_gauss == nullptr;
     if (idx >= (packed ? nnz : C * N)) {
         return;
@@ -60,7 +552,9 @@ __global__ void isect_tiles(
     OpT tile_x = mean2d.x / static_cast<OpT>(tile_size);
     OpT tile_y = mean2d.y / static_cast<OpT>(tile_size);
 
-    // tile_min is inclusive, tile_max is exclusive
+    // Coarse candidate tile box from radius:
+    // tile_min is inclusive, tile_max is exclusive.
+    // CB (if enabled) only prunes inside this coarse box.
     uint2 tile_min, tile_max;
     tile_min.x = min(max(0, (uint32_t)floor(tile_x - tile_radius)), tile_width);
     tile_min.y =
@@ -68,11 +562,117 @@ __global__ void isect_tiles(
     tile_max.x = min(max(0, (uint32_t)ceil(tile_x + tile_radius)), tile_width);
     tile_max.y = min(max(0, (uint32_t)ceil(tile_y + tile_radius)), tile_height);
 
+    OpT cb_mean_x = mean2d.x;
+    OpT cb_mean_y = mean2d.y;
+    OpT q00 = static_cast<OpT>(0.0), q01 = static_cast<OpT>(0.0),
+        q11 = static_cast<OpT>(0.0);
+    OpT cb_tau2 = static_cast<OpT>(0.0);
+    bool cb_can_prune = false;
+    bool cb_skip_all = false;
+
+    if (compact_box) {
+        if (compact_box_use_global_tau2) {
+            cb_tau2 = static_cast<OpT>(compact_box_tau2);
+        } else {
+            const OpT opacity_safe = max(opacities[idx], static_cast<OpT>(1e-9));
+            cb_tau2 = static_cast<OpT>(compact_box_mult) *
+                      static_cast<OpT>(2.0) *
+                      log(opacity_safe * static_cast<OpT>(255.0));
+        }
+
+        // If alpha at zero distance is below the quantization threshold,
+        // this Gaussian contributes no visible pixels.
+        if (cb_tau2 <= static_cast<OpT>(0.0)) {
+            cb_skip_all = true;
+        } else if (conics != nullptr) {
+            // 3DGS path: use projected conic directly.
+            q00 = conics[3 * idx];
+            q01 = conics[3 * idx + 1];
+            q11 = conics[3 * idx + 2];
+
+            constexpr OpT cb_eps = static_cast<OpT>(1e-12);
+            const OpT det = q00 * q11 - q01 * q01;
+            cb_can_prune = (q00 > static_cast<OpT>(0.0)) &&
+                           (q11 > static_cast<OpT>(0.0)) && (det > cb_eps);
+
+            // Keep FastGS-aligned behavior for 3DGS: invalid conics are skipped.
+            if (!cb_can_prune) {
+                cb_skip_all = true;
+            }
+        } else if (ray_transforms != nullptr) {
+            // 2DGS path: derive a conic approximation from ray transforms.
+            cb_can_prune = cb_derive_q_from_ray_transform(
+                ray_transforms + 9 * idx,
+                cb_mean_x,
+                cb_mean_y,
+                q00,
+                q01,
+                q11
+            );
+            // If derivation fails, fall back to coarse radius-box traversal.
+        }
+    }
+
     if (first_pass) {
-        // first pass only writes out tiles_per_gauss
-        tiles_per_gauss[idx] = static_cast<int32_t>(
-            (tile_max.y - tile_min.y) * (tile_max.x - tile_min.x)
-        );
+        // First pass computes per-Gaussian pair counts used for prefix sum.
+        // It must use the same CB predicate as second pass to keep offsets valid.
+        if (!compact_box || !cb_can_prune) {
+            tiles_per_gauss[idx] = static_cast<int32_t>(
+                cb_skip_all
+                    ? 0
+                    : (tile_max.y - tile_min.y) * (tile_max.x - tile_min.x)
+            );
+            return;
+        }
+
+        int32_t n_tiles = 0;
+        if (compact_box_use_sweep) {
+            n_tiles = cb_emit_or_count_sweep(
+                cb_mean_x,
+                cb_mean_y,
+                tile_size,
+                tile_width,
+                tile_height,
+                tile_min.x,
+                tile_min.y,
+                tile_max.x,
+                tile_max.y,
+                q00,
+                q01,
+                q11,
+                q00 * q11 - q01 * q01,
+                cb_tau2,
+                0,
+                0,
+                0,
+                0,
+                false,
+                nullptr,
+                nullptr
+            );
+        } else {
+            for (int32_t i = tile_min.y; i < tile_max.y; ++i) {
+                for (int32_t j = tile_min.x; j < tile_max.x; ++j) {
+                    // Keep if tile rectangle's minimum Mahalanobis distance
+                    // is within threshold.
+                    if (!tile_intersects_cb(
+                            cb_mean_x,
+                            cb_mean_y,
+                            j,
+                            i,
+                            tile_size,
+                            q00,
+                            q01,
+                            q11,
+                            cb_tau2
+                        )) {
+                        continue;
+                    }
+                    ++n_tiles;
+                }
+            }
+        }
+        tiles_per_gauss[idx] = n_tiles;
         return;
     }
 
@@ -86,12 +686,58 @@ __global__ void isect_tiles(
         cid = idx / N;
         // gid = idx % N;
     }
+    // Upper bits carry (camera, tile), lower 32 bits carry depth ordering key.
     const int64_t cid_enc = cid << (32 + tile_n_bits);
 
+    // Reinterpret depth bits and append to low 32 bits for stable depth sorting.
     int64_t depth_id_enc = (int64_t) * (int32_t *)&(depths[idx]);
     int64_t cur_idx = (idx == 0) ? 0 : cum_tiles_per_gauss[idx - 1];
+    if (cb_skip_all) {
+        return;
+    }
+    if (compact_box && cb_can_prune && compact_box_use_sweep) {
+        cb_emit_or_count_sweep(
+            cb_mean_x,
+            cb_mean_y,
+            tile_size,
+            tile_width,
+            tile_height,
+            tile_min.x,
+            tile_min.y,
+            tile_max.x,
+            tile_max.y,
+            q00,
+            q01,
+            q11,
+            q00 * q11 - q01 * q01,
+            cb_tau2,
+            cid_enc,
+            depth_id_enc,
+            static_cast<int32_t>(idx),
+            cur_idx,
+            true,
+            isect_ids,
+            flatten_ids
+        );
+        return;
+    }
     for (int32_t i = tile_min.y; i < tile_max.y; ++i) {
         for (int32_t j = tile_min.x; j < tile_max.x; ++j) {
+            if (compact_box && cb_can_prune &&
+                !tile_intersects_cb(
+                    cb_mean_x,
+                    cb_mean_y,
+                    j,
+                    i,
+                    tile_size,
+                    q00,
+                    q01,
+                    q11,
+                    cb_tau2
+                )) {
+                continue;
+            }
+            // Emit only surviving (camera, gaussian, tile) pairs.
             int64_t tile_id = i * tile_width + j;
             // e.g. tile_n_bits = 22:
             // camera id (10 bits) | tile id (22 bits) | depth (32 bits)
@@ -107,12 +753,20 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
     const torch::Tensor &means2d,                    // [C, N, 2] or [nnz, 2]
     const torch::Tensor &radii,                      // [C, N] or [nnz]
     const torch::Tensor &depths,                     // [C, N] or [nnz]
+    const at::optional<torch::Tensor> &conics,       // [C, N, 3] or [nnz, 3]
+    const at::optional<torch::Tensor> &ray_transforms, // [C, N, 3, 3] or [nnz, 3, 3]
+    const at::optional<torch::Tensor> &opacities,    // [C, N] or [nnz]
     const at::optional<torch::Tensor> &camera_ids,   // [nnz]
     const at::optional<torch::Tensor> &gaussian_ids, // [nnz]
     const uint32_t C,
     const uint32_t tile_size,
     const uint32_t tile_width,
     const uint32_t tile_height,
+    const bool compact_box,
+    const float compact_box_mult,
+    const float compact_box_tau2,
+    const bool compact_box_use_global_tau2,
+    const bool compact_box_use_sweep,
     const bool sort,
     const bool double_buffer
 ) {
@@ -120,6 +774,37 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
     GSPLAT_CHECK_INPUT(means2d);
     GSPLAT_CHECK_INPUT(radii);
     GSPLAT_CHECK_INPUT(depths);
+    if (compact_box) {
+        TORCH_CHECK(
+            conics.has_value() || ray_transforms.has_value(),
+            "conics (3DGS) or ray_transforms (2DGS) must be provided when compact_box is enabled"
+        );
+        TORCH_CHECK(
+            opacities.has_value(),
+            "opacities must be provided when compact_box is enabled"
+        );
+    }
+    if (conics.has_value()) {
+        GSPLAT_CHECK_INPUT(conics.value());
+        TORCH_CHECK(
+            conics.value().scalar_type() == means2d.scalar_type(),
+            "conics and means2d must have same dtype"
+        );
+    }
+    if (ray_transforms.has_value()) {
+        GSPLAT_CHECK_INPUT(ray_transforms.value());
+        TORCH_CHECK(
+            ray_transforms.value().scalar_type() == means2d.scalar_type(),
+            "ray_transforms and means2d must have same dtype"
+        );
+    }
+    if (opacities.has_value()) {
+        GSPLAT_CHECK_INPUT(opacities.value());
+        TORCH_CHECK(
+            opacities.value().scalar_type() == means2d.scalar_type(),
+            "opacities and means2d must have same dtype"
+        );
+    }
     if (camera_ids.has_value()) {
         GSPLAT_CHECK_INPUT(camera_ids.value());
     }
@@ -132,6 +817,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
     int64_t *camera_ids_ptr = nullptr;
     int64_t *gaussian_ids_ptr = nullptr;
     if (packed) {
+        // Packed layout: 1D nnz list with explicit camera/gaussian ids.
         nnz = means2d.size(0);
         total_elems = nnz;
         TORCH_CHECK(
@@ -140,10 +826,65 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
         );
         camera_ids_ptr = camera_ids.value().data_ptr<int64_t>();
         gaussian_ids_ptr = gaussian_ids.value().data_ptr<int64_t>();
+        if (conics.has_value()) {
+            TORCH_CHECK(
+                conics.value().dim() == 2 && conics.value().size(0) == nnz &&
+                    conics.value().size(1) == 3,
+                "Packed conics must have shape [nnz, 3]"
+            );
+        }
+        if (ray_transforms.has_value()) {
+            TORCH_CHECK(
+                ray_transforms.value().dim() == 3 &&
+                    ray_transforms.value().size(0) == nnz &&
+                    ray_transforms.value().size(1) == 3 &&
+                    ray_transforms.value().size(2) == 3,
+                "Packed ray_transforms must have shape [nnz, 3, 3]"
+            );
+        }
+        if (opacities.has_value()) {
+            TORCH_CHECK(
+                opacities.value().dim() == 1 && opacities.value().size(0) == nnz,
+                "Packed opacities must have shape [nnz]"
+            );
+        }
     } else {
+        // Unpacked layout: dense [C, N, ...] tensors.
         N = means2d.size(1); // number of gaussians
         total_elems = C * N;
+        if (conics.has_value()) {
+            TORCH_CHECK(
+                conics.value().dim() == 3 && conics.value().size(0) == C &&
+                    conics.value().size(1) == N && conics.value().size(2) == 3,
+                "Unpacked conics must have shape [C, N, 3]"
+            );
+        }
+        if (ray_transforms.has_value()) {
+            TORCH_CHECK(
+                ray_transforms.value().dim() == 4 &&
+                    ray_transforms.value().size(0) == C &&
+                    ray_transforms.value().size(1) == N &&
+                    ray_transforms.value().size(2) == 3 &&
+                    ray_transforms.value().size(3) == 3,
+                "Unpacked ray_transforms must have shape [C, N, 3, 3]"
+            );
+        }
+        if (opacities.has_value()) {
+            TORCH_CHECK(
+                opacities.value().dim() == 2 && opacities.value().size(0) == C &&
+                    opacities.value().size(1) == N,
+                "Unpacked opacities must have shape [C, N]"
+            );
+        }
     }
+
+    // Empty tensor is safe because kernel receives nullptr when CB is off.
+    const auto conics_tensor =
+        conics.has_value() ? conics.value() : torch::Tensor();
+    const auto ray_transforms_tensor =
+        ray_transforms.has_value() ? ray_transforms.value() : torch::Tensor();
+    const auto opacities_tensor =
+        opacities.has_value() ? opacities.value() : torch::Tensor();
 
     uint32_t n_tiles = tile_width * tile_height;
     at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
@@ -158,7 +899,8 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
     // check if we have enough bits for them.
     assert(tile_n_bits + cam_n_bits <= 32);
 
-    // first pass: compute number of tiles per gaussian
+    // First pass: count surviving tiles per gaussian.
+    // Counts include CB pruning so prefix sum reflects final output size.
     torch::Tensor tiles_per_gauss =
         torch::empty_like(depths, depths.options().dtype(torch::kInt32));
 
@@ -185,11 +927,32 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
                     reinterpret_cast<scalar_t *>(means2d.data_ptr<scalar_t>()),
                     radii.data_ptr<int32_t>(),
                     depths.data_ptr<scalar_t>(),
+                    compact_box && conics.has_value()
+                        // When CB is disabled, pass nullptr to skip conic loads.
+                        ? reinterpret_cast<scalar_t *>(
+                              conics_tensor.data_ptr<scalar_t>()
+                          )
+                        : nullptr,
+                    compact_box && ray_transforms.has_value()
+                        ? reinterpret_cast<scalar_t *>(
+                              ray_transforms_tensor.data_ptr<scalar_t>()
+                          )
+                        : nullptr,
+                    compact_box
+                        ? reinterpret_cast<scalar_t *>(
+                              opacities_tensor.data_ptr<scalar_t>()
+                          )
+                        : nullptr,
                     nullptr,
                     tile_size,
                     tile_width,
                     tile_height,
                     tile_n_bits,
+                    compact_box,
+                    compact_box_mult,
+                    compact_box_tau2,
+                    compact_box_use_global_tau2,
+                    compact_box_use_sweep,
                     tiles_per_gauss.data_ptr<int32_t>(),
                     nullptr,
                     nullptr
@@ -202,7 +965,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
         n_isects = 0;
     }
 
-    // second pass: compute isect_ids and flatten_ids as a packed tensor
+    // Second pass: emit intersection records into compact arrays.
     torch::Tensor isect_ids =
         torch::empty({n_isects}, depths.options().dtype(torch::kInt64));
     torch::Tensor flatten_ids =
@@ -228,11 +991,32 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
                     reinterpret_cast<scalar_t *>(means2d.data_ptr<scalar_t>()),
                     radii.data_ptr<int32_t>(),
                     depths.data_ptr<scalar_t>(),
+                    compact_box && conics.has_value()
+                        // Keep same nullptr/valid-pointer contract as first pass.
+                        ? reinterpret_cast<scalar_t *>(
+                              conics_tensor.data_ptr<scalar_t>()
+                          )
+                        : nullptr,
+                    compact_box && ray_transforms.has_value()
+                        ? reinterpret_cast<scalar_t *>(
+                              ray_transforms_tensor.data_ptr<scalar_t>()
+                          )
+                        : nullptr,
+                    compact_box
+                        ? reinterpret_cast<scalar_t *>(
+                              opacities_tensor.data_ptr<scalar_t>()
+                          )
+                        : nullptr,
                     cum_tiles_per_gauss.data_ptr<int64_t>(),
                     tile_size,
                     tile_width,
                     tile_height,
                     tile_n_bits,
+                    compact_box,
+                    compact_box_mult,
+                    compact_box_tau2,
+                    compact_box_use_global_tau2,
+                    compact_box_use_sweep,
                     nullptr,
                     isect_ids.data_ptr<int64_t>(),
                     flatten_ids.data_ptr<int32_t>()
