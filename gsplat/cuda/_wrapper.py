@@ -963,7 +963,7 @@ def _grad_K_from_env(
     width: int,
     height: int,
 ) -> Tensor:
-    impl = os.environ.get("GSPLAT_GRAD_K_IMPL", "reference").lower()
+    impl = os.environ.get("GSPLAT_GRAD_K_IMPL", "direct").lower()
     if impl == "reference":
         return _grad_K_reference(
             means=means,
