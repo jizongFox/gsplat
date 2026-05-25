@@ -6,6 +6,101 @@ import torch
 device = torch.device("cuda:0")
 
 
+def _make_grad_K_2dgs_inputs(
+    *,
+    c: int = 1,
+    n: int = 16,
+    device: torch.device | str = "cpu",
+    visible_fraction: float = 0.5,
+):
+    torch.manual_seed(42 + c + n)
+    Ks = torch.eye(3, device=device, dtype=torch.float32).repeat(c, 1, 1)
+    Ks[:, 0, 0] = 500 + torch.rand(c, device=device) * 300
+    Ks[:, 1, 1] = 500 + torch.rand(c, device=device) * 300
+    Ks[:, 0, 2] = 320 + torch.rand(c, device=device) * 10
+    Ks[:, 1, 2] = 240 + torch.rand(c, device=device) * 10
+    ray_transforms = torch.randn(c, n, 3, 3, device=device)
+    v_ray_transforms = torch.randn(c, n, 3, 3, device=device)
+    radii = (torch.rand(c, n, device=device) < visible_fraction).to(torch.int32)
+    return Ks, ray_transforms, v_ray_transforms, radii
+
+
+def test_grad_K_2dgs_direct_matches_reference():
+    from gsplat.cuda._wrapper import _grad_K_2dgs_direct, _grad_K_2dgs_reference
+
+    Ks, ray_transforms, v_ray_transforms, radii = _make_grad_K_2dgs_inputs(
+        c=1, n=32
+    )
+
+    grad_K = _grad_K_2dgs_direct(
+        Ks=Ks,
+        ray_transforms=ray_transforms,
+        v_ray_transforms=v_ray_transforms,
+        radii=radii,
+    )
+    expected = _grad_K_2dgs_reference(
+        Ks=Ks,
+        ray_transforms=ray_transforms,
+        v_ray_transforms=v_ray_transforms,
+        radii=radii,
+    )
+
+    torch.testing.assert_close(grad_K, expected)
+
+
+def test_grad_K_2dgs_visible_single_camera_matches_reference():
+    from gsplat.cuda._wrapper import (
+        _grad_K_2dgs_reference,
+        _grad_K_2dgs_visible_single_camera,
+    )
+
+    Ks, ray_transforms, v_ray_transforms, radii = _make_grad_K_2dgs_inputs(
+        c=1, n=48, visible_fraction=0.25
+    )
+
+    grad_K = _grad_K_2dgs_visible_single_camera(
+        Ks=Ks,
+        ray_transforms=ray_transforms,
+        v_ray_transforms=v_ray_transforms,
+        radii=radii,
+    )
+    expected = _grad_K_2dgs_reference(
+        Ks=Ks,
+        ray_transforms=ray_transforms,
+        v_ray_transforms=v_ray_transforms,
+        radii=radii,
+    )
+
+    torch.testing.assert_close(grad_K, expected)
+
+
+def test_grad_K_2dgs_dispatcher_uses_requested_implementation(monkeypatch):
+    from gsplat.cuda._wrapper import (
+        _grad_K_2dgs_from_env,
+        _grad_K_2dgs_visible_single_camera,
+    )
+
+    Ks, ray_transforms, v_ray_transforms, radii = _make_grad_K_2dgs_inputs(
+        c=1, n=24, visible_fraction=0.5
+    )
+    monkeypatch.setenv("GSPLAT_GRAD_K_2DGS_IMPL", "visible_single_camera")
+
+    grad_K = _grad_K_2dgs_from_env(
+        Ks=Ks,
+        ray_transforms=ray_transforms,
+        v_ray_transforms=v_ray_transforms,
+        radii=radii,
+    )
+    expected = _grad_K_2dgs_visible_single_camera(
+        Ks=Ks,
+        ray_transforms=ray_transforms,
+        v_ray_transforms=v_ray_transforms,
+        radii=radii,
+    )
+
+    torch.testing.assert_close(grad_K, expected)
+
+
 @pytest.fixture
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
 def test_data():
