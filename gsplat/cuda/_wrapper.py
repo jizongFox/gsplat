@@ -1638,7 +1638,7 @@ def _grad_K_2dgs_packed_direct(
     ray_transforms: Tensor,
     v_ray_transforms: Tensor,
 ) -> Tensor:
-    T = Ks[camera_ids].inverse() @ ray_transforms
+    T = Ks.inverse()[camera_ids] @ ray_transforms
 
     grad_k = torch.stack(
         [
@@ -1650,10 +1650,7 @@ def _grad_K_2dgs_packed_direct(
         dim=-1,
     )
     grad_k_accum = torch.zeros(Ks.shape[0], 4, device=Ks.device, dtype=Ks.dtype)
-    for cid in range(Ks.shape[0]):
-        mask = camera_ids == cid
-        if bool(mask.any()):
-            grad_k_accum[cid] = grad_k[mask].sum(dim=0)
+    grad_k_accum.index_add_(0, camera_ids, grad_k)
 
     grad_K = torch.zeros_like(Ks)
     grad_K[:, 0, 0] = grad_k_accum[:, 0]
@@ -1686,15 +1683,14 @@ def _v_viewmats_2dgs_packed(
     RS_t[:, 2, :3] = means
     RS_t[:, 2, 3] = 1
 
-    v_viewmats_i = torch.einsum(
-        "nab,nbd,nde->nae", Kt4[camera_ids], v_ray_transforms, RS_t[gaussian_ids]
+    v_viewmats_i = torch.bmm(
+        torch.bmm(Kt4[camera_ids], v_ray_transforms), RS_t[gaussian_ids]
     )
-    v_viewmats = torch.zeros_like(viewmats)
-    for cid in range(viewmats.shape[0]):
-        mask = camera_ids == cid
-        if bool(mask.any()):
-            v_viewmats[cid] = v_viewmats_i[mask].sum(dim=0)
-    return v_viewmats
+    v_viewmats = torch.zeros(
+        viewmats.shape[0], 16, device=viewmats.device, dtype=viewmats.dtype
+    )
+    v_viewmats.index_add_(0, camera_ids, v_viewmats_i.reshape(-1, 16))
+    return v_viewmats.reshape_as(viewmats)
 
 
 def _grad_K_2dgs_visible_single_camera(

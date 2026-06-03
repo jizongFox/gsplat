@@ -102,6 +102,95 @@ def test_grad_K_2dgs_dispatcher_uses_requested_implementation(monkeypatch):
     torch.testing.assert_close(grad_K, expected)
 
 
+def test_grad_K_2dgs_packed_direct_inverts_each_camera_once(monkeypatch):
+    from gsplat.cuda._wrapper import _grad_K_2dgs_packed_direct
+
+    Ks, ray_transforms_dense, v_ray_transforms_dense, _ = _make_grad_K_2dgs_inputs(
+        c=3, n=4
+    )
+    camera_ids = torch.tensor([0, 1, 1, 2, 0, 2], dtype=torch.int64)
+    gaussian_ids = torch.tensor([0, 1, 3, 2, 2, 0], dtype=torch.int64)
+    ray_transforms = ray_transforms_dense[camera_ids, gaussian_ids]
+    v_ray_transforms = v_ray_transforms_dense[camera_ids, gaussian_ids]
+    original_inverse = torch.Tensor.inverse
+    inverse_shapes = []
+
+    def _record_inverse(tensor):
+        inverse_shapes.append(tuple(tensor.shape))
+        return original_inverse(tensor)
+
+    monkeypatch.setattr(torch.Tensor, "inverse", _record_inverse)
+
+    grad_K = _grad_K_2dgs_packed_direct(
+        Ks=Ks,
+        camera_ids=camera_ids,
+        ray_transforms=ray_transforms,
+        v_ray_transforms=v_ray_transforms,
+    )
+
+    assert inverse_shapes == [(Ks.shape[0], 3, 3)]
+    assert grad_K.shape == Ks.shape
+
+
+def test_grad_K_2dgs_packed_direct_avoids_tensor_bool_accumulation(monkeypatch):
+    from gsplat.cuda._wrapper import _grad_K_2dgs_packed_direct
+
+    Ks, ray_transforms_dense, v_ray_transforms_dense, _ = _make_grad_K_2dgs_inputs(
+        c=3, n=4
+    )
+    camera_ids = torch.tensor([0, 1, 1, 2, 0, 2], dtype=torch.int64)
+    gaussian_ids = torch.tensor([0, 1, 3, 2, 2, 0], dtype=torch.int64)
+    ray_transforms = ray_transforms_dense[camera_ids, gaussian_ids]
+    v_ray_transforms = v_ray_transforms_dense[camera_ids, gaussian_ids]
+
+    def _forbid_tensor_bool(_tensor):
+        raise AssertionError("packed accumulation should not convert tensors to bool")
+
+    monkeypatch.setattr(torch.Tensor, "__bool__", _forbid_tensor_bool)
+
+    grad_K = _grad_K_2dgs_packed_direct(
+        Ks=Ks,
+        camera_ids=camera_ids,
+        ray_transforms=ray_transforms,
+        v_ray_transforms=v_ray_transforms,
+    )
+
+    assert grad_K.shape == Ks.shape
+
+
+def test_v_viewmats_2dgs_packed_avoids_tensor_bool_accumulation(monkeypatch):
+    from gsplat.cuda._wrapper import _v_viewmats_2dgs_packed
+
+    torch.manual_seed(42)
+    C, N = 3, 5
+    camera_ids = torch.tensor([0, 1, 1, 2, 0, 2], dtype=torch.int64)
+    gaussian_ids = torch.tensor([0, 1, 3, 2, 4, 0], dtype=torch.int64)
+    means = torch.randn(N, 3)
+    quats = torch.randn(N, 4)
+    scales = torch.rand(N, 3) + 0.1
+    viewmats = torch.eye(4).repeat(C, 1, 1)
+    Ks = torch.eye(3).repeat(C, 1, 1)
+    v_ray_transforms = torch.randn(camera_ids.shape[0], 3, 3)
+
+    def _forbid_tensor_bool(_tensor):
+        raise AssertionError("packed accumulation should not convert tensors to bool")
+
+    monkeypatch.setattr(torch.Tensor, "__bool__", _forbid_tensor_bool)
+
+    v_viewmats = _v_viewmats_2dgs_packed(
+        means=means,
+        quats=quats,
+        scales=scales,
+        viewmats=viewmats,
+        Ks=Ks,
+        camera_ids=camera_ids,
+        gaussian_ids=gaussian_ids,
+        v_ray_transforms=v_ray_transforms,
+    )
+
+    assert v_viewmats.shape == viewmats.shape
+
+
 def test_fully_fused_projection_packed_2dgs_backward_return_arity(monkeypatch):
     import gsplat.cuda._wrapper as wrapper
 
