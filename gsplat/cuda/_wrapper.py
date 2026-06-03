@@ -1186,7 +1186,6 @@ class _FullyFusedProjection(torch.autograd.Function):
             None,
             None,
             None,
-            None,
         )
 
 
@@ -2278,8 +2277,6 @@ class _FullyFusedProjectionPacked2DGS(torch.autograd.Function):
             v_scales,
             v_viewmats,
             grad_K,
-            None,
-            None,
             None,
             None,
             None,

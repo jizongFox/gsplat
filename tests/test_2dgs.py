@@ -1,3 +1,4 @@
+import inspect
 import math
 
 import pytest
@@ -99,6 +100,89 @@ def test_grad_K_2dgs_dispatcher_uses_requested_implementation(monkeypatch):
     )
 
     torch.testing.assert_close(grad_K, expected)
+
+
+def test_fully_fused_projection_packed_2dgs_backward_return_arity(monkeypatch):
+    import gsplat.cuda._wrapper as wrapper
+
+    class Ctx:
+        pass
+
+    C, N, nnz = 1, 2, 2
+    camera_ids = torch.zeros(nnz, dtype=torch.int64)
+    gaussian_ids = torch.arange(nnz, dtype=torch.int64)
+    means = torch.randn(N, 3)
+    quats = torch.randn(N, 4)
+    scales = torch.randn(N, 3)
+    viewmats = torch.eye(4).repeat(C, 1, 1)
+    Ks = torch.eye(3).repeat(C, 1, 1)
+    ray_transforms = torch.randn(nnz, 3, 3)
+
+    ctx = Ctx()
+    ctx.saved_tensors = (
+        camera_ids,
+        gaussian_ids,
+        means,
+        quats,
+        scales,
+        viewmats,
+        Ks,
+        ray_transforms,
+    )
+    ctx.width = 32
+    ctx.height = 24
+    ctx.sparse_grad = False
+    ctx.needs_input_grad = (
+        True,
+        True,
+        True,
+        True,
+        True,
+        False,
+        False,
+        False,
+        False,
+        False,
+        False,
+    )
+
+    def make_lazy_cuda_func(name):
+        assert name == "fully_fused_projection_packed_bwd_2dgs"
+
+        def bwd(*args):
+            return (
+                torch.zeros_like(means),
+                torch.zeros_like(quats),
+                torch.zeros_like(scales),
+                torch.zeros_like(viewmats),
+            )
+
+        return bwd
+
+    monkeypatch.setattr(wrapper, "_make_lazy_cuda_func", make_lazy_cuda_func)
+    monkeypatch.setattr(
+        wrapper, "_v_viewmats_2dgs_packed", lambda **kwargs: torch.zeros_like(viewmats)
+    )
+    monkeypatch.setattr(
+        wrapper, "_grad_K_2dgs_packed_direct", lambda **kwargs: torch.zeros_like(Ks)
+    )
+
+    result = wrapper._FullyFusedProjectionPacked2DGS.backward(
+        ctx,
+        None,
+        None,
+        None,
+        torch.zeros(nnz, 2),
+        torch.zeros(nnz),
+        torch.zeros(nnz, 3, 3),
+        torch.zeros(nnz, 3),
+    )
+    n_forward_inputs = (
+        len(inspect.signature(wrapper._FullyFusedProjectionPacked2DGS.forward).parameters)
+        - 1
+    )
+
+    assert len(result) == n_forward_inputs
 
 
 @pytest.fixture
