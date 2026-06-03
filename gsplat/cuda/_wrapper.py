@@ -962,12 +962,10 @@ def _grad_K_packed_direct(
         dim=-1,
     ).to(torch.float32)
     grad_k = torch.zeros(
-        viewmats.shape[0], 4, device=viewmats.device, dtype=grad_k_entries.dtype
+        viewmats.shape[0], 4, device=viewmats.device, dtype=torch.float64
     )
-    for cid in range(viewmats.shape[0]):
-        mask = camera_ids == cid
-        if bool(mask.any()):
-            grad_k[cid] = grad_k_entries[mask].sum(dim=0)
+    grad_k.index_add_(0, camera_ids, grad_k_entries.to(torch.float64))
+    grad_k = grad_k.to(torch.float32)
 
     grad_K = torch.zeros(
         viewmats.shape[0], 3, 3, device=viewmats.device, dtype=torch.float32

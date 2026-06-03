@@ -48,6 +48,38 @@ def test_grad_K_direct_matches_reference():
     torch.testing.assert_close(grad_K, expected)
 
 
+def test_grad_K_packed_direct_avoids_tensor_bool_accumulation(monkeypatch):
+    from gsplat.cuda._wrapper import _grad_K_packed_direct
+
+    torch.manual_seed(42)
+    C, N = 3, 7
+    width, height = 320, 240
+    camera_ids = torch.tensor([0, 2, 1, 2, 0, 1], dtype=torch.int64)
+    gaussian_ids = torch.tensor([0, 1, 2, 3, 4, 5], dtype=torch.int64)
+    means = torch.randn(N, 3)
+    viewmats = torch.eye(4).repeat(C, 1, 1)
+    viewmats[:, :3, :3] += torch.randn(C, 3, 3) * 0.01
+    viewmats[:, :3, 3] = torch.randn(C, 3)
+    v_means2d = torch.randn(camera_ids.shape[0], 2)
+
+    def _forbid_tensor_bool(_tensor):
+        raise AssertionError("packed accumulation should not convert tensors to bool")
+
+    monkeypatch.setattr(torch.Tensor, "__bool__", _forbid_tensor_bool)
+
+    grad_K = _grad_K_packed_direct(
+        means=means,
+        viewmats=viewmats,
+        camera_ids=camera_ids,
+        gaussian_ids=gaussian_ids,
+        v_means2d=v_means2d,
+        width=width,
+        height=height,
+    )
+
+    assert grad_K.shape == (C, 3, 3)
+
+
 def test_grad_K_visible_single_camera_matches_reference_for_masked_gradients():
     from gsplat.cuda._wrapper import _grad_K_reference, _grad_K_visible_single_camera
 
