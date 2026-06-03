@@ -1,3 +1,4 @@
+import os
 import warnings
 from typing import Callable, Optional, Tuple, Any
 
@@ -848,6 +849,151 @@ class _WorldToCam(torch.autograd.Function):
         return v_means, v_covars, v_viewmats
 
 
+def _grad_K_reference(
+    *,
+    means: Tensor,
+    viewmats: Tensor,
+    v_means2d: Tensor,
+    width: int,
+    height: int,
+) -> Tensor:
+    def amplify_grad(grad):
+        grad[..., 0] *= width * 0.5
+        grad[..., 1] *= height * 0.5
+        return grad
+
+    v_means2d_ = amplify_grad(v_means2d.clone())
+    means3d_cam = torch.matmul(
+        means, viewmats[:, :3, :3].transpose(1, 2)
+    ) + viewmats[:, :3, 3].unsqueeze(1)
+
+    grad_uv_k4: Float[Tensor, "n 2 4"] = torch.zeros(
+        *means3d_cam.shape[:2],
+        2,
+        4,
+        device=viewmats.device,
+        dtype=torch.float32,
+    )
+    grad_uv_k4[..., 0, 0] = means3d_cam[..., 0] / (
+        means3d_cam[..., 2] + 1e-4
+    )  # du/dfx
+    grad_uv_k4[..., 1, 1] = means3d_cam[..., 1] / (
+        means3d_cam[..., 2] + 1e-4
+    )  # dv/dfy
+    grad_uv_k4[..., 0, 2] = 1  # du/dcx
+    grad_uv_k4[..., 1, 3] = 1  # dv/dcy
+
+    grad_k = torch.einsum("bnj,bnjk->bnk", v_means2d_[:, :, :2], grad_uv_k4).sum(
+        dim=1
+    )
+    grad_K = torch.zeros(
+        viewmats.shape[0], 3, 3, device=viewmats.device, dtype=torch.float32
+    )
+    grad_K[:, 0, 0] = grad_k[:, 0]
+    grad_K[:, 1, 1] = grad_k[:, 1]
+    grad_K[:, 0, 2] = grad_k[:, 2]
+    grad_K[:, 1, 2] = grad_k[:, 3]
+    return grad_K
+
+
+def _grad_K_direct(
+    *,
+    means: Tensor,
+    viewmats: Tensor,
+    v_means2d: Tensor,
+    width: int,
+    height: int,
+) -> Tensor:
+    means3d_cam = torch.matmul(
+        means, viewmats[:, :3, :3].transpose(1, 2)
+    ) + viewmats[:, :3, 3].unsqueeze(1)
+    z = means3d_cam[..., 2] + 1e-4
+    v_u = v_means2d[..., 0] * (width * 0.5)
+    v_v = v_means2d[..., 1] * (height * 0.5)
+
+    grad_K = torch.zeros(
+        viewmats.shape[0], 3, 3, device=viewmats.device, dtype=torch.float32
+    )
+    grad_K[:, 0, 0] = (v_u * means3d_cam[..., 0] / z).sum(dim=1)
+    grad_K[:, 1, 1] = (v_v * means3d_cam[..., 1] / z).sum(dim=1)
+    grad_K[:, 0, 2] = v_u.sum(dim=1)
+    grad_K[:, 1, 2] = v_v.sum(dim=1)
+    return grad_K
+
+
+def _grad_K_visible_single_camera(
+    *,
+    means: Tensor,
+    viewmats: Tensor,
+    v_means2d: Tensor,
+    radii: Tensor,
+    width: int,
+    height: int,
+) -> Tensor:
+    if viewmats.shape[0] != 1:
+        return _grad_K_direct(
+            means=means,
+            viewmats=viewmats,
+            v_means2d=v_means2d,
+            width=width,
+            height=height,
+        )
+
+    visible = radii[0] > 0
+    if not bool(visible.any()):
+        return torch.zeros(
+            viewmats.shape[0], 3, 3, device=viewmats.device, dtype=torch.float32
+        )
+
+    return _grad_K_direct(
+        means=means[visible],
+        viewmats=viewmats,
+        v_means2d=v_means2d[:, visible, :],
+        width=width,
+        height=height,
+    )
+
+
+def _grad_K_from_env(
+    *,
+    means: Tensor,
+    viewmats: Tensor,
+    v_means2d: Tensor,
+    radii: Tensor,
+    width: int,
+    height: int,
+) -> Tensor:
+    impl = os.environ.get("GSPLAT_GRAD_K_IMPL", "direct").lower()
+    if impl == "reference":
+        return _grad_K_reference(
+            means=means,
+            viewmats=viewmats,
+            v_means2d=v_means2d,
+            width=width,
+            height=height,
+        )
+    if impl == "direct":
+        return _grad_K_direct(
+            means=means,
+            viewmats=viewmats,
+            v_means2d=v_means2d,
+            width=width,
+            height=height,
+        )
+    if impl in {"visible", "visible_single_camera"}:
+        return _grad_K_visible_single_camera(
+            means=means,
+            viewmats=viewmats,
+            v_means2d=v_means2d,
+            radii=radii,
+            width=width,
+            height=height,
+        )
+    raise ValueError(
+        "GSPLAT_GRAD_K_IMPL must be one of: reference, direct, visible_single_camera"
+    )
+
+
 class _FullyFusedProjection(torch.autograd.Function):
     """Projects Gaussians to 2D."""
 
@@ -959,43 +1105,14 @@ class _FullyFusedProjection(torch.autograd.Function):
             grad_K = None
         # compute the gradient with respect to K.
         else:
-
-            def amplify_grad(grad):
-                grad[..., 0] *= width * 0.5
-                grad[..., 1] *= height * 0.5
-                return grad
-
-            v_means2d_ = amplify_grad(v_means2d)
-            means3d_cam = torch.matmul(
-                means, viewmats[:, :3, :3].transpose(1, 2)
-            ) + viewmats[:, :3, 3].unsqueeze(1)
-
-            grad_uv_k4: Float[Tensor, "n 2 4"] = torch.zeros(
-                *means3d_cam.shape[:2],
-                2,
-                4,
-                device=viewmats.device,
-                dtype=torch.float32,
+            grad_K = _grad_K_from_env(
+                means=means,
+                viewmats=viewmats,
+                v_means2d=v_means2d,
+                radii=radii,
+                width=width,
+                height=height,
             )
-            grad_uv_k4[..., 0, 0] = means3d_cam[..., 0] / (
-                means3d_cam[..., 2] + 1e-4
-            )  # du/dfx
-            grad_uv_k4[..., 1, 1] = means3d_cam[..., 1] / (
-                means3d_cam[..., 2] + 1e-4
-            )  # dv/dfy
-            grad_uv_k4[..., 0, 2] = 1  # du/dcx
-            grad_uv_k4[..., 1, 3] = 1  # dv/dcy
-
-            grad_k = torch.einsum(
-                "bnj,bnjk->bnk", v_means2d_[:, :, :2], grad_uv_k4
-            ).sum(dim=1)
-            grad_K = torch.zeros(
-                viewmats.shape[0], 3, 3, device=viewmats.device, dtype=torch.float32
-            )
-            grad_K[:, 0, 0] = grad_k[:, 0]
-            grad_K[:, 1, 1] = grad_k[:, 1]
-            grad_K[:, 0, 2] = grad_k[:, 2]
-            grad_K[:, 1, 2] = grad_k[:, 3]
         return (
             v_means,
             v_covars,
@@ -1374,6 +1491,145 @@ class _SphericalHarmonics(torch.autograd.Function):
 
 
 ###### 2DGS ######
+def _grad_K_2dgs_reference(
+    *,
+    Ks: Tensor,
+    ray_transforms: Tensor,
+    v_ray_transforms: Tensor,
+    radii: Tensor,
+) -> Tensor:
+    T = Ks.inverse().unsqueeze(1) @ ray_transforms
+    visibility_filter = radii > 0
+
+    dM_dfx = torch.zeros_like(T)
+    dM_dfy = torch.zeros_like(T)
+    dM_dcx = torch.zeros_like(T)
+    dM_dcy = torch.zeros_like(T)
+    dM_dfx[:, :, :, 0] = T[:, :, 0]
+    dM_dfy[:, :, :, 1] = T[:, :, 1]
+    dM_dcx[:, :, :, 0] = T[:, :, 2]
+    dM_dcy[:, :, :, 1] = T[:, :, 2]
+
+    dM_dK = torch.stack([dM_dfx, dM_dfy, dM_dcx, dM_dcy], dim=-1)
+    dM_dK *= visibility_filter.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).to(
+        dtype=dM_dK.dtype
+    )
+    grad_k = torch.einsum(
+        "cnijk,cnij->ck", dM_dK, v_ray_transforms.transpose(-1, -2)
+    )
+
+    grad_K = torch.zeros_like(Ks)
+    grad_K[:, 0, 0] = grad_k[:, 0]
+    grad_K[:, 1, 1] = grad_k[:, 1]
+    grad_K[:, 0, 2] = grad_k[:, 2]
+    grad_K[:, 1, 2] = grad_k[:, 3]
+    return grad_K
+
+
+def _grad_K_2dgs_direct(
+    *,
+    Ks: Tensor,
+    ray_transforms: Tensor,
+    v_ray_transforms: Tensor,
+    radii: Tensor,
+) -> Tensor:
+    T = Ks.inverse().unsqueeze(1) @ ray_transforms
+    visible = (radii > 0).to(dtype=T.dtype)
+
+    grad_k = torch.empty(Ks.shape[0], 4, device=Ks.device, dtype=Ks.dtype)
+    grad_k[:, 0] = (
+        (T[:, :, 0, :] * v_ray_transforms[:, :, 0, :]).sum(dim=-1) * visible
+    ).sum(dim=1)
+    grad_k[:, 1] = (
+        (T[:, :, 1, :] * v_ray_transforms[:, :, 1, :]).sum(dim=-1) * visible
+    ).sum(dim=1)
+    grad_k[:, 2] = (
+        (T[:, :, 2, :] * v_ray_transforms[:, :, 0, :]).sum(dim=-1) * visible
+    ).sum(dim=1)
+    grad_k[:, 3] = (
+        (T[:, :, 2, :] * v_ray_transforms[:, :, 1, :]).sum(dim=-1) * visible
+    ).sum(dim=1)
+
+    grad_K = torch.zeros_like(Ks)
+    grad_K[:, 0, 0] = grad_k[:, 0]
+    grad_K[:, 1, 1] = grad_k[:, 1]
+    grad_K[:, 0, 2] = grad_k[:, 2]
+    grad_K[:, 1, 2] = grad_k[:, 3]
+    return grad_K
+
+
+def _grad_K_2dgs_visible_single_camera(
+    *,
+    Ks: Tensor,
+    ray_transforms: Tensor,
+    v_ray_transforms: Tensor,
+    radii: Tensor,
+) -> Tensor:
+    if Ks.shape[0] != 1:
+        return _grad_K_2dgs_direct(
+            Ks=Ks,
+            ray_transforms=ray_transforms,
+            v_ray_transforms=v_ray_transforms,
+            radii=radii,
+        )
+
+    visible = radii[0] > 0
+    if not bool(visible.any()):
+        return torch.zeros_like(Ks)
+
+    T = Ks.inverse().unsqueeze(1) @ ray_transforms[:, visible]
+    v_ray_transforms = v_ray_transforms[:, visible]
+
+    grad_k = torch.empty(Ks.shape[0], 4, device=Ks.device, dtype=Ks.dtype)
+    grad_k[:, 0] = (T[:, :, 0, :] * v_ray_transforms[:, :, 0, :]).sum(dim=(1, 2))
+    grad_k[:, 1] = (T[:, :, 1, :] * v_ray_transforms[:, :, 1, :]).sum(dim=(1, 2))
+    grad_k[:, 2] = (T[:, :, 2, :] * v_ray_transforms[:, :, 0, :]).sum(dim=(1, 2))
+    grad_k[:, 3] = (T[:, :, 2, :] * v_ray_transforms[:, :, 1, :]).sum(dim=(1, 2))
+
+    grad_K = torch.zeros_like(Ks)
+    grad_K[:, 0, 0] = grad_k[:, 0]
+    grad_K[:, 1, 1] = grad_k[:, 1]
+    grad_K[:, 0, 2] = grad_k[:, 2]
+    grad_K[:, 1, 2] = grad_k[:, 3]
+    return grad_K
+
+
+def _grad_K_2dgs_from_env(
+    *,
+    Ks: Tensor,
+    ray_transforms: Tensor,
+    v_ray_transforms: Tensor,
+    radii: Tensor,
+) -> Tensor:
+    impl = os.environ.get(
+        "GSPLAT_GRAD_K_2DGS_IMPL", os.environ.get("GSPLAT_GRAD_K_IMPL", "visible_single_camera")
+    ).lower()
+    if impl == "reference":
+        return _grad_K_2dgs_reference(
+            Ks=Ks,
+            ray_transforms=ray_transforms,
+            v_ray_transforms=v_ray_transforms,
+            radii=radii,
+        )
+    if impl == "direct":
+        return _grad_K_2dgs_direct(
+            Ks=Ks,
+            ray_transforms=ray_transforms,
+            v_ray_transforms=v_ray_transforms,
+            radii=radii,
+        )
+    if impl in {"visible", "visible_single_camera"}:
+        return _grad_K_2dgs_visible_single_camera(
+            Ks=Ks,
+            ray_transforms=ray_transforms,
+            v_ray_transforms=v_ray_transforms,
+            radii=radii,
+        )
+    raise ValueError(
+        "GSPLAT_GRAD_K_2DGS_IMPL must be one of: reference, direct, visible_single_camera"
+    )
+
+
 def fully_fused_projection_2dgs(
     means: Tensor,  # [N, 3]
     quats: Tensor,  # [N, 4]
@@ -1631,48 +1887,12 @@ class _FullyFusedProjection2DGS(torch.autograd.Function):
             grad_K = None
             # compute the gradient with respect to K.
         else:
-            T_cl = Ks.inverse() @ ray_transforms  # this matches exactly.
-            visibility_filter = radii > 0
-
-            def _compute_dK(v_ray_transforms):
-                # m = ray_transforms
-                T = T_cl
-
-                dM_dfx = torch.zeros_like(T)
-                dM_dfy = torch.zeros_like(T)
-                dM_dcx = torch.zeros_like(T)
-                dM_dcy = torch.zeros_like(T)
-                dM_dfx[:, :, :, 0] = T[:, :, 0]
-                dM_dfy[:, :, :, 1] = T[:, :, 1]
-                dM_dcx[:, :, :, 0] = T[:, :, 2]
-                dM_dcy[:, :, :, 1] = T[:, :, 2]
-
-                """
-                  dM_dfx[:, :, :, 0] = data.value[:, :, 0]
-                # dM_dfy[:, :, :, 1] = data.value[:, :, 1]
-                # dM_dcx[:, :, :, 0] = data.value[:, :, 2]
-                # dM_dcy[:, :, :, 1] = data.value[:, :, 2]
-                """
-
-                dM_dK = torch.stack(
-                    [dM_dfx, dM_dfy, dM_dcx, dM_dcy], dim=-1
-                )  # c n 3 3X4
-                dM_dK *= (
-                    visibility_filter.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).float()
-                )
-                dL_dK = torch.einsum(
-                    "cnijk,cnij->ck", dM_dK, v_ray_transforms.transpose(-1, -2)
-                )
-
-                return dL_dK
-
-            _grad_K = _compute_dK(v_ray_transforms)
-            # c 4
-            grad_K = torch.zeros_like(Ks)
-            grad_K[:, 0, 0] = _grad_K[:, 0]
-            grad_K[:, 1, 1] = _grad_K[:, 1]
-            grad_K[:, 0, 2] = _grad_K[:, 2]
-            grad_K[:, 1, 2] = _grad_K[:, 3]
+            grad_K = _grad_K_2dgs_from_env(
+                Ks=Ks,
+                ray_transforms=ray_transforms,
+                v_ray_transforms=v_ray_transforms,
+                radii=radii,
+            )
 
             # def amplify_grad(grad):
             #     grad[..., 0] *= width * 0.5

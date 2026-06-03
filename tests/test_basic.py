@@ -18,6 +18,101 @@ from gsplat._helper import load_test_data
 device = torch.device("cuda:0")
 
 
+def test_grad_K_direct_matches_reference():
+    from gsplat.cuda._wrapper import _grad_K_direct, _grad_K_reference
+
+    torch.manual_seed(42)
+    C, N = 2, 7
+    width, height = 320, 240
+    means = torch.randn(N, 3)
+    viewmats = torch.eye(4).repeat(C, 1, 1)
+    viewmats[:, :3, :3] += torch.randn(C, 3, 3) * 0.01
+    viewmats[:, :3, 3] = torch.randn(C, 3)
+    v_means2d = torch.randn(C, N, 2)
+
+    grad_K = _grad_K_direct(
+        means=means,
+        viewmats=viewmats,
+        v_means2d=v_means2d,
+        width=width,
+        height=height,
+    )
+    expected = _grad_K_reference(
+        means=means,
+        viewmats=viewmats,
+        v_means2d=v_means2d,
+        width=width,
+        height=height,
+    )
+
+    torch.testing.assert_close(grad_K, expected)
+
+
+def test_grad_K_visible_single_camera_matches_reference_for_masked_gradients():
+    from gsplat.cuda._wrapper import _grad_K_reference, _grad_K_visible_single_camera
+
+    torch.manual_seed(42)
+    C, N = 1, 8
+    width, height = 640, 480
+    means = torch.randn(N, 3)
+    viewmats = torch.eye(4).repeat(C, 1, 1)
+    viewmats[:, :3, 3] = torch.tensor([[0.1, -0.2, 2.0]])
+    radii = torch.tensor([[1, 0, 2, 0, 3, 4, 0, 5]], dtype=torch.int32)
+    v_means2d = torch.randn(C, N, 2)
+    v_means2d = v_means2d * (radii > 0).unsqueeze(-1)
+
+    grad_K = _grad_K_visible_single_camera(
+        means=means,
+        viewmats=viewmats,
+        v_means2d=v_means2d,
+        radii=radii,
+        width=width,
+        height=height,
+    )
+    expected = _grad_K_reference(
+        means=means,
+        viewmats=viewmats,
+        v_means2d=v_means2d,
+        width=width,
+        height=height,
+    )
+
+    torch.testing.assert_close(grad_K, expected)
+
+
+def test_grad_K_dispatcher_uses_requested_implementation(monkeypatch):
+    from gsplat.cuda._wrapper import _grad_K_from_env, _grad_K_visible_single_camera
+
+    torch.manual_seed(42)
+    C, N = 1, 6
+    width, height = 800, 600
+    means = torch.randn(N, 3)
+    viewmats = torch.eye(4).repeat(C, 1, 1)
+    radii = torch.tensor([[1, 0, 1, 1, 0, 1]], dtype=torch.int32)
+    v_means2d = torch.randn(C, N, 2)
+    v_means2d = v_means2d * (radii > 0).unsqueeze(-1)
+    monkeypatch.setenv("GSPLAT_GRAD_K_IMPL", "visible_single_camera")
+
+    grad_K = _grad_K_from_env(
+        means=means,
+        viewmats=viewmats,
+        v_means2d=v_means2d,
+        radii=radii,
+        width=width,
+        height=height,
+    )
+    expected = _grad_K_visible_single_camera(
+        means=means,
+        viewmats=viewmats,
+        v_means2d=v_means2d,
+        radii=radii,
+        width=width,
+        height=height,
+    )
+
+    torch.testing.assert_close(grad_K, expected)
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
 @pytest.fixture
 def test_data():
