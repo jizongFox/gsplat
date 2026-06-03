@@ -62,6 +62,7 @@ __global__ void fully_fused_projection_packed_fwd_2dgs_kernel(
         // shift pointers to the current camera and gaussian
         means += col_idx * 3;
         viewmats += row_idx * 16;
+        Ks += row_idx * 9;
 
         // glm is column-major but input is row-major
         R = mat3<T>(

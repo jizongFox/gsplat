@@ -48,6 +48,38 @@ def test_grad_K_direct_matches_reference():
     torch.testing.assert_close(grad_K, expected)
 
 
+def test_grad_K_packed_direct_avoids_tensor_bool_accumulation(monkeypatch):
+    from gsplat.cuda._wrapper import _grad_K_packed_direct
+
+    torch.manual_seed(42)
+    C, N = 3, 7
+    width, height = 320, 240
+    camera_ids = torch.tensor([0, 2, 1, 2, 0, 1], dtype=torch.int64)
+    gaussian_ids = torch.tensor([0, 1, 2, 3, 4, 5], dtype=torch.int64)
+    means = torch.randn(N, 3)
+    viewmats = torch.eye(4).repeat(C, 1, 1)
+    viewmats[:, :3, :3] += torch.randn(C, 3, 3) * 0.01
+    viewmats[:, :3, 3] = torch.randn(C, 3)
+    v_means2d = torch.randn(camera_ids.shape[0], 2)
+
+    def _forbid_tensor_bool(_tensor):
+        raise AssertionError("packed accumulation should not convert tensors to bool")
+
+    monkeypatch.setattr(torch.Tensor, "__bool__", _forbid_tensor_bool)
+
+    grad_K = _grad_K_packed_direct(
+        means=means,
+        viewmats=viewmats,
+        camera_ids=camera_ids,
+        gaussian_ids=gaussian_ids,
+        v_means2d=v_means2d,
+        width=width,
+        height=height,
+    )
+
+    assert grad_K.shape == (C, 3, 3)
+
+
 def test_grad_K_visible_single_camera_matches_reference_for_masked_gradients():
     from gsplat.cuda._wrapper import _grad_K_reference, _grad_K_visible_single_camera
 
@@ -399,6 +431,7 @@ def test_fully_fused_projection_packed(
     means = test_data["means"]
 
     viewmats.requires_grad = True
+    Ks.requires_grad = True
     quats.requires_grad = True
     scales.requires_grad = True
     means.requires_grad = True
@@ -509,18 +542,18 @@ def test_fully_fused_projection_packed(
     v_means2d = torch.randn_like(_means2d) * sel[..., None]
     v_depths = torch.randn_like(_depths) * sel
     v_conics = torch.randn_like(_conics) * sel[..., None]
-    _v_viewmats, _v_quats, _v_scales, _v_means = torch.autograd.grad(
+    _v_viewmats, _v_Ks, _v_quats, _v_scales, _v_means = torch.autograd.grad(
         (_means2d * v_means2d).sum()
         + (_depths * v_depths).sum()
         + (_conics * v_conics).sum(),
-        (viewmats, quats, scales, means),
+        (viewmats, Ks, quats, scales, means),
         retain_graph=True,
     )
-    v_viewmats, v_quats, v_scales, v_means = torch.autograd.grad(
+    v_viewmats, v_Ks, v_quats, v_scales, v_means = torch.autograd.grad(
         (means2d * v_means2d[__radii > 0]).sum()
         + (depths * v_depths[__radii > 0]).sum()
         + (conics * v_conics[__radii > 0]).sum(),
-        (viewmats, quats, scales, means),
+        (viewmats, Ks, quats, scales, means),
         retain_graph=True,
     )
     if sparse_grad:
@@ -529,6 +562,7 @@ def test_fully_fused_projection_packed(
         v_means = v_means.to_dense()
 
     torch.testing.assert_close(v_viewmats, _v_viewmats, rtol=1e-2, atol=1e-2)
+    torch.testing.assert_close(v_Ks, _v_Ks, rtol=1e-4, atol=1e-4)
     torch.testing.assert_close(v_quats, _v_quats, rtol=1e-3, atol=1e-3)
     torch.testing.assert_close(v_scales, _v_scales, rtol=5e-2, atol=5e-2)
     torch.testing.assert_close(v_means, _v_means, rtol=1e-3, atol=1e-3)
