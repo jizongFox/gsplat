@@ -40,7 +40,7 @@ def rasterization(
     radius_clip: float = 0.0,
     eps2d: float = 0.3,
     sh_degree: Optional[int] = None,
-    packed: bool = True,
+    packed: bool = False,
     tile_size: int = 16,
     compact_box: bool = False,
     compact_box_mult: float = 1.0,
@@ -1090,7 +1090,7 @@ def rasterization_2dgs(
             number of bands. If set, the `colors` should be [(C,) N, K, 3] SH coefficients,
             else the `colors` should [(C,) N, D] post-activation color values. Default is None.
         packed: Whether to use packed mode which is more memory efficient but might or
-            might not be as fast. Default is True.
+            might not be as fast. Default is False.
         tile_size: The size of the tiles for rasterization. Default is 16.
             (Note: other values are not tested)
         compact_box: Enable Compact Box tile pruning based on a 2DGS conic
