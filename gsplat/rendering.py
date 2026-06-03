@@ -137,7 +137,11 @@ def rasterization(
         which is shown to be more effective for splitting Gaussians during training.
 
     .. warning::
-        This function is currently not differentiable w.r.t. the camera intrinsics `Ks`.
+        Gradients with respect to camera intrinsics `Ks` are partial. They match
+        the projection helper behavior for packed and unpacked modes, but only
+        include the projected-mean VJP with pinhole-style `fx`, `fy`, `cx`, and
+        `cy` terms. Covariance, conic, and compensation contributions are not
+        included, and `ortho`/`fisheye` reuse the same partial intrinsic gradient.
 
     Args:
         means: The 3D centers of the Gaussians. [N, 3]
@@ -1058,7 +1062,11 @@ def rasterization_2dgs(
     This function supports a handful of features, similar to the :func:`rasterization` function.
 
     .. warning::
-        This function is currently not differentiable w.r.t. the camera intrinsics `Ks`.
+        Gradients with respect to camera intrinsics `Ks` and camera transforms
+        `viewmats` are partial. They match packed and unpacked projection helper
+        behavior, but use only direct `ray_transforms` VJPs; VJP terms folded
+        inside the CUDA 2DGS projection backward from `means2d`, `depths`, and
+        `normals` are not included in these camera gradients.
 
     Args:
         means: The 3D centers of the Gaussians. [N, 3]
@@ -1165,8 +1173,6 @@ def rasterization_2dgs(
         'gradient_2dgs'])
 
     """
-    assert packed is not True, "packed mode is not supported in 2DGS"
-
     N = means.shape[0]
     C = viewmats.shape[0]
     assert means.shape == (N, 3), means.shape
