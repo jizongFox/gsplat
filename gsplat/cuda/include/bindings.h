@@ -345,7 +345,7 @@ fully_fused_projection_fwd_2dgs_tensor(
     const float radius_clip
 );
 
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 fully_fused_projection_bwd_2dgs_tensor(
     // fwd inputs
     const torch::Tensor &means,    // [N, 3]
@@ -363,7 +363,8 @@ fully_fused_projection_bwd_2dgs_tensor(
     const torch::Tensor &v_depths,  // [C, N]
     const torch::Tensor &v_normals, // [C, N, 3]
     const torch::Tensor &v_ray_transforms,  // [C, N, 3, 3]
-    const bool viewmats_requires_grad
+    const bool viewmats_requires_grad,
+    const bool camera_requires_grad
 );
 
 std::tuple<

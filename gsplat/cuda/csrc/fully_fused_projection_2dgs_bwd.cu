@@ -40,7 +40,8 @@ __global__ void fully_fused_projection_bwd_2dgs_kernel(
     T *__restrict__ v_means,   // [N, 3]
     T *__restrict__ v_quats,   // [N, 4]
     T *__restrict__ v_scales,  // [N, 3]
-    T *__restrict__ v_viewmats // [C, 4, 4]
+    T *__restrict__ v_viewmats, // [C, 4, 4]
+    T *__restrict__ v_ray_transforms_total // [C, N, 3, 3]
 ) {
     // parallelize over C * N.
     uint32_t idx = cg::this_grid().thread_rank();
@@ -61,6 +62,9 @@ __global__ void fully_fused_projection_bwd_2dgs_kernel(
     v_depths += idx;
     v_normals += idx * 3;
     v_ray_transforms += idx * 9;
+    if (v_ray_transforms_total != nullptr) {
+        v_ray_transforms_total += idx * 9;
+    }
 
     // transform Gaussian to camera space
     mat3<T> R = mat3<T>(
@@ -118,6 +122,18 @@ __global__ void fully_fused_projection_bwd_2dgs_kernel(
         v_mean
     );
 
+    if (v_ray_transforms_total != nullptr) {
+        v_ray_transforms_total[0] = _v_ray_transforms[0][0];
+        v_ray_transforms_total[1] = _v_ray_transforms[0][1];
+        v_ray_transforms_total[2] = _v_ray_transforms[0][2];
+        v_ray_transforms_total[3] = _v_ray_transforms[1][0];
+        v_ray_transforms_total[4] = _v_ray_transforms[1][1];
+        v_ray_transforms_total[5] = _v_ray_transforms[1][2];
+        v_ray_transforms_total[6] = _v_ray_transforms[2][0];
+        v_ray_transforms_total[7] = _v_ray_transforms[2][1];
+        v_ray_transforms_total[8] = _v_ray_transforms[2][2];
+    }
+
     // #if __CUDA_ARCH__ >= 700
     // write out results with warp-level reduction
     auto warp = cg::tiled_partition<32>(cg::this_thread_block());
@@ -146,9 +162,34 @@ __global__ void fully_fused_projection_bwd_2dgs_kernel(
         gpuAtomicAdd(v_scales, v_scale[0]);
         gpuAtomicAdd(v_scales + 1, v_scale[1]);
     }
+
+    if (v_viewmats != nullptr) {
+        mat3<T> local_R = quat_to_rotmat<T>(quat);
+        vec3<T> local_normal = local_R[2];
+        T multiplier = glm::dot(-(R * local_normal), mean_c) > 0 ? 1 : -1;
+        auto warp_group_c = cg::labeled_partition(warp, cid);
+        vec3<T> v_view_R_0 = multiplier * v_normal[0] * local_normal;
+        vec3<T> v_view_R_1 = multiplier * v_normal[1] * local_normal;
+        vec3<T> v_view_R_2 = multiplier * v_normal[2] * local_normal;
+        warpSum(v_view_R_0, warp_group_c);
+        warpSum(v_view_R_1, warp_group_c);
+        warpSum(v_view_R_2, warp_group_c);
+        if (warp_group_c.thread_rank() == 0) {
+            v_viewmats += cid * 16;
+            gpuAtomicAdd(v_viewmats, v_view_R_0[0]);
+            gpuAtomicAdd(v_viewmats + 1, v_view_R_0[1]);
+            gpuAtomicAdd(v_viewmats + 2, v_view_R_0[2]);
+            gpuAtomicAdd(v_viewmats + 4, v_view_R_1[0]);
+            gpuAtomicAdd(v_viewmats + 5, v_view_R_1[1]);
+            gpuAtomicAdd(v_viewmats + 6, v_view_R_1[2]);
+            gpuAtomicAdd(v_viewmats + 8, v_view_R_2[0]);
+            gpuAtomicAdd(v_viewmats + 9, v_view_R_2[1]);
+            gpuAtomicAdd(v_viewmats + 10, v_view_R_2[2]);
+        }
+    }
 }
 
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 fully_fused_projection_bwd_2dgs_tensor(
     // fwd inputs
     const torch::Tensor &means,    // [N, 3]
@@ -166,7 +207,8 @@ fully_fused_projection_bwd_2dgs_tensor(
     const torch::Tensor &v_depths,  // [C, N]
     const torch::Tensor &v_normals, // [C, N, 3]
     const torch::Tensor &v_ray_transforms,  // [C, N, 3, 3]
-    const bool viewmats_requires_grad
+    const bool viewmats_requires_grad,
+    const bool camera_requires_grad
 ) {
     GSPLAT_DEVICE_GUARD(means);
     GSPLAT_CHECK_INPUT(means);
@@ -188,9 +230,12 @@ fully_fused_projection_bwd_2dgs_tensor(
     torch::Tensor v_means = torch::zeros_like(means);
     torch::Tensor v_quats = torch::zeros_like(quats);
     torch::Tensor v_scales = torch::zeros_like(scales);
-    torch::Tensor v_viewmats;
+    torch::Tensor v_viewmats, v_ray_transforms_total;
     if (viewmats_requires_grad) {
         v_viewmats = torch::zeros_like(viewmats);
+    }
+    if (camera_requires_grad) {
+        v_ray_transforms_total = torch::zeros_like(v_ray_transforms);
     }
     if (C && N) {
         fully_fused_projection_bwd_2dgs_kernel<float>
@@ -216,10 +261,11 @@ fully_fused_projection_bwd_2dgs_tensor(
                 v_means.data_ptr<float>(),
                 v_quats.data_ptr<float>(),
                 v_scales.data_ptr<float>(),
-                viewmats_requires_grad ? v_viewmats.data_ptr<float>() : nullptr
+                viewmats_requires_grad ? v_viewmats.data_ptr<float>() : nullptr,
+                camera_requires_grad ? v_ray_transforms_total.data_ptr<float>() : nullptr
             );
     }
-    return std::make_tuple(v_means, v_quats, v_scales, v_viewmats);
+    return std::make_tuple(v_means, v_quats, v_scales, v_viewmats, v_ray_transforms_total);
 }
 
 } // namespace gsplat
