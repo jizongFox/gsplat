@@ -1062,11 +1062,11 @@ def rasterization_2dgs(
     This function supports a handful of features, similar to the :func:`rasterization` function.
 
     .. warning::
-        Gradients with respect to camera intrinsics `Ks` and camera transforms
-        `viewmats` are partial. They match packed and unpacked projection helper
-        behavior, but use only direct `ray_transforms` VJPs; VJP terms folded
-        inside the CUDA 2DGS projection backward from `means2d`, `depths`, and
-        `normals` are not included in these camera gradients.
+        With `packed=True`, gradients with respect to camera intrinsics `Ks` and
+        camera transforms `viewmats` are partial and use only direct
+        `ray_transforms` VJPs. With `packed=False`, camera gradients include the
+        CUDA-accumulated `ray_transforms` VJP and the direct normal-to-viewmat
+        rotation term.
 
     Args:
         means: The 3D centers of the Gaussians. [N, 3]

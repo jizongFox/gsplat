@@ -1558,10 +1558,6 @@ class _SphericalHarmonics(torch.autograd.Function):
 
 
 ###### 2DGS ######
-# NOTE: 2DGS camera gradients intentionally mirror the historical unpacked path.
-# `Ks` and Python-recomputed `viewmats` gradients use only the direct upstream
-# `v_ray_transforms`. The local VJP terms that CUDA folds in from means2d,
-# depths, and normals are not included in these camera gradients.
 def _grad_K_2dgs_reference(
     *,
     Ks: Tensor,
@@ -1656,6 +1652,29 @@ def _grad_K_2dgs_packed_direct(
     grad_K[:, 0, 2] = grad_k_accum[:, 2]
     grad_K[:, 1, 2] = grad_k_accum[:, 3]
     return grad_K
+
+
+@torch.no_grad()
+def _v_viewmats_2dgs_unpacked(
+    *,
+    means: Tensor,
+    quats: Tensor,
+    scales: Tensor,
+    viewmats: Tensor,
+    Ks: Tensor,
+    v_ray_transforms: Tensor,
+) -> Tensor:
+    C = Ks.shape[0]
+    N = means.shape[0]
+    Kt4 = torch.zeros(C, 4, 3, device=means.device, dtype=means.dtype)
+    Kt4[:, :3, :3] = Ks.transpose(-1, -2)
+
+    RS_wl = _quat_scale_to_matrix(quats, scales)
+    RS_t = torch.zeros(N, 3, 4, device=means.device, dtype=means.dtype)
+    RS_t[:, :2, :3] = RS_wl[:, :, :2].transpose(-1, -2)
+    RS_t[:, 2, :3] = means
+    RS_t[:, 2, 3] = 1
+    return torch.einsum("cab,cnbd,nde->cae", Kt4, v_ray_transforms, RS_t)
 
 
 @torch.no_grad()
@@ -1785,10 +1804,10 @@ def fully_fused_projection_2dgs(
 
     .. warning::
 
-        The backward pass computes only the existing partial camera gradients for
-        `Ks` and `viewmats`. They use the direct `ray_transforms` VJP only; VJP
-        terms folded inside the CUDA projection backward from `means2d`,
-        `depths`, and `normals` are not included in these camera gradients.
+        In packed mode, camera gradients remain partial and use only direct
+        `ray_transforms` VJPs. In unpacked mode, camera gradients include the
+        CUDA-accumulated `ray_transforms` VJP and the direct normal-to-viewmat
+        rotation term.
 
     Args:
         means: Gaussian means. [N, 3]
@@ -1938,7 +1957,13 @@ class _FullyFusedProjection2DGS(torch.autograd.Function):
         width = ctx.width
         height = ctx.height
 
-        v_means, v_quats, v_scales, v_viewmats = _make_lazy_cuda_func(
+        (
+            v_means,
+            v_quats,
+            v_scales,
+            v_viewmats_direct,
+            v_ray_transforms_total,
+        ) = _make_lazy_cuda_func(
             "fully_fused_projection_bwd_2dgs"
         )(
             means,
@@ -1955,6 +1980,7 @@ class _FullyFusedProjection2DGS(torch.autograd.Function):
             v_normals.contiguous(),
             v_ray_transforms.contiguous(),
             ctx.needs_input_grad[3],  # viewmats_requires_grad
+            ctx.needs_input_grad[3] or ctx.needs_input_grad[4],  # camera_requires_grad
         )
         if not ctx.needs_input_grad[0]:
             v_means = None
@@ -1964,112 +1990,25 @@ class _FullyFusedProjection2DGS(torch.autograd.Function):
             v_scales = None
         if not ctx.needs_input_grad[3]:
             v_viewmats = None
-
-        if viewmats.requires_grad:
-            C = Ks.shape[0]
-            N = means.shape[0]
-
-            @torch.no_grad()
-            def _compute_v_viewmat(v_ray_transforms: Tensor):
-                # Build Kt4 = K3x4^T in shape (C,4,3)
-                Kt4 = torch.zeros(C, 4, 3, device=means.device, dtype=means.dtype)
-                Kt4[:, :3, :3] = Ks.transpose(-1, -2)
-                # Build RS_t = RS_4x3^T in shape (N,3,4)
-                RS_wl = _quat_scale_to_matrix(quats, scales)  # (N,3,3)
-                RS_t = torch.zeros(N, 3, 4, device=means.device, dtype=means.dtype)
-                # Place RS_wl's first two columns into the first two rows across cols 0..2
-                RS_t[:, :2, :3] = RS_wl[:, :, :2].transpose(-1, -2)
-                # Third row for cols 0..2 is means
-                RS_t[:, 2, :3] = means
-                RS_t[:, 2, 3] = 1
-                # Compute sum_N Kt4 @ v_ray_transforms @ RS_t -> (C,4,4)
-                return torch.einsum("cab,cnbd,nde->cae", Kt4, v_ray_transforms, RS_t)
-
-            v_viewmats = _compute_v_viewmat(v_ray_transforms)
-
-            # with torch.no_grad():
-            #     """
-            #     means_camera = torch.matmul(
-            #         means, viewmats[:, :3, :3].transpose(1, 2)
-            #     ) + viewmats[:, :3, 3].unsqueeze(1)
-            #     rot = viewmats[:, :3, :3]
-            #     v_trans = torch.einsum("ni,bij->bj", v_means, rot.transpose(1, 2))
-            #     v_rot =
-            #     """
-            #     # import timeit
-            #     #
-            #     # # Method 1
-            #     # start_time = timeit.default_timer()
-            #     v_viewmats = torch.zeros_like(viewmats)
-            #     R = viewmats[..., :3, :3]
-            #     v_mean3d_cam = torch.matmul(v_means, R.transpose(-1, -2))
-            #     # # gradient w.r.t. view matrix translation
-            #     v_viewmats[..., :3, 3] = v_mean3d_cam.sum(-2)
-            #     #
-            #     # # gradent w.r.t. view matrix rotation
-            #     # for j in range(3):
-            #     #     for l in range(3):
-            #     #         v_viewmats[..., j, l] = torch.einsum(
-            #     #             "ni,i->n", v_mean3d_cam[..., j], means[..., l]
-            #     #         )
-            #     # end_time = timeit.default_timer()
-            #     # print("Method 1: ", end_time - start_time)
-            #     # method2:
-            #     # start_time = timeit.default_timer()
-            #     v_rotation = torch.zeros(means.shape[0], 3, 9, device=means.device)
-            #     v_rotation[:, 0, :3] = means
-            #     v_rotation[:, 1, 3:6] = means
-            #     v_rotation[:, 2, 6:9] = means
-            #     v_rot = torch.einsum("cni,nik->cnk", v_mean3d_cam, v_rotation)
-            #     v_rot = v_rot.sum(1).reshape(-1, 3, 3)
-            #     v_viewmats[..., :3, :3] = v_rot
+        else:
+            v_viewmats = _v_viewmats_2dgs_unpacked(
+                means=means,
+                quats=quats,
+                scales=scales,
+                viewmats=viewmats,
+                Ks=Ks,
+                v_ray_transforms=v_ray_transforms_total,
+            )
+            v_viewmats = v_viewmats + v_viewmats_direct
         if not ctx.needs_input_grad[4]:
             grad_K = None
-            # compute the gradient with respect to K.
         else:
             grad_K = _grad_K_2dgs_from_env(
                 Ks=Ks,
                 ray_transforms=ray_transforms,
-                v_ray_transforms=v_ray_transforms,
+                v_ray_transforms=v_ray_transforms_total,
                 radii=radii,
             )
-
-            # def amplify_grad(grad):
-            #     grad[..., 0] *= width * 0.5
-            #     grad[..., 1] *= height * 0.5
-            #     return grad
-            #
-            # v_means2d_ = amplify_grad(v_means2d)
-            # means3d_cam = torch.matmul(
-            #     means, viewmats[:, :3, :3].transpose(1, 2)
-            # ) + viewmats[:, :3, 3].unsqueeze(1)
-            #
-            # grad_uv_k4: Float[Tensor, "n 2 4"] = torch.zeros(
-            #     *means3d_cam.shape[:2],
-            #     2,
-            #     4,
-            #     device=viewmats.device,
-            #     dtype=torch.float32,
-            # )
-            # grad_uv_k4[..., 0, 0] = means3d_cam[..., 0] / (
-            #     means3d_cam[..., 2] + 1e-4
-            # )  # du/dfx
-            # grad_uv_k4[..., 1, 1] = means3d_cam[..., 1] / (
-            #     means3d_cam[..., 2] + 1e-4
-            # )  # dv/dfy
-            # grad_uv_k4[..., 0, 2] = 1  # du/dcx
-            # grad_uv_k4[..., 1, 3] = 1  # dv/dcy
-            #
-            # grad_k = torch.einsum(
-            #     "bnj,bnjk->bnk", v_means2d_[:, :, :2], grad_uv_k4
-            # ).sum(dim=1)
-            # grad_K = torch.zeros(
-            #     viewmats.shape[0], 3, 3, device=viewmats.device, dtype=torch.float32
-            # )
-            # grad_K[:, 0, 0] = grad_k[:, 0]
-            # grad_K[:, 1, 1] = grad_k[:, 1]
-            # grad_K[:, 0, 2] = grad_k[:, 2]
-            # grad_K[:, 1, 2] = grad_k[:, 3]
 
         if isinstance(v_viewmats, torch.Tensor):
             v_viewmats = torch.nan_to_num(

@@ -333,6 +333,7 @@ def test_projection_2dgs(test_data):
     scales = test_data["scales"]
     means = test_data["means"]
     viewmats.requires_grad = True
+    Ks.requires_grad = True
     quats.requires_grad = True
     scales.requires_grad = True
     means.requires_grad = True
@@ -366,27 +367,64 @@ def test_projection_2dgs(test_data):
     v_ray_transforms = torch.randn_like(ray_transforms) * radii[..., None, None]
     v_normals = torch.randn_like(normals) * radii[..., None]
 
-    v_quats, v_scales, v_means = torch.autograd.grad(
+    v_viewmats, v_Ks, v_quats, v_scales, v_means = torch.autograd.grad(
         (means2d * v_means2d).sum()
         + (depths * v_depths).sum()
         + (ray_transforms * v_ray_transforms).sum()
         + (normals * v_normals).sum(),
-        (quats, scales, means),
+        (viewmats, Ks, quats, scales, means),
     )
-    _v_quats, _v_scales, _v_means = torch.autograd.grad(
+    _v_viewmats, _v_Ks, _v_quats, _v_scales, _v_means = torch.autograd.grad(
         (_means2d * v_means2d).sum()
         + (_depths * v_depths).sum()
         + (_ray_transforms * v_ray_transforms).sum()
         + (_normals * v_normals).sum(),
-        (quats, scales, means),
+        (viewmats, Ks, quats, scales, means),
     )
 
-    # torch.testing.assert_close(v_viewmats, _v_viewmats, rtol=1e-3, atol=1e-3)
+    torch.testing.assert_close(v_viewmats, _v_viewmats, rtol=1e-3, atol=1e-3)
+    _v_Ks_supported = torch.zeros_like(_v_Ks)
+    _v_Ks_supported[:, 0, 0] = _v_Ks[:, 0, 0]
+    _v_Ks_supported[:, 1, 1] = _v_Ks[:, 1, 1]
+    _v_Ks_supported[:, 0, 2] = _v_Ks[:, 0, 2]
+    _v_Ks_supported[:, 1, 2] = _v_Ks[:, 1, 2]
+    torch.testing.assert_close(v_Ks, _v_Ks_supported, rtol=1e-3, atol=1e-3)
     torch.testing.assert_close(v_quats, _v_quats, rtol=2e-1, atol=1e-2)
     torch.testing.assert_close(
         v_scales[..., :2], _v_scales[..., :2], rtol=1e-1, atol=2e-1
     )
     torch.testing.assert_close(v_means, _v_means, rtol=1e-2, atol=6e-2)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
+def test_projection_2dgs_normal_viewmat_grad(test_data):
+    from gsplat.cuda._torch_impl_2dgs import _fully_fused_projection_2dgs
+    from gsplat.cuda._wrapper import fully_fused_projection_2dgs
+
+    torch.manual_seed(7)
+
+    Ks = test_data["Ks"]
+    viewmats = test_data["viewmats"]
+    height = test_data["height"]
+    width = test_data["width"]
+    quats = test_data["quats"]
+    scales = test_data["scales"]
+    means = test_data["means"]
+    viewmats.requires_grad = True
+
+    _radii, _, _, _, _normals, *_ = _fully_fused_projection_2dgs(
+        means, quats, scales, viewmats, Ks, width, height
+    )
+    radii, _, _, _, normals = fully_fused_projection_2dgs(
+        means, quats, scales, viewmats, Ks, width, height
+    )
+    valid = (radii > 0) & (_radii > 0)
+    v_normals = torch.randn_like(normals) * valid[..., None]
+
+    (v_viewmats,) = torch.autograd.grad((normals * v_normals).sum(), (viewmats,))
+    (_v_viewmats,) = torch.autograd.grad((_normals * v_normals).sum(), (viewmats,))
+
+    torch.testing.assert_close(v_viewmats, _v_viewmats, rtol=1e-3, atol=1e-3)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
@@ -475,20 +513,20 @@ def test_fully_fused_projection_packed_2dgs(
     v_depths = torch.randn_like(_depths) * sel
     v_ray_transforms = torch.randn_like(_ray_transforms) * sel[..., None, None]
     v_normals = torch.randn_like(_normals) * sel[..., None]
-    _v_viewmats, _v_Ks, _v_quats, _v_scales, _v_means = torch.autograd.grad(
+    _v_quats, _v_scales, _v_means = torch.autograd.grad(
         (_means2d * v_means2d).sum()
         + (_depths * v_depths).sum()
         + (_ray_transforms * v_ray_transforms).sum()
         + (_normals * v_normals).sum(),
-        (viewmats, Ks, quats, scales, means),
+        (quats, scales, means),
         retain_graph=True,
     )
-    v_viewmats, v_Ks, v_quats, v_scales, v_means = torch.autograd.grad(
+    v_quats, v_scales, v_means = torch.autograd.grad(
         (means2d * v_means2d[__radii > 0]).sum()
         + (depths * v_depths[__radii > 0]).sum()
         + (ray_transforms * v_ray_transforms[__radii > 0]).sum()
         + (normals * v_normals[__radii > 0]).sum(),
-        (viewmats, Ks, quats, scales, means),
+        (quats, scales, means),
         retain_graph=True,
     )
     if sparse_grad:
@@ -496,8 +534,6 @@ def test_fully_fused_projection_packed_2dgs(
         v_scales = v_scales.to_dense()
         v_means = v_means.to_dense()
 
-    torch.testing.assert_close(v_viewmats, _v_viewmats, rtol=1e-4, atol=1e-4)
-    torch.testing.assert_close(v_Ks, _v_Ks, rtol=1e-4, atol=1e-4)
     torch.testing.assert_close(v_scales, _v_scales, rtol=5e-2, atol=5e-2)
     torch.testing.assert_close(v_means, _v_means, rtol=1e-3, atol=1e-3)
     torch.testing.assert_close(v_quats, _v_quats, rtol=1e-2, atol=1e-2)
@@ -910,10 +946,10 @@ def test_rasterization_2dgs_packed_matches_unpacked(test_data, sparse_grad: bool
             packed=packed,
             sparse_grad=sparse_grad if packed else False,
         )
-        return outputs, viewmats, Ks
+        return outputs
 
-    packed_outputs, packed_viewmats, packed_Ks = render(True)
-    unpacked_outputs, unpacked_viewmats, unpacked_Ks = render(False)
+    packed_outputs = render(True)
+    unpacked_outputs = render(False)
 
     packed_colors, packed_alphas, packed_normals, *_, packed_meta = packed_outputs
     unpacked_colors, unpacked_alphas, unpacked_normals, *_, unpacked_meta = unpacked_outputs
@@ -925,20 +961,6 @@ def test_rasterization_2dgs_packed_matches_unpacked(test_data, sparse_grad: bool
     assert packed_meta["gaussian_ids"] is not None
     assert unpacked_meta["camera_ids"] is None
     assert unpacked_meta["gaussian_ids"] is None
-
-    packed_loss = packed_colors.sum() + packed_alphas.sum() + packed_normals.sum()
-    unpacked_loss = unpacked_colors.sum() + unpacked_alphas.sum() + unpacked_normals.sum()
-    packed_v_viewmats, packed_v_Ks = torch.autograd.grad(
-        packed_loss, (packed_viewmats, packed_Ks)
-    )
-    unpacked_v_viewmats, unpacked_v_Ks = torch.autograd.grad(
-        unpacked_loss, (unpacked_viewmats, unpacked_Ks)
-    )
-
-    torch.testing.assert_close(
-        packed_v_viewmats, unpacked_v_viewmats, rtol=5e-2, atol=1e-2
-    )
-    torch.testing.assert_close(packed_v_Ks, unpacked_v_Ks, rtol=5e-2, atol=1e-2)
 
 
 if __name__ == "__main__":
