@@ -195,7 +195,7 @@ __global__ void fully_fused_projection_fwd_2dgs_kernel(
 
     // ==============================================
     const T radius =
-        ceil(3.f * sqrt(max(1e-4, max(half_extend.x, half_extend.y))));
+        (3.f * sqrt(max(1e-4, max(half_extend.x, half_extend.y))));
 
     if (radius <= radius_clip) {
         radii[idx] = 0;
@@ -217,7 +217,7 @@ __global__ void fully_fused_projection_fwd_2dgs_kernel(
     normal *= multipler;
 
     // write to outputs
-    radii[idx] = (int32_t)radius;
+    radii[idx] = (int32_t)ceil(radius);
     means2d[idx * 2] = mean2d.x;
     means2d[idx * 2 + 1] = mean2d.y;
     depths[idx] = mean_c.z;

@@ -121,7 +121,7 @@ __global__ void fully_fused_projection_packed_fwd_2dgs_kernel(
 
         const vec2<T> temp = {sum(f * M0 * M0), sum(f * M1 * M1)};
         const vec2<T> half_extend = mean2d * mean2d - temp;
-        radius = ceil(3.f * sqrt(max(1e-4, max(half_extend.x, half_extend.y))));
+        radius = (3.f * sqrt(max(1e-4, max(half_extend.x, half_extend.y))));
 
         if (radius <= radius_clip) {
             valid = false;
@@ -168,7 +168,7 @@ __global__ void fully_fused_projection_packed_fwd_2dgs_kernel(
             // write to outputs
             camera_ids[thread_data] = row_idx;   // cid
             gaussian_ids[thread_data] = col_idx; // gid
-            radii[thread_data] = (int32_t)radius;
+            radii[thread_data] = (int32_t)ceil(radius);
             means2d[thread_data * 2] = mean2d.x;
             means2d[thread_data * 2 + 1] = mean2d.y;
             depths[thread_data] = mean_c.z;

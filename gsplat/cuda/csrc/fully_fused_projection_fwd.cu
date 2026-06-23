@@ -166,7 +166,7 @@ __global__ void fully_fused_projection_fwd_kernel(
     // take 3 sigma as the radius (non differentiable)
     T b = 0.5f * (covar2d[0][0] + covar2d[1][1]);
     T v1 = b + sqrt(max(0.01f, b * b - det));
-    T radius = ceil(3.f * sqrt(v1));
+    T radius = (3.f * sqrt(v1));
     // T v2 = b - sqrt(max(0.1f, b * b - det));
     // T radius = ceil(3.f * sqrt(max(v1, v2)));
 
@@ -183,7 +183,7 @@ __global__ void fully_fused_projection_fwd_kernel(
     }
 
     // write to outputs
-    radii[idx] = (int32_t)radius;
+    radii[idx] = (int32_t)ceil(radius);
     means2d[idx * 2] = mean2d.x;
     means2d[idx * 2 + 1] = mean2d.y;
     depths[idx] = mean_c.z;

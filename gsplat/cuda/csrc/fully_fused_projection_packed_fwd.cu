@@ -183,7 +183,7 @@ __global__ void fully_fused_projection_packed_fwd_kernel(
         T b = 0.5f * (covar2d[0][0] + covar2d[1][1]);
         T v1 = b + sqrt(max(0.1f, b * b - det));
         T v2 = b - sqrt(max(0.1f, b * b - det));
-        radius = ceil(3.f * sqrt(max(v1, v2)));
+        radius = (3.f * sqrt(max(v1, v2)));
 
         if (radius <= radius_clip) {
             valid = false;
@@ -225,7 +225,7 @@ __global__ void fully_fused_projection_packed_fwd_kernel(
             // write to outputs
             camera_ids[thread_data] = row_idx;   // cid
             gaussian_ids[thread_data] = col_idx; // gid
-            radii[thread_data] = (int32_t)radius;
+            radii[thread_data] = (int32_t)ceil(radius);
             means2d[thread_data * 2] = mean2d.x;
             means2d[thread_data * 2 + 1] = mean2d.y;
             depths[thread_data] = mean_c.z;
