@@ -36,6 +36,9 @@ __global__ void rasterize_to_pixels_bwd_kernel(
     // fwd outputs
     const S *__restrict__ render_alphas,  // [C, image_height, image_width, 1]
     const int32_t *__restrict__ last_ids, // [C, image_height, image_width]
+    const S *__restrict__ render_colors, // [C, image_height, image_width,
+                                           // COLOR_DIM]
+    const S *__restrict__ ray_color_weights, // [COLOR_DIM]
     // grad outputs
     const S *__restrict__ v_render_colors, // [C, image_height, image_width,
                                            // COLOR_DIM]
@@ -57,6 +60,9 @@ __global__ void rasterize_to_pixels_bwd_kernel(
     tile_offsets += camera_id * tile_height * tile_width;
     render_alphas += camera_id * image_height * image_width;
     last_ids += camera_id * image_height * image_width;
+    if (render_colors != nullptr) {
+        render_colors += camera_id * image_height * image_width * COLOR_DIM;
+    }
     v_render_colors += camera_id * image_height * image_width * COLOR_DIM;
     v_render_alphas += camera_id * image_height * image_width;
     if (backgrounds != nullptr) {
@@ -197,7 +203,14 @@ __global__ void rasterize_to_pixels_bwd_kernel(
                 const S fac = alpha * T;
                 GSPLAT_PRAGMA_UNROLL
                 for (uint32_t k = 0; k < COLOR_DIM; ++k) {
-                    v_rgb_local[k] = fac * v_render_c[k];
+                    S grad_factor = v_render_c[k];
+                    if (ray_color_weights != nullptr) {
+                        grad_factor +=
+                            ray_color_weights[k] *
+                            (rgbs_batch[t * COLOR_DIM + k] -
+                             render_colors[pix_id * COLOR_DIM + k]);
+                    }
+                    v_rgb_local[k] = fac * grad_factor;
                 }
                 // contribution from this pixel
                 S v_alpha = 0.f;
@@ -301,11 +314,13 @@ call_kernel_with_dim(
     // forward outputs
     const torch::Tensor &render_alphas, // [C, image_height, image_width, 1]
     const torch::Tensor &last_ids,      // [C, image_height, image_width]
+    const at::optional<torch::Tensor> &render_colors, // [C, H, W, D]
     // gradients of outputs
     const torch::Tensor &v_render_colors, // [C, image_height, image_width, 3]
     const torch::Tensor &v_render_alphas, // [C, image_height, image_width, 1]
     // options
-    bool absgrad
+    bool absgrad,
+    const at::optional<torch::Tensor> &ray_color_weights // [D]
 ) {
 
     GSPLAT_DEVICE_GUARD(means2d);
@@ -319,6 +334,16 @@ call_kernel_with_dim(
     GSPLAT_CHECK_INPUT(last_ids);
     GSPLAT_CHECK_INPUT(v_render_colors);
     GSPLAT_CHECK_INPUT(v_render_alphas);
+    if (render_colors.has_value()) {
+        GSPLAT_CHECK_INPUT(render_colors.value());
+    }
+    if (ray_color_weights.has_value()) {
+        GSPLAT_CHECK_INPUT(ray_color_weights.value());
+        TORCH_CHECK(
+            render_colors.has_value(),
+            "render_colors is required when ray_color_weights is provided"
+        );
+    }
     if (backgrounds.has_value()) {
         GSPLAT_CHECK_INPUT(backgrounds.value());
     }
@@ -389,6 +414,12 @@ call_kernel_with_dim(
                 flatten_ids.data_ptr<int32_t>(),
                 render_alphas.data_ptr<float>(),
                 last_ids.data_ptr<int32_t>(),
+                render_colors.has_value()
+                    ? render_colors.value().data_ptr<float>()
+                    : nullptr,
+                ray_color_weights.has_value()
+                    ? ray_color_weights.value().data_ptr<float>()
+                    : nullptr,
                 v_render_colors.data_ptr<float>(),
                 v_render_alphas.data_ptr<float>(),
                 absgrad ? reinterpret_cast<vec2<float> *>(
@@ -431,11 +462,13 @@ rasterize_to_pixels_bwd_tensor(
     // forward outputs
     const torch::Tensor &render_alphas, // [C, image_height, image_width, 1]
     const torch::Tensor &last_ids,      // [C, image_height, image_width]
+    const at::optional<torch::Tensor> &render_colors, // [C, H, W, D]
     // gradients of outputs
     const torch::Tensor &v_render_colors, // [C, image_height, image_width, 3]
     const torch::Tensor &v_render_alphas, // [C, image_height, image_width, 1]
     // options
-    bool absgrad
+    bool absgrad,
+    const at::optional<torch::Tensor> &ray_color_weights // [D]
 ) {
 
     GSPLAT_CHECK_INPUT(colors);
@@ -457,9 +490,11 @@ rasterize_to_pixels_bwd_tensor(
             flatten_ids,                                                       \
             render_alphas,                                                     \
             last_ids,                                                          \
+            render_colors,                                                     \
             v_render_colors,                                                   \
             v_render_alphas,                                                   \
-            absgrad                                                            \
+            absgrad,                                                           \
+            ray_color_weights                                                  \
         );
 
     switch (COLOR_DIM) {

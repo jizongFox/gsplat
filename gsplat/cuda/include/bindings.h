@@ -215,11 +215,13 @@ rasterize_to_pixels_bwd_tensor(
     // forward outputs
     const torch::Tensor &render_alphas, // [C, image_height, image_width, 1]
     const torch::Tensor &last_ids,      // [C, image_height, image_width]
+    const at::optional<torch::Tensor> &render_colors, // [C, H, W, D]
     // gradients of outputs
     const torch::Tensor &v_render_colors, // [C, image_height, image_width, 3]
     const torch::Tensor &v_render_alphas, // [C, image_height, image_width, 1]
     // options
-    bool absgrad
+    bool absgrad,
+    const at::optional<torch::Tensor> &ray_color_weights // [D]
 );
 
 std::tuple<torch::Tensor, torch::Tensor> rasterize_to_indices_in_range_tensor(

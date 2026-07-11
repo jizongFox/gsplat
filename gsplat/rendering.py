@@ -55,6 +55,7 @@ def rasterization(
     distributed: bool = False,
     camera_model: Literal["pinhole", "ortho", "fisheye"] = "pinhole",
     covars: Optional[Tensor] = None,
+    ray_color_weights: Optional[Tensor] = None,
 ) -> Tuple[Tensor, Tensor, Dict]:
     """Rasterize a set of 3D Gaussians (N) to a batch of image planes (C).
 
@@ -136,6 +137,15 @@ def rasterization(
         `AbsGS: Recovering Fine Details for 3D Gaussian Splatting <https://arxiv.org/abs/2404.10484>`_,
         which is shown to be more effective for splitting Gaussians during training.
 
+    .. note::
+        **Ray-Color Consistency**: `ray_color_weights` injects the gradient of an
+        implicit, detached per-channel L2 surrogate during the rasterizer backward
+        pass. Targets are the raw composited rasterizer channels before Python
+        postprocessing such as expected-depth normalization. It does not return a
+        scalar loss. Because this gradient is independent of the rendered image's
+        upstream gradient, callers using dynamic loss scaling must apply the same
+        scale to `ray_color_weights` before calling this function.
+
     .. warning::
         Gradients with respect to camera intrinsics `Ks` are partial. They match
         the projection helper behavior for packed and unpacked modes, but only
@@ -200,6 +210,11 @@ def rasterization(
             and "fisheye". Default is "pinhole".
         covars: Optional covariance matrices of the Gaussians. If provided, the `quats` and
             `scales` will be ignored. [N, 3, 3], Default is None.
+        ray_color_weights: Optional per-channel weights for backward-only ray-color
+            consistency. Its shape must match the final rendered channel count, including
+            depth channels requested by `render_mode`. The target is the detached raw
+            composited rasterizer value, including the background and before Python
+            postprocessing such as expected-depth normalization. Default: None.
 
     Returns:
         A tuple:
@@ -510,6 +525,19 @@ def rasterization(
     else:  # RGB
         pass
 
+    if ray_color_weights is not None:
+        if ray_color_weights.shape != (colors.shape[-1],):
+            raise ValueError(
+                "ray_color_weights must have shape "
+                f"({colors.shape[-1]},), got {tuple(ray_color_weights.shape)}"
+            )
+        if ray_color_weights.device != colors.device:
+            raise ValueError("ray_color_weights must be on the same device as colors")
+        if ray_color_weights.dtype != colors.dtype:
+            raise ValueError("ray_color_weights must have the same dtype as colors")
+        if ray_color_weights.requires_grad:
+            raise ValueError("ray_color_weights must not require gradients")
+
     # Identify intersecting tiles
     tile_width = math.ceil(width / float(tile_size))
     tile_height = math.ceil(height / float(tile_size))
@@ -556,6 +584,11 @@ def rasterization(
         render_colors, render_alphas = [], []
         for i in range(n_chunks):
             colors_chunk = colors[..., i * channel_chunk : (i + 1) * channel_chunk]
+            ray_color_weights_chunk = (
+                ray_color_weights[i * channel_chunk : (i + 1) * channel_chunk]
+                if ray_color_weights is not None
+                else None
+            )
             backgrounds_chunk = (
                 backgrounds[..., i * channel_chunk : (i + 1) * channel_chunk]
                 if backgrounds is not None
@@ -574,6 +607,7 @@ def rasterization(
                 backgrounds=backgrounds_chunk,
                 packed=packed,
                 absgrad=absgrad,
+                ray_color_weights=ray_color_weights_chunk,
             )
             render_colors.append(render_colors_)
             render_alphas.append(render_alphas_)
@@ -593,6 +627,7 @@ def rasterization(
             backgrounds=backgrounds,
             packed=packed,
             absgrad=absgrad,
+            ray_color_weights=ray_color_weights,
         )
     if render_mode in ["ED", "RGB+ED"]:
         # normalize the accumulated depth to get the expected depth
