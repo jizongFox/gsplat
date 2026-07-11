@@ -40,6 +40,7 @@ __global__ void rasterize_to_pixels_bwd_2dgs_kernel(
     // fwd outputs
     const S *__restrict__ render_colors,    // [C, image_height, image_width,
                                             // COLOR_DIM]
+    const S *__restrict__ ray_color_weights, // [COLOR_DIM]
     const S *__restrict__ render_alphas,    // [C, image_height, image_width, 1]
     const int32_t *__restrict__ last_ids,   // [C, image_height, image_width]     // the id to last gaussian that got intersected 
     const int32_t *__restrict__ median_ids, // [C, image_height, image_width]     // the id to the gaussian that brings the opacity over 0.5
@@ -74,6 +75,7 @@ __global__ void rasterize_to_pixels_bwd_2dgs_kernel(
     uint32_t j = block.group_index().z * tile_size + block.thread_index().x;
 
     tile_offsets += camera_id * tile_height * tile_width;
+    render_colors += camera_id * image_height * image_width * COLOR_DIM;
     render_alphas += camera_id * image_height * image_width;
     
     last_ids += camera_id * image_height * image_width;
@@ -405,7 +407,14 @@ __global__ void rasterize_to_pixels_bwd_2dgs_kernel(
                 const S fac = alpha * T;
                 GSPLAT_PRAGMA_UNROLL
                 for (uint32_t k = 0; k < COLOR_DIM; ++k) {
-                    v_rgb_local[k] += fac * v_render_c[k];
+                    S grad_factor = v_render_c[k];
+                    if (ray_color_weights != nullptr) {
+                        grad_factor +=
+                            ray_color_weights[k] *
+                            (rgbs_batch[t * COLOR_DIM + k] -
+                             render_colors[pix_id * COLOR_DIM + k]);
+                    }
+                    v_rgb_local[k] += fac * grad_factor;
                 }
 
                 // contribution from this pixel to alpha
@@ -646,7 +655,8 @@ call_kernel_with_dim(
     const torch::Tensor &v_render_distort, // [C, image_height, image_width, 1]
     const torch::Tensor &v_render_median,  // [C, image_height, image_width, 1]
     // options
-    bool absgrad
+    bool absgrad,
+    const at::optional<torch::Tensor> &ray_color_weights // [COLOR_DIM]
 ) {
 
     GSPLAT_DEVICE_GUARD(means2d);
@@ -667,6 +677,9 @@ call_kernel_with_dim(
     GSPLAT_CHECK_INPUT(v_render_normals);
     GSPLAT_CHECK_INPUT(v_render_distort);
     GSPLAT_CHECK_INPUT(v_render_median);
+    if (ray_color_weights.has_value()) {
+        GSPLAT_CHECK_INPUT(ray_color_weights.value());
+    }
     if (backgrounds.has_value()) {
         GSPLAT_CHECK_INPUT(backgrounds.value());
     }
@@ -740,6 +753,9 @@ call_kernel_with_dim(
                 tile_offsets.data_ptr<int32_t>(),
                 flatten_ids.data_ptr<int32_t>(),
                 render_colors.data_ptr<float>(),
+                ray_color_weights.has_value()
+                    ? ray_color_weights.value().data_ptr<float>()
+                    : nullptr,
                 render_alphas.data_ptr<float>(),
                 last_ids.data_ptr<int32_t>(),
                 median_ids.data_ptr<int32_t>(),
@@ -810,7 +826,8 @@ rasterize_to_pixels_bwd_2dgs_tensor(
     const torch::Tensor &v_render_distort, // [C, image_height, image_width, 1]
     const torch::Tensor &v_render_median,  // [C, image_height, image_width, 1]
     // options
-    bool absgrad
+    bool absgrad,
+    const at::optional<torch::Tensor> &ray_color_weights // [COLOR_DIM]
 ) {
 
     GSPLAT_CHECK_INPUT(colors);
@@ -841,7 +858,8 @@ rasterize_to_pixels_bwd_2dgs_tensor(
             v_render_normals,                                                  \
             v_render_distort,                                                  \
             v_render_median,                                                   \
-            absgrad                                                            \
+            absgrad,                                                           \
+            ray_color_weights                                                  \
         );
 
     switch (COLOR_DIM) {

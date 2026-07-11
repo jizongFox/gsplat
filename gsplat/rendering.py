@@ -1091,6 +1091,7 @@ def rasterization_2dgs(
     distloss: bool = False,
     depth_mode: Literal["expected", "median"] = "expected",
     normals_coordinate: Literal["world", "camera"] = "world",
+    ray_color_weights: Optional[Tensor] = None,
 ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Dict]:
     """Rasterize a set of 2D Gaussians (N) to a batch of image planes (C).
 
@@ -1102,6 +1103,14 @@ def rasterization_2dgs(
         `ray_transforms` VJPs. With `packed=False`, camera gradients include the
         CUDA-accumulated `ray_transforms` VJP and the direct normal-to-viewmat
         rotation term.
+
+    .. note::
+        **Ray-Color Consistency**: `ray_color_weights` injects a detached,
+        per-channel L2 surrogate gradient into the rasterized color/features only.
+        Targets are raw composited channels before Python postprocessing such as
+        expected-depth normalization. Separate normal, distortion, and median-depth
+        outputs are unaffected. Dynamic loss scaling must also be applied to the
+        weights.
 
     Args:
         means: The 3D centers of the Gaussians. [N, 3]
@@ -1154,6 +1163,9 @@ def rasterization_2dgs(
         distloss: If true, use distortion regularization to get better geometry detail.
         depth_mode: render depth mode. Choose from expected depth and median depth.
         normals_coordinate: the coordinate system of the normals.
+        ray_color_weights: Optional per-channel weights for backward-only ray-color
+            consistency. The shape must match the rasterized color channel count after
+            adding any requested depth channel. Default: None.
 
     Returns:
         A tuple:
@@ -1335,6 +1347,18 @@ def rasterization_2dgs(
         pass
     if backgrounds is not None:
         assert backgrounds.shape == (C, colors.shape[-1]), backgrounds.shape
+    if ray_color_weights is not None:
+        if ray_color_weights.shape != (colors.shape[-1],):
+            raise ValueError(
+                "ray_color_weights must have shape "
+                f"({colors.shape[-1]},), got {tuple(ray_color_weights.shape)}"
+            )
+        if ray_color_weights.device != colors.device:
+            raise ValueError("ray_color_weights must be on the same device as colors")
+        if ray_color_weights.dtype != colors.dtype:
+            raise ValueError("ray_color_weights must have the same dtype as colors")
+        if ray_color_weights.requires_grad:
+            raise ValueError("ray_color_weights must not require gradients")
 
     (
         render_colors,
@@ -1358,6 +1382,7 @@ def rasterization_2dgs(
         packed=packed,
         absgrad=absgrad,
         distloss=distloss,
+        ray_color_weights=ray_color_weights,
     )
     render_normals_from_depth = None
     if render_mode in ["ED", "RGB+ED"]:

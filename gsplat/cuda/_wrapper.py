@@ -2277,6 +2277,7 @@ def rasterize_to_pixels_2dgs(
     packed: bool = False,
     absgrad: bool = False,
     distloss: bool = False,
+    ray_color_weights: Optional[Tensor] = None,
 ) -> Tuple[Tensor, Tensor]:
     """Rasterize Gaussians to pixels.
 
@@ -2294,6 +2295,10 @@ def rasterize_to_pixels_2dgs(
         masks: Optional tile mask to skip rendering GS to masked tiles. [C, tile_height, tile_width]. Default: None.
         packed: If True, the input tensors are expected to be packed with shape [nnz, ...]. Default: False.
         absgrad: If True, the backward pass will compute a `.absgrad` attribute for `means2d`. Default: False.
+        ray_color_weights: Optional per-channel weights for backward-only ray-color
+            consistency. The target is the detached raw composited rasterizer value,
+            including the background. Dynamic loss scaling must also be applied to
+            these weights. Default: None.
 
     Returns:
         A tuple:
@@ -2326,6 +2331,19 @@ def rasterize_to_pixels_2dgs(
 
     # Pad the channels to the nearest supported number if necessary
     channels = colors.shape[-1]
+    if ray_color_weights is not None:
+        if ray_color_weights.shape != (channels,):
+            raise ValueError(
+                "ray_color_weights must have shape "
+                f"({channels},), got {tuple(ray_color_weights.shape)}"
+            )
+        if ray_color_weights.device != device:
+            raise ValueError("ray_color_weights must be on the same device as colors")
+        if ray_color_weights.dtype != colors.dtype:
+            raise ValueError("ray_color_weights must have the same dtype as colors")
+        if ray_color_weights.requires_grad:
+            raise ValueError("ray_color_weights must not require gradients")
+        ray_color_weights = ray_color_weights.contiguous()
     if channels > 512 or channels == 0:
         # TODO: maybe worth to support zero channels?
         raise ValueError(f"Unsupported number of color channels: {channels}")
@@ -2344,6 +2362,17 @@ def rasterize_to_pixels_2dgs(
                     ),
                 ],
                 dim=-1,
+            )
+        if ray_color_weights is not None:
+            ray_color_weights = torch.cat(
+                [
+                    ray_color_weights,
+                    torch.zeros(
+                        padded_channels,
+                        device=device,
+                        dtype=ray_color_weights.dtype,
+                    ),
+                ]
             )
     else:
         padded_channels = 0
@@ -2377,6 +2406,7 @@ def rasterize_to_pixels_2dgs(
         flatten_ids.contiguous(),
         absgrad,
         distloss,
+        ray_color_weights,
     )
 
     if padded_channels > 0:
@@ -2483,6 +2513,7 @@ class _RasterizeToPixels2DGS(torch.autograd.Function):
         flatten_ids: Tensor,
         absgrad: bool,
         distloss: bool,
+        ray_color_weights: Tensor,
     ) -> Tuple[Tensor, Tensor]:
         (
             render_colors,
@@ -2522,6 +2553,7 @@ class _RasterizeToPixels2DGS(torch.autograd.Function):
             render_alphas,
             last_ids,
             median_ids,
+            ray_color_weights,
         )
         ctx.width = width
         ctx.height = height
@@ -2563,6 +2595,7 @@ class _RasterizeToPixels2DGS(torch.autograd.Function):
             render_alphas,
             last_ids,
             median_ids,
+            ray_color_weights,
         ) = ctx.saved_tensors
         width = ctx.width
         height = ctx.height
@@ -2601,6 +2634,7 @@ class _RasterizeToPixels2DGS(torch.autograd.Function):
             v_render_distort.contiguous(),
             v_render_median.contiguous(),
             absgrad,
+            ray_color_weights,
         )
         if absgrad:
             means2d.absgrad = v_means2d_abs
@@ -2620,6 +2654,7 @@ class _RasterizeToPixels2DGS(torch.autograd.Function):
             v_normals,
             v_densify,
             v_backgrounds,
+            None,
             None,
             None,
             None,
