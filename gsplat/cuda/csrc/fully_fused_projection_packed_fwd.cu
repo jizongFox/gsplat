@@ -344,7 +344,7 @@ fully_fused_projection_packed_fwd_tensor(
     torch::Tensor radii =
         torch::empty({nnz}, means.options().dtype(torch::kInt32));
     torch::Tensor means2d = torch::empty({nnz, 2}, means.options());
-    torch::Tensor depths = torch::empty({nnz}, means.options());
+    torch::Tensor depths = torch::zeros({nnz}, means.options());
     torch::Tensor conics = torch::empty({nnz, 3}, means.options());
     torch::Tensor compensations;
     if (calc_compensations) {

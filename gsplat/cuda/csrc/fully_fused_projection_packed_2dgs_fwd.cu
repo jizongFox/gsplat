@@ -281,7 +281,7 @@ fully_fused_projection_packed_fwd_2dgs_tensor(
     torch::Tensor radii =
         torch::empty({nnz}, means.options().dtype(torch::kInt32));
     torch::Tensor means2d = torch::empty({nnz, 2}, means.options());
-    torch::Tensor depths = torch::empty({nnz}, means.options());
+    torch::Tensor depths = torch::zeros({nnz}, means.options());
     torch::Tensor ray_transforms = torch::empty({nnz, 3, 3}, means.options());
     torch::Tensor normals = torch::empty({nnz, 3}, means.options());
 
