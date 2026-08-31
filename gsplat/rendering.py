@@ -275,9 +275,9 @@ def rasterization(
             colors.dim() == 3 and colors.shape[:2] == (C, N)
         ), colors.shape
         if distributed:
-            assert colors.dim() == 2, (
-                "Distributed mode only supports per-Gaussian colors."
-            )
+            assert (
+                colors.dim() == 2
+            ), "Distributed mode only supports per-Gaussian colors."
     else:
         # treat colors as SH coefficients, should be in shape [N, K, 3] or [C, N, K, 3]
         # Allowing for activating partial SH bands
@@ -288,9 +288,9 @@ def rasterization(
         ), colors.shape
         assert (sh_degree + 1) ** 2 <= colors.shape[-2], colors.shape
         if distributed:
-            assert colors.dim() == 3, (
-                "Distributed mode only supports per-Gaussian colors."
-            )
+            assert (
+                colors.dim() == 3
+            ), "Distributed mode only supports per-Gaussian colors."
 
     if absgrad:
         assert not distributed, "AbsGrad is not supported in distributed mode."
@@ -408,7 +408,7 @@ def rasterization(
                 shs = colors
             colors = spherical_harmonics(sh_degree, dirs, shs, masks=masks)  # [C, N, 3]
         # make it apple-to-apple with Inria's CUDA Backend.
-        colors = torch.clamp_min(colors + 0.5, 0.0)
+        colors = colors + 0.5
 
     # If in distributed mode, we need to scatter the GSs to the destination ranks, based
     # on which cameras they are visible to, which we already figured out in the projection
@@ -426,7 +426,7 @@ def rasterization(
             (radii,) = all_to_all_tensor_list(
                 world_size, [radii], cnts, output_splits=collected_splits
             )
-            (means2d, depths, conics, opacities, colors) = all_to_all_tensor_list(
+            means2d, depths, conics, opacities, colors = all_to_all_tensor_list(
                 world_size,
                 [means2d, depths, conics, opacities, colors],
                 cnts,
@@ -454,7 +454,7 @@ def rasterization(
             gaussian_ids = gaussian_ids + offsets
 
             # all to all communication across all ranks.
-            (camera_ids, gaussian_ids) = all_to_all_tensor_list(
+            camera_ids, gaussian_ids = all_to_all_tensor_list(
                 world_size,
                 [camera_ids, gaussian_ids],
                 cnts,
@@ -478,7 +478,7 @@ def rasterization(
             )
             radii = reshape_view(C, radii, N_world)
 
-            (means2d, depths, conics, opacities, colors) = all_to_all_tensor_list(
+            means2d, depths, conics, opacities, colors = all_to_all_tensor_list(
                 world_size,
                 [
                     means2d.flatten(0, 1),
@@ -1188,9 +1188,7 @@ def rasterization_2dgs(
             "ED",
             "RGB+D",
             "RGB+ED",
-        ], (
-            f"distloss requires depth rendering, render_mode should be D, ED, RGB+D, RGB+ED, but got {render_mode}"
-        )
+        ], f"distloss requires depth rendering, render_mode should be D, ED, RGB+D, RGB+ED, but got {render_mode}"
 
     if sh_degree is None:
         # treat colors as post-activation values
@@ -1200,9 +1198,9 @@ def rasterization_2dgs(
         ), colors.shape
     else:
         # treat colors as SH coefficients. Allowing for activating partial SH bands
-        assert colors.dim() == 3 and colors.shape[0] == N and colors.shape[2] == 3, (
-            colors.shape
-        )
+        assert (
+            colors.dim() == 3 and colors.shape[0] == N and colors.shape[2] == 3
+        ), colors.shape
         assert (sh_degree + 1) ** 2 <= colors.shape[1], colors.shape
 
     # Compute Ray-Splat intersection transformation.
@@ -1285,7 +1283,7 @@ def rasterization_2dgs(
             sh_degree, dirs, colors, masks=radii > 0
         )  # [nnz, D] or [C, N, 3]
         # make it apple-to-apple with Inria's CUDA Backend.
-        colors = torch.clamp_min(colors + 0.5, 0.0)
+        colors = colors + 0.5
 
     # Rasterize to pixels
     if render_mode in ["RGB+D", "RGB+ED"]:
