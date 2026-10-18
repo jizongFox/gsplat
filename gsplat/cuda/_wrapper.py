@@ -883,8 +883,9 @@ def _grad_K_reference(
         device=viewmats.device,
         dtype=torch.float32,
     )
-    grad_uv_k4[..., 0, 0] = means3d_cam[..., 0] / means3d_cam[..., 2]  # du/dfx
-    grad_uv_k4[..., 1, 1] = means3d_cam[..., 1] / means3d_cam[..., 2]  # dv/dfy
+    z = means3d_cam[..., 2] + 1e-8
+    grad_uv_k4[..., 0, 0] = means3d_cam[..., 0] / z  # du/dfx
+    grad_uv_k4[..., 1, 1] = means3d_cam[..., 1] / z  # dv/dfy
     grad_uv_k4[..., 0, 2] = 1  # du/dcx
     grad_uv_k4[..., 1, 3] = 1  # dv/dcy
 
@@ -913,7 +914,7 @@ def _grad_K_direct(
         means, viewmats[:, :3, :3].transpose(1, 2)
     ) + viewmats[:, :3, 3].unsqueeze(1)
     # Match the forward pinhole projection, which uses z directly.
-    z = means3d_cam[..., 2]
+    z = means3d_cam[..., 2] + 1e-8
     v_u = v_means2d[..., 0]
     v_v = v_means2d[..., 1]
 
@@ -942,7 +943,7 @@ def _grad_K_packed_direct(
     means3d_cam = torch.bmm(
         means_i[:, None, :], viewmats_i[:, :3, :3].transpose(1, 2)
     ).squeeze(1) + viewmats_i[:, :3, 3]
-    z = means3d_cam[:, 2]
+    z = means3d_cam[:, 2] + 1e-8
     v_u = v_means2d[:, 0]
     v_v = v_means2d[:, 1]
 
