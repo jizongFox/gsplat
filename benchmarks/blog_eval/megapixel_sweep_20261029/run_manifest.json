@@ -1,0 +1,490 @@
+{
+  "measurement_script_commit": "e767adcbcabfba639b56a6d41a2baa8252798a65",
+  "protocol": "megapixels_lossless_rows_v2_unclamped_sh",
+  "variants": {
+    "base": {
+      "revision": "ffe2db3c378533767ccb1ad0d8707a3f33549c3e",
+      "extension_sha256": "edd3fe4d939e22bdeecbb8148705d1c339d98662671bec1d6fa02ace7f1c2088",
+      "extension_path": "/tmp/opencode/gsplat-blog-variants/baseline.so"
+    },
+    "pr": {
+      "revision": "3c69277bdba3b66ac8b4f0a2e0a6624da0328c92",
+      "extension_sha256": "cffbc4e0d8c6e6322d867bfb4f7d3e1f38831e8409b1f473b2a35943c8e25f2a",
+      "extension_path": "/home/jizong/.local/share/opencode/worktree/de9cb2/gsplat-pr9-reference-fixes/gsplat/csrc.so"
+    }
+  },
+  "camera_indices": [
+    0,
+    2552,
+    5103
+  ],
+  "resolutions": [
+    [
+      640,
+      360
+    ],
+    [
+      960,
+      540
+    ],
+    [
+      1280,
+      720
+    ],
+    [
+      1920,
+      1080
+    ],
+    [
+      2560,
+      1440
+    ],
+    [
+      3200,
+      1800
+    ],
+    [
+      3840,
+      2160
+    ]
+  ],
+  "scopes": [
+    "full",
+    "raster"
+  ],
+  "warmup": 15,
+  "repeats": 30,
+  "jobs_per_variant": 3,
+  "jobs": [
+    {
+      "job": 1,
+      "variant": "base",
+      "command": [
+        "/home/jizong/workspace/dConstruct/gaussian-splatting/venv/bin/python",
+        "benchmarks/blog_eval/benchmark_megapixels.py",
+        "--extension",
+        "/tmp/opencode/gsplat-blog-variants/baseline.so",
+        "--ply",
+        "/home/jizong/workspace/dConstruct/data/2026-08-13_PDDtilted_1.dslam/outputs/f6d9613b/point_cloud/iteration_030000/point_cloud.ply",
+        "--cameras",
+        "/home/jizong/workspace/dConstruct/data/2026-08-13_PDDtilted_1.dslam/outputs/f6d9613b/cameras.json",
+        "--label",
+        "base",
+        "--revision",
+        "ffe2db3c378533767ccb1ad0d8707a3f33549c3e",
+        "--camera-indices",
+        "0",
+        "2552",
+        "5103",
+        "--resolutions",
+        "640x360",
+        "960x540",
+        "1280x720",
+        "1920x1080",
+        "2560x1440",
+        "3200x1800",
+        "3840x2160",
+        "--scope",
+        "both",
+        "--max-points",
+        "0",
+        "--warmup",
+        "15",
+        "--repeats",
+        "30",
+        "--output",
+        "/home/jizong/.local/share/opencode/worktree/de9cb2/gsplat-pr9-reference-fixes/benchmarks/blog_eval/megapixel_sweep_20261029/base-job1.json",
+        "--save-reference-dir",
+        "/tmp/opencode/gsplat-megapixels/references-v2"
+      ],
+      "telemetry_before": "name, temperature.gpu, utilization.gpu [%], memory.used [MiB], clocks.current.sm [MHz], power.draw [W]\nNVIDIA GeForce RTX 4090, 41, 35 %, 1019 MiB, 1560 MHz, 34.16 W",
+      "elapsed_seconds": 235.32030781300273,
+      "exit_code": 0,
+      "telemetry_after": "name, temperature.gpu, utilization.gpu [%], memory.used [MiB], clocks.current.sm [MHz], power.draw [W]\nNVIDIA GeForce RTX 4090, 54, 25 %, 1019 MiB, 2775 MHz, 69.24 W",
+      "output_file": "base-job1.json",
+      "log_file": "/tmp/opencode/gsplat-megapixels/v2-base-job1.log",
+      "records": 42,
+      "statuses": {
+        "ok": 42,
+        "oom": 0
+      },
+      "alignment_failures": [],
+      "points_used": 20789814
+    },
+    {
+      "job": 1,
+      "variant": "pr",
+      "command": [
+        "/home/jizong/workspace/dConstruct/gaussian-splatting/venv/bin/python",
+        "benchmarks/blog_eval/benchmark_megapixels.py",
+        "--extension",
+        "/home/jizong/.local/share/opencode/worktree/de9cb2/gsplat-pr9-reference-fixes/gsplat/csrc.so",
+        "--ply",
+        "/home/jizong/workspace/dConstruct/data/2026-08-13_PDDtilted_1.dslam/outputs/f6d9613b/point_cloud/iteration_030000/point_cloud.ply",
+        "--cameras",
+        "/home/jizong/workspace/dConstruct/data/2026-08-13_PDDtilted_1.dslam/outputs/f6d9613b/cameras.json",
+        "--label",
+        "pr",
+        "--revision",
+        "3c69277bdba3b66ac8b4f0a2e0a6624da0328c92",
+        "--camera-indices",
+        "0",
+        "2552",
+        "5103",
+        "--resolutions",
+        "640x360",
+        "960x540",
+        "1280x720",
+        "1920x1080",
+        "2560x1440",
+        "3200x1800",
+        "3840x2160",
+        "--scope",
+        "both",
+        "--max-points",
+        "0",
+        "--warmup",
+        "15",
+        "--repeats",
+        "30",
+        "--output",
+        "/home/jizong/.local/share/opencode/worktree/de9cb2/gsplat-pr9-reference-fixes/benchmarks/blog_eval/megapixel_sweep_20261029/pr-job1.json",
+        "--compare-reference-dir",
+        "/tmp/opencode/gsplat-megapixels/references-v2"
+      ],
+      "telemetry_before": "name, temperature.gpu, utilization.gpu [%], memory.used [MiB], clocks.current.sm [MHz], power.draw [W]\nNVIDIA GeForce RTX 4090, 54, 25 %, 1019 MiB, 2775 MHz, 69.24 W",
+      "elapsed_seconds": 218.73687792300188,
+      "exit_code": 0,
+      "telemetry_after": "name, temperature.gpu, utilization.gpu [%], memory.used [MiB], clocks.current.sm [MHz], power.draw [W]\nNVIDIA GeForce RTX 4090, 52, 0 %, 1019 MiB, 2520 MHz, 64.77 W",
+      "output_file": "pr-job1.json",
+      "log_file": "/tmp/opencode/gsplat-megapixels/v2-pr-job1.log",
+      "records": 42,
+      "statuses": {
+        "ok": 42,
+        "oom": 0
+      },
+      "alignment_failures": [
+        {
+          "camera": 0,
+          "resolution": [
+            1280,
+            720
+          ],
+          "scope": "full"
+        },
+        {
+          "camera": 0,
+          "resolution": [
+            1920,
+            1080
+          ],
+          "scope": "full"
+        },
+        {
+          "camera": 0,
+          "resolution": [
+            2560,
+            1440
+          ],
+          "scope": "full"
+        },
+        {
+          "camera": 0,
+          "resolution": [
+            3200,
+            1800
+          ],
+          "scope": "full"
+        },
+        {
+          "camera": 0,
+          "resolution": [
+            3840,
+            2160
+          ],
+          "scope": "full"
+        },
+        {
+          "camera": 2552,
+          "resolution": [
+            2560,
+            1440
+          ],
+          "scope": "full"
+        },
+        {
+          "camera": 2552,
+          "resolution": [
+            3840,
+            2160
+          ],
+          "scope": "full"
+        },
+        {
+          "camera": 5103,
+          "resolution": [
+            1920,
+            1080
+          ],
+          "scope": "full"
+        },
+        {
+          "camera": 5103,
+          "resolution": [
+            2560,
+            1440
+          ],
+          "scope": "full"
+        },
+        {
+          "camera": 5103,
+          "resolution": [
+            3200,
+            1800
+          ],
+          "scope": "full"
+        },
+        {
+          "camera": 5103,
+          "resolution": [
+            3840,
+            2160
+          ],
+          "scope": "full"
+        }
+      ],
+      "points_used": 20789814
+    },
+    {
+      "job": 2,
+      "variant": "pr",
+      "command": [
+        "/home/jizong/workspace/dConstruct/gaussian-splatting/venv/bin/python",
+        "benchmarks/blog_eval/benchmark_megapixels.py",
+        "--extension",
+        "/home/jizong/.local/share/opencode/worktree/de9cb2/gsplat-pr9-reference-fixes/gsplat/csrc.so",
+        "--ply",
+        "/home/jizong/workspace/dConstruct/data/2026-08-13_PDDtilted_1.dslam/outputs/f6d9613b/point_cloud/iteration_030000/point_cloud.ply",
+        "--cameras",
+        "/home/jizong/workspace/dConstruct/data/2026-08-13_PDDtilted_1.dslam/outputs/f6d9613b/cameras.json",
+        "--label",
+        "pr",
+        "--revision",
+        "3c69277bdba3b66ac8b4f0a2e0a6624da0328c92",
+        "--camera-indices",
+        "0",
+        "2552",
+        "5103",
+        "--resolutions",
+        "640x360",
+        "960x540",
+        "1280x720",
+        "1920x1080",
+        "2560x1440",
+        "3200x1800",
+        "3840x2160",
+        "--scope",
+        "both",
+        "--max-points",
+        "0",
+        "--warmup",
+        "15",
+        "--repeats",
+        "30",
+        "--output",
+        "/home/jizong/.local/share/opencode/worktree/de9cb2/gsplat-pr9-reference-fixes/benchmarks/blog_eval/megapixel_sweep_20261029/pr-job2.json",
+        "--skip-validation"
+      ],
+      "telemetry_before": "name, temperature.gpu, utilization.gpu [%], memory.used [MiB], clocks.current.sm [MHz], power.draw [W]\nNVIDIA GeForce RTX 4090, 52, 0 %, 1019 MiB, 2520 MHz, 64.77 W",
+      "elapsed_seconds": 72.80233786499593,
+      "exit_code": 0,
+      "telemetry_after": "name, temperature.gpu, utilization.gpu [%], memory.used [MiB], clocks.current.sm [MHz], power.draw [W]\nNVIDIA GeForce RTX 4090, 68, 39 %, 1019 MiB, 2760 MHz, 269.81 W",
+      "output_file": "pr-job2.json",
+      "log_file": "/tmp/opencode/gsplat-megapixels/v2-pr-job2.log",
+      "records": 42,
+      "statuses": {
+        "ok": 42,
+        "oom": 0
+      },
+      "alignment_failures": [],
+      "points_used": 20789814
+    },
+    {
+      "job": 2,
+      "variant": "base",
+      "command": [
+        "/home/jizong/workspace/dConstruct/gaussian-splatting/venv/bin/python",
+        "benchmarks/blog_eval/benchmark_megapixels.py",
+        "--extension",
+        "/tmp/opencode/gsplat-blog-variants/baseline.so",
+        "--ply",
+        "/home/jizong/workspace/dConstruct/data/2026-08-13_PDDtilted_1.dslam/outputs/f6d9613b/point_cloud/iteration_030000/point_cloud.ply",
+        "--cameras",
+        "/home/jizong/workspace/dConstruct/data/2026-08-13_PDDtilted_1.dslam/outputs/f6d9613b/cameras.json",
+        "--label",
+        "base",
+        "--revision",
+        "ffe2db3c378533767ccb1ad0d8707a3f33549c3e",
+        "--camera-indices",
+        "0",
+        "2552",
+        "5103",
+        "--resolutions",
+        "640x360",
+        "960x540",
+        "1280x720",
+        "1920x1080",
+        "2560x1440",
+        "3200x1800",
+        "3840x2160",
+        "--scope",
+        "both",
+        "--max-points",
+        "0",
+        "--warmup",
+        "15",
+        "--repeats",
+        "30",
+        "--output",
+        "/home/jizong/.local/share/opencode/worktree/de9cb2/gsplat-pr9-reference-fixes/benchmarks/blog_eval/megapixel_sweep_20261029/base-job2.json",
+        "--skip-validation"
+      ],
+      "telemetry_before": "name, temperature.gpu, utilization.gpu [%], memory.used [MiB], clocks.current.sm [MHz], power.draw [W]\nNVIDIA GeForce RTX 4090, 68, 39 %, 1019 MiB, 2760 MHz, 251.70 W",
+      "elapsed_seconds": 76.3161110910005,
+      "exit_code": 0,
+      "telemetry_after": "name, temperature.gpu, utilization.gpu [%], memory.used [MiB], clocks.current.sm [MHz], power.draw [W]\nNVIDIA GeForce RTX 4090, 64, 0 %, 1019 MiB, 2775 MHz, 282.25 W",
+      "output_file": "base-job2.json",
+      "log_file": "/tmp/opencode/gsplat-megapixels/v2-base-job2.log",
+      "records": 42,
+      "statuses": {
+        "ok": 42,
+        "oom": 0
+      },
+      "alignment_failures": [],
+      "points_used": 20789814
+    },
+    {
+      "job": 3,
+      "variant": "base",
+      "command": [
+        "/home/jizong/workspace/dConstruct/gaussian-splatting/venv/bin/python",
+        "benchmarks/blog_eval/benchmark_megapixels.py",
+        "--extension",
+        "/tmp/opencode/gsplat-blog-variants/baseline.so",
+        "--ply",
+        "/home/jizong/workspace/dConstruct/data/2026-08-13_PDDtilted_1.dslam/outputs/f6d9613b/point_cloud/iteration_030000/point_cloud.ply",
+        "--cameras",
+        "/home/jizong/workspace/dConstruct/data/2026-08-13_PDDtilted_1.dslam/outputs/f6d9613b/cameras.json",
+        "--label",
+        "base",
+        "--revision",
+        "ffe2db3c378533767ccb1ad0d8707a3f33549c3e",
+        "--camera-indices",
+        "0",
+        "2552",
+        "5103",
+        "--resolutions",
+        "640x360",
+        "960x540",
+        "1280x720",
+        "1920x1080",
+        "2560x1440",
+        "3200x1800",
+        "3840x2160",
+        "--scope",
+        "both",
+        "--max-points",
+        "0",
+        "--warmup",
+        "15",
+        "--repeats",
+        "30",
+        "--output",
+        "/home/jizong/.local/share/opencode/worktree/de9cb2/gsplat-pr9-reference-fixes/benchmarks/blog_eval/megapixel_sweep_20261029/base-job3.json",
+        "--skip-validation"
+      ],
+      "telemetry_before": "name, temperature.gpu, utilization.gpu [%], memory.used [MiB], clocks.current.sm [MHz], power.draw [W]\nNVIDIA GeForce RTX 4090, 64, 0 %, 1019 MiB, 2775 MHz, 282.25 W",
+      "elapsed_seconds": 76.25121291600226,
+      "exit_code": 0,
+      "telemetry_after": "name, temperature.gpu, utilization.gpu [%], memory.used [MiB], clocks.current.sm [MHz], power.draw [W]\nNVIDIA GeForce RTX 4090, 76, 99 %, 1019 MiB, 2715 MHz, 279.78 W",
+      "output_file": "base-job3.json",
+      "log_file": "/tmp/opencode/gsplat-megapixels/v2-base-job3.log",
+      "records": 42,
+      "statuses": {
+        "ok": 42,
+        "oom": 0
+      },
+      "alignment_failures": [],
+      "points_used": 20789814
+    },
+    {
+      "job": 3,
+      "variant": "pr",
+      "command": [
+        "/home/jizong/workspace/dConstruct/gaussian-splatting/venv/bin/python",
+        "benchmarks/blog_eval/benchmark_megapixels.py",
+        "--extension",
+        "/home/jizong/.local/share/opencode/worktree/de9cb2/gsplat-pr9-reference-fixes/gsplat/csrc.so",
+        "--ply",
+        "/home/jizong/workspace/dConstruct/data/2026-08-13_PDDtilted_1.dslam/outputs/f6d9613b/point_cloud/iteration_030000/point_cloud.ply",
+        "--cameras",
+        "/home/jizong/workspace/dConstruct/data/2026-08-13_PDDtilted_1.dslam/outputs/f6d9613b/cameras.json",
+        "--label",
+        "pr",
+        "--revision",
+        "3c69277bdba3b66ac8b4f0a2e0a6624da0328c92",
+        "--camera-indices",
+        "0",
+        "2552",
+        "5103",
+        "--resolutions",
+        "640x360",
+        "960x540",
+        "1280x720",
+        "1920x1080",
+        "2560x1440",
+        "3200x1800",
+        "3840x2160",
+        "--scope",
+        "both",
+        "--max-points",
+        "0",
+        "--warmup",
+        "15",
+        "--repeats",
+        "30",
+        "--output",
+        "/home/jizong/.local/share/opencode/worktree/de9cb2/gsplat-pr9-reference-fixes/benchmarks/blog_eval/megapixel_sweep_20261029/pr-job3.json",
+        "--skip-validation"
+      ],
+      "telemetry_before": "name, temperature.gpu, utilization.gpu [%], memory.used [MiB], clocks.current.sm [MHz], power.draw [W]\nNVIDIA GeForce RTX 4090, 76, 99 %, 1019 MiB, 2715 MHz, 279.78 W",
+      "elapsed_seconds": 70.58897204499226,
+      "exit_code": 0,
+      "telemetry_after": "name, temperature.gpu, utilization.gpu [%], memory.used [MiB], clocks.current.sm [MHz], power.draw [W]\nNVIDIA GeForce RTX 4090, 78, 99 %, 1019 MiB, 2760 MHz, 248.87 W",
+      "output_file": "pr-job3.json",
+      "log_file": "/tmp/opencode/gsplat-megapixels/v2-pr-job3.log",
+      "records": 42,
+      "statuses": {
+        "ok": 42,
+        "oom": 0
+      },
+      "alignment_failures": [],
+      "points_used": 20789814
+    }
+  ],
+  "tolerances": {
+    "forward_max_abs": 2e-05,
+    "gradient_rel_l2": 0.0001
+  },
+  "notes": [
+    "Serial jobs; no simultaneous task-owned GPU workload.",
+    "Discarded first attempt after audit found an extra raster-only color clamp. No data from that attempt are pooled here.",
+    "Corrected raster setup uses unclamped SH+0.5 exactly like gsplat/rendering.py and checks cross-scope forward equality.",
+    "Forward/backward/combined share training CUDA A/B/C events; no synchronization between components.",
+    "No-grad inference measured separately.",
+    "All20,789,814 points; intrinsics scaled to preserve FoV.",
+    "Validation and repeat noise are fromjob1 at every case; no gradient averaging or threshold changes.",
+    "References drop only exact-zero gradient rows without sampling/quantization.",
+    "15 warmups/30 measured steps per phase perjob selected before corrected sweep;3 independentjobs pervariant."
+  ]
+}

@@ -185,13 +185,7 @@ def plot_gradients(
         ax.set_axisbelow(True)
         ax.spines[["top", "right"]].set_visible(False)
         ax.legend(fontsize=8)
-        if len(x) <= 10 and len(set(x)) == len(x):
-            ax.set_xticks(
-                x,
-                [f"{mp:g}\n{w}×{h}" for mp, (w, h) in zip(x, dims)],
-                rotation=35 if len(x) > 5 else 0,
-                fontsize=8,
-            )
+        ax.tick_params(axis="x", labelsize=9)
     for ax in list(axes.flat)[len(GRADIENT_GROUPS[scope]) :]:
         ax.set_visible(False)
     fig.text(
@@ -477,13 +471,7 @@ def plot_scope(
         ax.grid(True, alpha=0.22)
         ax.set_axisbelow(True)
         ax.spines[["top", "right"]].set_visible(False)
-        if len(x) <= 10 and len(set(x)) == len(x):
-            ax.set_xticks(
-                x,
-                [f"{mp:g}\n{w}×{h}" for mp, (w, h) in zip(x, dims)],
-                rotation=35 if len(x) > 5 else 0,
-                fontsize=8,
-            )
+        ax.tick_params(axis="x", labelsize=9)
     fig.text(
         0.5,
         0.025,
@@ -541,7 +529,7 @@ def plot_inference(timings: dict, output_dir: Path, base_label: str, pr_label: s
         ax.grid(True, alpha=0.22)
         ax.legend(fontsize=9)
         ax.spines[["top", "right"]].set_visible(False)
-        ax.set_xticks(x, [f"{value:g}" for value in x], rotation=35, fontsize=8)
+        ax.tick_params(axis="x", labelsize=9)
     fig.text(
         0.5,
         0.025,
