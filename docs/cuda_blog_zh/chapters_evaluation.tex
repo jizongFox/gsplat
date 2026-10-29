@@ -1,0 +1,431 @@
+% Body-only chapter: included by the tutorial's main document.
+\section{从文章到 gsplat：保留的是哪些实现}
+\label{sec:gsplat-evaluation}
+
+优化移植不是把一张性能表搬到另一套代码里，而是重新确认数据布局、执行所有权和数值契约。本章以实际交付的 gsplat 提交
+\texttt{88513ea} 为对象：最终仅保留后向 rasterizer 的窄通道
+reduce-scatter、完全遮挡后缀裁剪和安全 alpha predication。
+前向 rasterizer 与 SH 源码未保留实验性改动。
+\textbf{最终计时只采用重建二进制的新证据}：
+\path{benchmarks/blog\_eval/results/REBUILT_FINAL_SUMMARY.md}；
+\path{benchmarks/blog_eval/REPORT.md} 的后半部分保留了实验历史，不能把其中旧表格混入最终结果。
+尤其是存在 partial-warp 缺陷的 \texttt{b96efa8} 已退役。
+
+\subsection{先找到源码中的执行边界}
+
+以下位置均相对于仓库根目录。核心 kernel 是
+\path{submodules/gsplat/gsplat/cuda/csrc/rasterize_to_pixels_bwd.cu}
+中的 \texttt{rasterize\_to\_pixels\_bwd\_kernel}；同文件的
+\texttt{call\_kernel\_with\_dim} 按通道数实例化、分配零初始化梯度，并在当前 CUDA stream 上启动 kernel。
+每个 block 对应一个相机的一个 tile，每个线程对应一个像素；线程同时协作从
+\texttt{flatten\_ids} 加载一批 Gaussian 到 shared memory，然后逆深度顺序处理。
+图像边缘之外的线程仍要参与加载、同步和归约，不能直接逐线程退出。
+
+后向恢复的是前向已经决定的贡献序列。对当前 Gaussian，若前向更新为
+\(T_{\mathrm{after}}=T_{\mathrm{before}}(1-\alpha)\)，则反向用
+\[
+ T_{\mathrm{before}}=\frac{T_{\mathrm{after}}}{1-\alpha}
+\]
+恢复透射率。实现还维护后方颜色贡献的 \texttt{buffer[COLOR\_DIM]}。
+一个 warp 的多个像素会更新同一个 Gaussian，因此先在 warp 内累加，再用原子加写回全局梯度。
+优化改变这些局部和的计算与发出方式，不改变前向 alpha 上限
+\(0.999\)、低贡献阈值 \(1/255\)、像素中心或终止语义。
+
+交叉阅读时还应查看
+\path{submodules/gsplat/gsplat/cuda/csrc/isect_tiles.cu}：
+此 fork 已有 opacity-aware compact-box 与 sweep 枚举。
+\texttt{compact\_box\_impl="sweep"} 是算法选择，
+\texttt{compact\_box=True} 才是启用开关；既有能力不能再次记成此次移植的新收益。
+
+\subsection{Reduce-scatter：把结果所有权分散到 lane}
+
+设 \(x_{\ell,k}\) 是 lane \(\ell\) 对分量 \(k\) 的贡献，目标为
+\[
+ s_k=\sum_{\ell=0}^{31}x_{\ell,k}.
+\]
+原路径对每个分量执行 \texttt{warpSum}，最后 lane 0 发出所有 atomic add。
+新的 helper 位于
+\path{submodules/gsplat/gsplat/cuda/include/warp_reduce_scatter.cuh}，
+符号为 \texttt{WarpReduceScatter<DIM, STRIDE>::run}。
+它不是减少数学上的求和项，而是避免每个 lane 都保存所有分量的最终副本。
+
+\paragraph{实际归约向量不是固定九维。}
+在本次实现中，\(C=\texttt{COLOR\_DIM}\)，
+\(D=C+8\)：依次放入 \(C\) 个颜色梯度、三个 conic 梯度、两个屏幕均值梯度、
+一个 opacity 梯度和两个可选 absgrad 分量。
+所以 RGB 使用 \(D=11\)，RGB 加深度使用 \(D=12\)。
+即使关闭 absgrad，这两个槽位仍初始化为零，owner 最终只在目标指针存在时写出。
+不能把文章中九维示意直接当作此 kernel 的寄存器布局。
+
+\paragraph{每一层同时划分 lane 与分量。}
+递归从 \texttt{STRIDE=16} 开始，令
+\(H=\lceil D/2\rceil\)。下半组 lane 保留低分量窗口、发送高窗口；
+上半组反过来，通过 XOR shuffle 交换后相加。上半组的
+\texttt{component} 加 \(H\)，然后递归处理大小为 \(H\) 的窗口与更小 stride。
+RGB 的活跃窗口依次为
+\[
+ 11\longrightarrow6\longrightarrow3\longrightarrow2\longrightarrow1.
+\]
+到一维时仍需完成剩余 lane 组的求和，并选出唯一 owner。
+奇数窗口补出来的槽位必须持续标为无效；源码中的
+\texttt{previous\_component} 与 \texttt{owner=false} 防止 padding 槽位别名到真实分量。
+最终只有合法 owner 按 \texttt{component} 选择目标地址并 atomic add。
+
+这里的证明义务有三个：每个分量恰有一个写出者；其值包含完整 warp 的全部贡献；
+不存在 padding 写入或错误地址。原子加次数并未神奇消失，只是从 lane 0 串行发出多个分量，
+变为不同 owner 分散发出。浮点求和顺序也随之变化，故后向不应承诺逐位相同。
+静态指令和寄存器信息能解释优化意图，却不能替代运行时间与梯度对齐测试。
+
+\subsection{4\(\times\)4 tile 暴露的 partial-warp 错误}
+
+最初的测试主要使用 8 或 16 边长 tile。随后直接测试
+4\(\times\)4 tile：block 只有 16 个线程，旧候选把基线约
+\(17.697\) 的非零 opacity 梯度错误变成零。
+原因不只是 shuffle mask 写错，而是完整 32-lane 算法把某些分量的所有权交给了不存在的上半组 lane。
+把 full mask 改成 active mask，并不能凭空创建这些 owner 或重新分配它们。
+
+交付版本使用下面的实际分派原则；它位于 kernel 的窄通道归约分支：
+\begin{lstlisting}[language=C++]
+if constexpr (COLOR_DIM <= 4) {
+    if (block_size % 32 != 0) {
+        standard_reduce();
+        continue;
+    }
+    // Full-warp reduce-scatter and owner atomics.
+} else {
+    standard_reduce();
+}
+\end{lstlisting}
+\texttt{standard\_reduce} 是原有逐分量归约和 lane-0 原子写回。
+条件检查整个 block 的线程数：6\(\times\)6 tile 有 36 线程，虽然包含一个完整 warp，
+也将整个 block 的归约切回旧路径，避免最后四个线程套用完整 warp 的所有权模型。
+宽通道一直走旧归约。这个保守 fallback 用少量特殊尺寸的性能换取清楚的有效域，
+不是声称 helper 已经支持任意 active mask。
+
+\subsection{后缀裁剪：从像素停止位置推导安全加载终点}
+
+\texttt{last\_ids[p]} 保存像素最后贡献者的\emph{绝对 intersection 位置}，
+不是 Gaussian ID，也不是 tile 内相对下标。
+原 kernel 虽然在像素循环中跳过停止位置之后的元素，但仍可能把整段被遮挡的尾部搬进 shared memory。
+保留的优化先求 warp 最大停止位置，再由各 warp 的 lane 0 对 shared-memory 槽执行
+\texttt{atomicMax}，用 block 同步保证所有线程读到同一终点。
+
+若原 tile 范围为 \([a,b)\)，代码先把最大值槽初始化为 \(a\)，因此实际使用
+\[
+ m=\max\bigl(a,\max_{p\ \mathrm{inside}}\texttt{last\_ids}[p]\bigr),
+ \qquad b'=\min\bigl(b,\operatorname{int64}(m)+1\bigr).
+\]
+这个保守初始化并非保证所有空贡献 tile 都零加载；它保证不把范围裁到起点之前。
+只有 \([b',b)\) 这个\emph{所有像素都不会用到的后缀}被省略，内部不贡献者仍在列表中。
+原先的 warp 停止位置跳过仍保留，两者分别减少 staging 和像素内遍历。
+
+两个边界值得逐行检查。第一，\(a=b\) 的空范围必须在 collective 和独占终点运算之前
+tile-uniform return；不能让部分线程先走而其他线程等待 block barrier。
+第二，源码先把最大位置转换到 \texttt{int64\_t} 再加一、取最小值，最后才转回
+\texttt{int32\_t}，避免接近 \texttt{INT\_MAX} 时先发生有符号溢出。
+裁剪不移动 \texttt{flatten\_ids}，不压缩 ID，也不更改原来的绝对停止位置，
+所以其他 channel chunk 重用同一 intersection list 时仍然有效。
+
+这不是文章的完整 contributor compaction。文章的 24-bit ID 加 8-bit mask 方案不能直接用于
+\(20{,}789{,}814>2^{24}\) 的场景；最终记录中实际访问的 ID 达到
+\(20{,}789{,}812\)。安全的完整移植需要独立 mask、更宽存储或显式重映射，
+而不是截掉 Gaussian ID 的高位。
+
+\subsection{安全 predication：无效 lane 的零必须是真的零}
+
+窄通道路径让 miss 使用 \(\alpha=0\)，透射率恢复成为恒等操作：
+\(T\leftarrow T/(1-0)=T\)。这能减少逐 lane 的控制流分歧，
+但\textbf{不等于把整个梯度公式无条件执行}。
+即使输入均有限，conic 与位移相乘也可能溢出：
+\[
+ \underbrace{0}_{\text{屏蔽系数}}\times
+ \underbrace{(a\,d_x+b\,d_y)}_{\text{可能成为 Inf}}
+ =\mathrm{NaN},
+\]
+之后的 warp 求和会把 NaN 传播给有效像素。
+类似地，拒绝 lane 的非有限上游颜色梯度不能通过乘零来清除。
+
+实际代码把局部梯度初始化为零，并分开控制三件事：
+\begin{itemize}
+ \item 颜色梯度使用 \texttt{valid ? fac * v\_render\_c[k] : 0.f}，
+ 而不是无条件乘上零系数；颜色 buffer 只在 \texttt{valid} 时更新。
+ \item 几何、opacity 与 absgrad 只在
+ \texttt{valid \&\& opac * vis <= 0.999f} 时计算；clamp 之外保留初始化零。
+ 被 clamp 的有效 Gaussian 仍可能贡献颜色，不能把这两种有效性混为一谈。
+ \item \texttt{warp.any(valid)} 为假时，整个 warp 继续跳过当前 Gaussian。
+ 此 fork 没有文章中保证存在贡献者的精确 subtile mask，不能删除这个 skip。
+\end{itemize}
+某些中间标量仍可在无效 lane 上计算，但不会进入梯度写回或持久 buffer。
+因此这里的 ``branchless'' 应理解为对特定 recurrence 的 predication，
+不是禁止一切分支，更不是放弃非有限数隔离；宽通道仍采用原条件执行路径。
+
+\section{拒绝实验也是结果，而不是漏掉的步骤}
+
+\subsection{三个已测试、未保留的候选}
+
+下列时间均来自报告中的\emph{历史消融序列}，仅说明当时为何拒绝相应改动，
+不是重建最终二进制的增益分解，也不能与后文最终基线交叉作比。
+
+\paragraph{标量颜色累积。}
+把多通道后方颜色 buffer 投影到固定上游颜色梯度，可把向量递推改成标量递推，
+同时把背景点积移出循环。代数等价不保证机器上更快：
+112 个小例通过，但该序列 raster 中位数由 \(13.945\) ms 变为
+\(14.496\) ms，没有实测优势，因此撤销。
+该候选单次 raw-quaternion 误差也未通过严格门限，不能只引用小例通过。
+证据为 \path{benchmarks/blog\_eval/results/regression-scatter-trim-scalar.json}
+与 \path{benchmarks/blog\_eval/results/scatter-trim-scalar-normalized-alignment.json}，
+计时文件为同目录的 \texttt{scatter-trim-scalar-raster-job*.json}。
+
+\paragraph{SH selective zeroing。}
+\path{submodules/gsplat/gsplat/cuda/csrc/compute_sh_bwd.cu}
+调用 \texttt{sh\_coeffs\_to\_color\_fast\_vjp}，按 \(N\times3\) 线程分配颜色通道并直接写系数梯度；
+不是文章中单线程同时持有 48 个系数和 48 个梯度的起点。
+实验把梯度 bulk zeroing 合并到 kernel，保证 masked 行与未使用的高阶系数仍写零。
+288 个 SH 案例通过，但配对完整渲染的中位数为
+\(64.056\rightarrow64.973\) ms，没有可靠收益，故撤销。
+索引、除法和谓词开销可能抵消内存写节省，但这是解释假设，不是 profiler 已证实的瓶颈。
+直接把 \texttt{zeros\_like} 改成 \texttt{empty\_like} 则是不正确的捷径。
+参见 \path{benchmarks/blog\_eval/results/sh-regression-selective-zero.json}
+以及 \path{benchmarks/blog_eval/REPORT.md} 的 Experiment 4。
+
+\paragraph{前向 AABB warp culling。}
+原型为 tile16、窄通道使用 8\(\times\)4 warp 像素区域，生成保守 opacity-aware
+椭圆 AABB mask，再由 ballot/ffs 遍历候选。
+它不是文章的精确 conic row-span mask，也没有移植 48-byte packed splat 布局。
+FP32 版本三组配对 raster 中位数 \(16.525\rightarrow16.195\) ms，约
+\(1.020\times\)；收益小且有噪声，不足以承担专用循环、病态 conic fallback 和边界舍入复杂度。
+审查还发现早期 FP64 bounds 版本对溢出浮点的基线兼容风险。
+原型已撤销，证据见 \path{benchmarks/blog\_eval/results/regression-floatcull.json}
+及报告 Experiment 6。拒绝这个近似原型，不能推导出文章的精确 mask 无效。
+
+\subsection{没有实现，就没有可引用的收益}
+
+两 Gaussian folding 尚未实现；当前归约仍是单 Gaussian。
+两阶段排序也仅做源码评估：窄 tile key 有潜力，但须保留等深度稳定顺序、
+处理多相机与超过 16-bit 的 tile 网格，并提供 fallback。
+完整 contributor compaction、精确 conic subtile mask、packed splat 属性结构均未交付。
+multirow 与 pipe balancing 不能直接套用 A100 的 occupancy 或寄存器限制到 Ada。
+现有 \texttt{\_\_expf} 配合 \texttt{--use\_fast\_math} 已使用快速指数路径，
+改个 \texttt{exp2} 名字不能算新的测得加速；系数重标定仍需阈值边界测试。
+BF16 SH 未实现、未做质量验证，会改变数值与优化器契约。
+本场景只有 degree-1 SH，系数载荷本来就只有 degree-3 的四分之一。
+
+\section{机器评估：先证明比较的是同一个问题}
+
+\subsection{输入、二进制与计时协议}
+
+最终环境为 RTX 4090（SM89）、PyTorch \texttt{2.10.0+cu128}、CUDA 12.8；
+场景含 \(20{,}789{,}814\) 个 Gaussian，分辨率为
+1280\(\times\)720，degree-1 SH。虽然 checkpoint 配置来自 PGSR，
+本实验测的是 gsplat 标准 3DGS API，不包括 PGSR 专用平面深度或法向 kernel。
+基线 gsplat 为 \texttt{ffe2db3}，交付源码为 \texttt{88513ea}。
+候选文件 \texttt{final-partial-warp-safe.so} 的 SHA-256 为
+\begin{quote}\small\ttfamily
+\nolinkurl{6160354698af48c34a5e6a090c5e241c564959fb6e0d54d2c55bb3d9c8373ddb}
+\end{quote}
+\path{benchmarks/blog\_eval/results/build_manifest.json} 与
+\path{benchmarks/blog\_eval/results/final_verification.json} 保存身份和验证关系。
+运行时加载文件的 hash 比单独记录 checkout HEAD 更直接；HEAD 本身不构成独立的可复现构建证明。
+
+\paragraph{参数域错误会使整张性能表失效。}
+\path{benchmarks/blog_eval/gsplat_blog_benchmark.py} 的 \texttt{full\_render}
+在调用 gsplat 前执行
+\[
+ s=\exp(s_{\log}),\qquad o=\operatorname{sigmoid}(o_{\log}),
+ \qquad \widehat q=\frac{q}{\|q\|}.
+\]
+早期直接传 log-scale 的探索数据已被判无效，不能引用。
+相机使用 camera-to-world 的逆变换；四元数输入额外归一化以匹配产品 wrapper，
+即使 gsplat 内部也做归一化，原始参数的计算图仍应一致。
+记录的 \texttt{grad.quats} 是对原始四元数张量的梯度，不是把归一化结果当独立叶子后的梯度。
+
+\paragraph{完整渲染和 raster-only 都包含前向加后向。}
+\texttt{Full} 包含参数变换、投影、SH、binning/sort、raster 和反向传播，
+不包括 optimizer、训练损失、数据读取和整个训练循环。
+\texttt{Raster} 用一次未计时、无梯度的完整渲染取得相同投影与 intersection 元数据，
+把屏幕均值、conic、颜色和 opacity detach 成叶子，再测 raster API 的前后向。
+RGB+ED 还保留深度除以 alpha 的 expected-depth 后处理及其反向；
+它不是单个 CUDA backward kernel 的裸计时。
+
+所有最终任务使用全量点、同一个 compact-box sweep、相同相机与随机种子，
+对图像和 alpha 施加固定随机上游梯度。
+必须显式核对 \texttt{compact\_box} 与 \texttt{compact\_box\_impl}。
+最终单次协议 v3 与固定均值协议 v2 均把这两个值放进兼容签名；同时对 PLY 与相机 JSON
+按内容计算 SHA-256，路径则单独记为 provenance。因此相同字节搬到另一挂载点仍可比较，
+而原路径被不同场景文件替换会被拒绝。旧单次 v2 / ensemble v1 reference 必须重建，
+不会自动迁移。fixed-16 检查曾在采集候选前发现 baseline-only 配置关闭 compact-box，
+已统一为 true/sweep 并重新生成两份基线，未保留不匹配对照。
+
+更重要的是，reference preflight 现在按顺序在 CPU 完成：协议版本、输入内容 hash、
+参数已知设置，然后解析 PLY/camera 的点数、分辨率、SH degree 与属性布局；所有可由这些
+输入确定的不匹配都在 extension 加载和 CUDA tensor 上传之前失败。metadata 对象被继续传给
+loader，避免第二次解析，再核对实际 tensor shape。SH schema 会拒绝缺失必需字段、
+不连续的 \texttt{f\_rest\_*}、不是 RGB 三元组的系数数目、非平方 basis 数以及超出当前
+degree-4 CUDA SH 实现范围的输入，并给出明确 ValueError。ensemble 的设备名要初始化
+CUDA 后才能确定，因此设备/upstream hash 的最后一步检查在其第一轮 render/backward 之前。
+
+计时使用 CUDA events，warmup 后同步；逐轮清除梯度与旧输出图，避免图累积影响显存和耗时。
+最终运行串行进行，没有同时编译、安装或本任务的其他 GPU 工作负载，也未操纵 GPU 时钟。
+\texttt{--timing-only} 的最终 finite 检查只说明没有非有限输出，\emph{不是梯度对齐检查}。
+所有 36 个最终计时任务均通过该 finite 检查。
+
+\subsection{重建后的最终时间：RGB 三个相机}
+
+每个相机、每个模式独立执行两对 baseline/candidate，顺序为
+baseline 1、candidate 1、baseline 2、candidate 2；每个任务
+40 次 warmup、100 次计时。
+表中时间是\emph{任务中位数的中位数}，speedup 为两列时间之比，
+不是把不同视角或历史运行混在一起平均。
+
+\begin{center}
+\small
+\begin{tabular}{rlrrrr}
+\toprule
+相机 & 模式 & 基线/ms & 候选/ms & 加速比 & 两对各自加速比\\
+\midrule
+0    & Raster & 23.318528 & 17.443752 & 1.337 & 1.282 / 1.392\\
+0    & Full   & 69.148039 & 62.850912 & 1.100 & 1.114 / 1.087\\
+2552 & Raster &  3.269248 &  1.983760 & 1.648 & 1.649 / 1.647\\
+2552 & Full   & 40.359648 & 39.728473 & 1.016 & 1.131 / 0.917\\
+5103 & Raster &  2.625744 &  1.926184 & 1.363 & 1.325 / 1.402\\
+5103 & Full   & 40.084271 & 38.574593 & 1.039 & 1.011 / 1.069\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Raster 的六对均同方向改善。相机 2552 的 Full 一对加速、一对变慢，
+候选任务中位数为 \(36.740273\) 与 \(42.716673\) ms，跨度达其中位数的
+15.04\%，因此聚合的 1.6\% 收益\textbf{不能认为结论确定}。
+另两视角 Full 的配对方向一致，但仅两个任务不足以给出精确不确定度估计。
+这也说明为何不能把 raster 的局部收益叫作训练加速。
+原始文件为 \path{benchmarks/blog\_eval/results/} 下
+\texttt{rebuilt-paired-<baseline|candidate>-cam<0|2552|5103>-<raster|full>-job<1|2>.json}，
+共 24 份；每份任务中位数均可在最终 summary 中核对。
+
+\subsection{产品配置：RGB+ED、absgrad、相机 0}
+
+这组显式启用 \texttt{--render-mode RGB+ED --absgrad}，
+每模式三对独立任务，每任务 30 次 warmup、80 次计时，仍使用全部点和 compact-box sweep。
+
+\begin{center}
+\small
+\begin{tabular}{lrrrr}
+\toprule
+模式 & 基线/ms & 候选/ms & 加速比 & 三对各自加速比\\
+\midrule
+Raster & 23.219712 & 17.717712 & 1.311 & 1.310 / 1.321 / 1.350\\
+Full   & 72.297985 & 66.900990 & 1.081 & 1.063 / 1.103 / 1.067\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+六对均改善，但 Full 基线和候选任务范围分别约为其中位数的
+3.48\% 与 5.16\%，不能把最后几位小数当稳定物理常数。
+原始 12 份文件为 \path{benchmarks/blog\_eval/results/} 下
+\texttt{rebuilt-production-<baseline|candidate>-<raster|full>-job<1|2|3>.json}。
+这里的 raster 比值是 \(1.311\times\)，不是旧
+\texttt{PRODUCTION\_SUMMARY.md} 的 \(1.346\times\)；两代二进制证据不能互换。
+
+\section{正确性必须分层作答}
+
+\subsection{单次梯度：屏幕空间通过，原始四元数仍失败}
+
+定义梯度相对误差为
+\[
+ E(g)=\frac{\|g_{\mathrm{candidate}}-g_{\mathrm{baseline}}\|_2}
+ {\max(\|g_{\mathrm{baseline}}\|_2,\varepsilon)}.
+\]
+最终检查保持梯度门限 \(10^{-4}\)、前向最大绝对误差门限
+\(2\times10^{-5}\)，不因失败而调宽。
+每个设置各执行一次完整对照检查，camera 0，全点，3 次 warmup、3 次计时；
+内部 repeat 用于提供噪声诊断，不是不断重试直到通过。
+
+\begin{center}
+\small
+\begin{tabular}{llrl}
+\toprule
+设置 & 检查域 & 最大梯度相对 L2 & 判定\\
+\midrule
+RGB & Raster & \(2.615650\times10^{-6}\) & 通过\\
+RGB & Full   & \(1.628947\times10^{-4}\) & raw quaternion 失败\\
+RGB+ED、absgrad & Raster & \(1.470557\times10^{-6}\) & 通过\\
+RGB+ED、absgrad & Full   & \(1.633092\times10^{-4}\) & raw quaternion 失败\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+四项图像与 alpha 都与基线逐位相同，比较张量与计时末轮输出、梯度均有限；
+Full 中其余参数梯度通过。Raster 是对屏幕均值、conic、颜色、opacity，
+以及开启时的 absgrad 的直接检查，不等同于全部原始参数的检查。
+证据分别是 \path{benchmarks/blog\_eval/results/} 下的
+\texttt{rebuilt-final-RGB-full-alignment.json}、
+\texttt{rebuilt-final-RGB-raster-alignment.json}、
+\texttt{rebuilt-final-RGBED-full-alignment.json} 和
+\texttt{rebuilt-final-RGBED-raster-alignment.json}。
+
+同一候选自身重复的 quaternion 相对 L2 为
+\(2.221081\times10^{-4}\)（RGB）与
+\(1.395373\times10^{-4}\)（RGB+ED）。
+这与原子累加顺序噪声经病态投影放大的解释一致，但不是数学证明，更不是豁免规则。
+\textbf{噪声背景可以解释为什么继续调查，不能把 JSON 中的失败改称通过。}
+
+\subsection{预先固定 16 次均值：回答的是另一个问题}
+
+补充协议 \path{benchmarks/blog_eval/gsplat_gradient_ensemble.py}
+预先固定每二进制、每模式 16 次渲染与反向，参数、相机、上游梯度均保持相同，
+在 CPU 用 float64 按顺序累积均值。
+不是每次运行一个不同训练步骤，也不是看到失败后增加采样次数。
+门限保持不变，全部 16 次都计入，未丢弃样本。
+
+\begin{center}
+\small
+\begin{tabular}{lrr}
+\toprule
+均值梯度相对 L2 & RGB & RGB+ED、absgrad\\
+\midrule
+世界坐标均值 & \(6.24\times10^{-7}\) & \(7.36\times10^{-7}\)\\
+原始四元数 & \(4.57\times10^{-5}\) & \(3.50\times10^{-5}\)\\
+log-scale & \(1.48\times10^{-6}\) & \(2.00\times10^{-6}\)\\
+opacity logit & \(1.77\times10^{-7}\) & \(9.55\times10^{-8}\)\\
+SH 系数 & \(2.53\times10^{-7}\) & \(3.13\times10^{-7}\)\\
+绝对屏幕均值梯度 & 未启用 & \(1.55\times10^{-7}\)\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+两种模式的均值图像与 alpha 精确一致，均值梯度全部通过。
+原始记录为 \path{benchmarks/blog\_eval/results/ensemble-final-RGB.json}
+与 \path{benchmarks/blog\_eval/results/ensemble-final-RGBED.json}，
+对应 baseline 文件也在同目录。
+这为平均梯度没有明显系统偏移提供补充证据，但不是置信区间，
+不保证每一步满足门限，不推翻单次失败，更不证明优化轨迹或训练收敛相同。
+
+\subsection{166 个差分案例与两个 sanitizer}
+
+\path{benchmarks/blog_eval/gsplat_raster_regression.py} 的最终矩阵在默认与非默认 stream
+分别通过 166/166；新增 tile4 的 1/2/3/4/8 通道、absgrad 开关与 tile6 案例，
+正是为了封住 partial-warp 的覆盖缺口。
+其他覆盖包括 tile8/16、背景梯度、非对齐图像边缘、空输入与空 intersection、
+多 batch tile 列表、packed 相机布局、channel-list 重用、稀疏 tile、重遮挡、
+opacity cutoff/clamp、有限输入造成的 conic 溢出与被拒绝 lane 的非有限上游梯度。
+非默认 stream 测试还包含同 stream 的输入生产和梯度消费。
+
+重建最终二进制的整个 166-case 矩阵也通过 CUDA compute-sanitizer
+memcheck 与 synccheck，均为 0 errors。
+差分结果见 \path{benchmarks/blog\_eval/results/partial-warp-final-default.json}
+与 \path{benchmarks/blog\_eval/results/partial-warp-final-nondefault.json}；
+sanitizer 的 JSON 与日志为同目录
+\texttt{partial-warp-final-memcheck.*}、
+\texttt{partial-warp-final-synccheck.*}。
+它们分别约束内存访问与同步错误，不是穷尽数值证明，也未运行 racecheck。
+已知的基线 masked-tile alpha 初始化与完整 SH 路径的默认 stream 问题不在此处修复；
+直接 raster 的非默认 stream 通过，不能推广为整个渲染器的 stream 安全证明。
+
+\paragraph{最后能说什么？}
+可以说：在这一个 degree-1、20.8M 点场景的 RTX 4090 实测中，
+三个 RGB 视角的 raster 配对收益稳定出现，产品 RGB+ED/absgrad 的相机 0 也有复现；
+交付代码具有 partial-warp fallback，屏幕空间梯度与固定次数均值检查通过。
+同时必须说：两项 Full 单次 raw-quaternion 门限仍失败，未做训练收敛实验，
+只测了 5104 个相机中的三个，产品配置只测一个。
+\textbf{这既不是 A100 文章 headline 的复现，也不是普遍的全训练加速或已验证收敛的生产发布。}
+可靠的优化结论应把实现有效域、实际收益和仍未满足的门槛一起交付。

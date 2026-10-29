@@ -1,0 +1,58 @@
+\documentclass[11pt,a4paper,openany]{book}
+\usepackage[margin=2.25cm,headheight=15pt]{geometry}
+\usepackage{fontspec}
+\usepackage{luatexja-fontspec}
+\usepackage{amsmath,amssymb,mathtools,booktabs,longtable,tabularx,array}
+\usepackage{xcolor,hyperref,xurl,listings,tikz,enumitem,fancyhdr,microtype}
+\usetikzlibrary{arrows.meta,positioning,fit,calc,shapes.geometric}
+\setmainfont{Noto Sans CJK SC}
+\setsansfont{Noto Sans CJK SC}
+\setmonofont{Noto Sans Mono CJK SC}
+\setmainjfont{Noto Sans CJK SC}
+\setsansjfont{Noto Sans CJK SC}
+\setmonojfont{Noto Sans Mono CJK SC}
+\hypersetup{colorlinks=true,linkcolor=blue!60!black,urlcolor=blue!60!black,citecolor=blue!60!black,pdftitle={从3DGS CUDA优化文章到gsplat：逐点讲解与本机评估}}
+\definecolor{codebg}{RGB}{245,247,249}
+\definecolor{codeframe}{RGB}{185,195,205}
+\lstset{backgroundcolor=\color{codebg},basicstyle=\ttfamily\small,breaklines=true,frame=single,rulecolor=\color{codeframe},columns=fullflexible,keepspaces=true,showstringspaces=false,tabsize=4}
+\setlist{itemsep=2pt,topsep=4pt}
+\setlength{\parskip}{4pt}
+\setlength{\parindent}{0pt}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{3DGS CUDA 优化：从文章到 gsplat}
+\fancyhead[R]{教学版}
+\fancyfoot[C]{\thepage}
+\title{从 3DGS CUDA 优化文章到 gsplat\\[0.5em]\large 逐点讲解、数学推导、代码示例与 RTX 4090 实测}
+\author{基于 gsplat CUDA 源码与完整场景实验}
+\date{2026 年 10 月}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\todo}[1]{\textbf{本次结论：}#1}
+\begin{document}
+\frontmatter
+\maketitle
+\chapter*{读者导言}
+这份材料不是四页摘要，也不是 CUDA 优化文章的逐字翻译。它按文章的背景、流水线、文献基线、Step 2--6、失败实验和硬件分析逐点展开，并把每个思想映射到本次 gsplat 源码和 RTX 4090 结果。每一项都注明是“仓库已有”“本次保留”“实验后回滚”还是“只分析、未移植”。
+
+最重要的边界先说清楚：最终只保留三项 backward raster 改动；本场景为 20,789,814 个 Gaussian、degree-1 SH；GPU 是 RTX 4090，不是文章的 A100。RGB raster-only 三视角加速为 1.337x、1.648x、1.363x；RGB+ED/absgrad 在 camera 0 为 1.311x raster、1.081x full render。图像/alpha 完全相同，但单次 raw quaternion 梯度相对 L2 约 1.63e-4，超过 1e-4 严格阈值。固定 16 次平均梯度通过并不能抹掉这个单次失败，也不证明训练收敛。
+
+\textbf{源码/实验交付：} gsplat commit \code{88513ea}；gsplat implementation commit \code{88513ea}。完整工程日志为 \code{benchmarks/blog\_eval/REPORT.md}，本教材则重点解释“为什么”。
+\tableofcontents
+\mainmatter
+\chapter{数学对象与 CUDA 执行模型}
+\input{chapters_math.tex}
+\chapter{原文章逐点解读：S00--S06}
+\input{chapters_article.tex}
+\chapter{从纸面公式到可运行的最小例子}
+\input{chapters_examples.tex}
+\chapter{gsplat 移植、评估和最终结论}
+\input{chapters_evaluation.tex}
+\backmatter
+\chapter*{延伸阅读与复现}
+\begin{itemize}
+\item 原文章：\url{https://grgkopanas.github.io/3dgs_cuda_blog/}。
+\item 工程结果：\code{benchmarks/blog\_eval/results/REBUILT\_FINAL\_SUMMARY.md}、\code{benchmarks/blog\_eval/results/final\_verification.json}。
+\item 回归脚本：\code{benchmarks/blog\_eval/gsplat\_raster\_regression.py}；固定重复平均梯度脚本：\code{benchmarks/blog\_eval/gsplat\_gradient\_ensemble.py}。
+\item 给定环境：\code{<your-existing-python-environment>/bin/python}；运行时通过 \code{PYTHONPATH=. (在 gsplat 仓库根目录运行)} 和 \code{--extension} 明确隔离 baseline/candidate，不能在同一 Python 进程加载两个 pybind CUDA extension。
+\end{itemize}
+\end{document}

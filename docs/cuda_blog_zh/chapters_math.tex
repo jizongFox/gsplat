@@ -1,0 +1,678 @@
+% Standalone chapter fragment: include inside the main document body.
+% Uses only the packages already provided by the tutorial main document.
+
+\section{先建立数学对象：一个 Gaussian 究竟存了什么？}
+
+本章为阅读 3DGS CUDA 优化文章和本仓库的 gsplat 对照实验补齐基础。
+目标不是把公式背下来，而是能够回答三个问题：某个线程正在计算哪一个数学量，
+它从哪里读数据，以及改变执行顺序以后为什么图像可能不变、梯度却略有不同。
+下文的数学模型首先描述理想运算，再单独指出离散排序、阈值和浮点数带来的实现边界。
+所有教学代码均为解释用的独立例子，不是从 gsplat 源码逐行摘录的实现。
+
+\subsection{位置、形状、不透明度与颜色}
+
+第 $i$ 个三维 Gaussian 的中心为 $\boldsymbol\mu_i\in\mathbb R^3$，
+形状由对称正定矩阵 $\Sigma_i\in\mathbb R^{3\times3}$ 表示。
+相对于中心的位移 $\mathbf x-\boldsymbol\mu_i$ 越大，其椭球度量距离通常越大：
+\begin{equation}
+ G_i(\mathbf x)=\exp\!\left[-\frac12
+ (\mathbf x-\boldsymbol\mu_i)^T\Sigma_i^{-1}
+ (\mathbf x-\boldsymbol\mu_i)\right].
+\end{equation}
+这里没有概率密度的归一化因子
+$(2\pi)^{-3/2}|\Sigma_i|^{-1/2}$。
+3DGS 中的 Gaussian 是可学习的渲染基元，不应直接理解成总概率质量为一的分布。
+它的峰值强度由另一个不透明度参数 $o_i$ 控制。
+屏幕 Gaussian 同样通常采用未归一化的指数核，而非对三维概率密度做精确射线积分。
+
+颜色可以直接存成 RGB 向量 $\mathbf c_i$，也可以存成球谐函数系数：
+\begin{equation}
+ \mathbf c_i(\mathbf v)=\sum_{\ell=0}^{L}\sum_{m=-\ell}^{\ell}
+ \boldsymbol\beta_{i,\ell m}Y_{\ell m}(\mathbf v).
+\end{equation}
+其中 $\mathbf v$ 为观察方向，$\boldsymbol\beta_{i,\ell m}\in\mathbb R^3$。
+每个颜色通道有 $(L+1)^2$ 个系数；degree-1 是 $4\times3=12$ 个标量，
+degree-3 是 $16\times3=48$ 个标量。颜色偏置、截断以及观察方向的正负约定要查具体 API。
+这一区别直接影响寄存器占用和读取量，不能把高阶 SH 场景中的优化幅度照搬到本次 degree-1 场景。
+
+\subsection{为什么训练参数使用 log-scale 和 logit？}
+
+用三个正尺度 $s_x,s_y,s_z$ 和旋转矩阵 $R$ 表示协方差：
+\begin{equation}
+ \Sigma=R\operatorname{diag}(s_x^2,s_y^2,s_z^2)R^T.
+\end{equation}
+训练时常存储无约束的 $\ell_j\in\mathbb R$，再令
+\begin{equation}
+ s_j=\exp(\ell_j),\qquad
+ o=\operatorname{sigmoid}(\eta)=\frac{1}{1+\exp(-\eta)}.
+\end{equation}
+这样优化器不会产生负尺度，且有限的 $\eta$ 对应 $0<o<1$。
+注意 $\ell_j$ 是尺度的对数，不是方差的对数，所以协方差中的对应对角项为
+$\exp(2\ell_j)$，不能漏掉这个二倍因子。
+
+链式法则给出
+\begin{equation}
+ \frac{\partial L}{\partial\ell_j}
+ =s_j\frac{\partial L}{\partial s_j},\qquad
+ \frac{\partial L}{\partial\eta}
+ =o(1-o)\frac{\partial L}{\partial o}.
+\end{equation}
+因此屏幕空间 opacity 梯度、激活后的 opacity 梯度和原始 logit 梯度不是同一个量。
+gsplat 渲染接口中的 scales 和 opacities 通常是调用方已经激活的值；
+不能因为训练器保存 log 参数，就在底层 kernel 中再做一次指数或 sigmoid。
+
+\subsection{四元数的顺序、归一化和梯度}
+
+本章采用 gsplat 文档中的 $\mathbf q=(w,x,y,z)$ 顺序。
+旋转矩阵使用单位四元数 $\widehat{\mathbf q}=\mathbf q/\|\mathbf q\|$。
+将归一化后的分量仍记为 $w,x,y,z$，则
+\begin{equation}
+ R=\begin{bmatrix}
+ 1-2(y^2+z^2)&2(xy-wz)&2(xz+wy)\\
+ 2(xy+wz)&1-2(x^2+z^2)&2(yz-wx)\\
+ 2(xz-wy)&2(yz+wx)&1-2(x^2+y^2)
+ \end{bmatrix}.
+\end{equation}
+这规定了本文的旋转约定；接入其他库时还要核对主动旋转、坐标轴方向及矩阵乘法顺序。
+$\mathbf q$ 与 $-\mathbf q$ 表示同一旋转，但原始参数并不相同。
+零四元数不能直接归一化，需要初始化或显式的数值保护。
+
+对非零原始参数，归一化的 Jacobian 为
+\begin{equation}
+ \frac{\partial\widehat{\mathbf q}}{\partial\mathbf q}
+ =\frac{1}{\|\mathbf q\|}
+ \left(I-\widehat{\mathbf q}\widehat{\mathbf q}^{T}\right).
+\end{equation}
+所以 raw quaternion 梯度还经过了旋转、协方差、投影和归一化等多层链式法则。
+接近零范数的参数会带来额外敏感性。
+即使 raster backward 的局部梯度很接近，也不能据此宣称原始四元数梯度必然满足同一相对误差门槛。
+
+\section{从三维椭球推导屏幕椭圆}
+
+\subsection{相机变换与透视 Jacobian}
+
+设世界到相机的变换为
+\begin{equation}
+ \mathbf x_c=W\mathbf x_w+\mathbf t,\qquad
+ \boldsymbol\mu_c=W\boldsymbol\mu+\mathbf t=(X,Y,Z)^T.
+\end{equation}
+这里 $W$ 只是 $3\times3$ 的旋转部分，不是完整的 $4\times4$ 齐次矩阵。
+平移改变中心，但不会改变协方差，因此
+$\Sigma_c=W\Sigma W^T$。
+对于无畸变针孔相机、相机前方 $Z>0$，屏幕投影为
+\begin{equation}
+ \pi(X,Y,Z)=
+ \begin{bmatrix}f_xX/Z+c_x\\f_yY/Z+c_y\end{bmatrix},\qquad
+ J=\left.\frac{\partial\pi}{\partial\mathbf x_c}\right|_{\boldsymbol\mu_c}
+ =\begin{bmatrix}
+ f_x/Z&0&-f_xX/Z^2\\
+ 0&f_y/Z&-f_yY/Z^2
+ \end{bmatrix}.
+\end{equation}
+例如 $\partial(f_xX/Z)/\partial Z=-f_xX/Z^2$：
+深度变化不仅改变物体大小，也影响偏离光轴的点的屏幕位置。
+仅保留 $f_x/Z,f_y/Z$ 两项会漏掉这个耦合。
+
+在中心附近写 $\mathbf x_c=\boldsymbol\mu_c+\delta\mathbf x$，
+一阶近似给出
+\begin{equation}
+ \pi(\boldsymbol\mu_c+\delta\mathbf x)
+ \approx\pi(\boldsymbol\mu_c)+J\delta\mathbf x.
+\end{equation}
+利用 $\operatorname{Cov}(A\mathbf x)=A\operatorname{Cov}(\mathbf x)A^T$，得到
+\begin{equation}
+ \boxed{\Sigma_{2D}=JW\Sigma W^TJ^T+\epsilon I_2.}
+\end{equation}
+$\epsilon$ 的单位是像素平方，用于屏幕低通或数值正则化。
+它不是所有路径通用的魔法常数；一些抗锯齿路径还会补偿 opacity，不能只加宽协方差就宣称实现了完整抗锯齿。
+这个推导只适用于局部线性化，近相机平面、很大的 Gaussian、鱼眼或有畸变的相机需要额外处理。
+投影裁剪与视场边缘的 Jacobian 限制也属于具体实现，而不是以上理想公式本身。
+
+\subsection{求逆以后为什么叫 conic？}
+
+写成
+\begin{equation}
+ \Sigma_{2D}=\begin{bmatrix}A&B\\B&D\end{bmatrix},\quad
+ \Delta=AD-B^2>0,\quad
+ \Lambda=\Sigma_{2D}^{-1}
+ =\frac{1}{\Delta}\begin{bmatrix}D&-B\\-B&A\end{bmatrix}
+ =\begin{bmatrix}a&b\\b&c\end{bmatrix}.
+\end{equation}
+实现只需存储 $a,b,c$ 三个独立标量。
+令像素中心 $\mathbf p=(u+0.5,v+0.5)^T$，
+屏幕 Gaussian 中心为 $\mathbf m=\pi(\boldsymbol\mu_c)$，偏移定义为
+$\mathbf d=\mathbf m-\mathbf p$。
+它的二次型、半二次型和未截断 alpha 分别为
+\begin{align}
+ Q(\mathbf d)&=\mathbf d^T\Lambda\mathbf d
+             =a d_x^2+2b d_xd_y+c d_y^2,\\
+ h(\mathbf d)&=\tfrac12Q(\mathbf d),\\
+ \widetilde\alpha&=o\exp(-h).
+\end{align}
+有的源码把 $h$ 命名为 sigma，但它既不是尺度 $s$，也不是协方差 $\Sigma$。
+式中的交叉项是 $2b d_xd_y$；写成 $h$ 时才变成 $b d_xd_y$。
+等值线 $Q=r^2$ 是二次曲线，也就是 conic 在这里的来源。
+
+若 $\Sigma_{2D}$ 的特征值为 $\lambda_1,\lambda_2$，
+该等值椭圆沿特征向量的半轴长度为 $r\sqrt{\lambda_1}$ 和 $r\sqrt{\lambda_2}$。
+所以大协方差意味着宽覆盖、小逆协方差，而不是相反。
+固定 $3\sigma$ 外接圆易理解，但会把很多实际没有贡献的 tile 包含进来。
+
+\subsection{阈值如何变成 tile culling 条件？}
+
+令保留阈值为 $\tau$。当 $o\geq\tau$ 时，
+\begin{equation}
+ o\exp(-Q/2)\geq\tau
+ \quad\Longleftrightarrow\quad
+ Q\leq2\log(o/\tau).
+\end{equation}
+若 $o<\tau$，即使在中心也达不到阈值；若 $o=\tau$，理论上只剩中心。
+对于 $\tau=1/255$，右端就是 $2\log(255o)$。
+这给出了随 opacity 改变的有效椭圆。
+要剔除整个 tile，必须证明 tile 内的最小 $Q$ 仍超过该界；
+只检查 tile 中心或四个角都不充分，因为椭圆可能穿过边缘或覆盖内部。
+保守包围盒容易安全实现，但不等于精确椭圆与矩形相交测试。
+
+投影之后通常先数每个 Gaussian 覆盖多少 tile，通过前缀和分配输出位置，
+再生成 Gaussian--tile 相交记录，按 tile 和深度排序。
+一个 Gaussian 可能对应多条记录，所以相交数不是 Gaussian 数，也不是最终有效像素贡献数。
+本文比较的 gsplat 已经具有 compact-box/sweep 路径，不能把它当成此次新移植的加速收益。
+
+\section{Alpha compositing：颜色权重来自哪里？}
+
+\subsection{前向递推与背景}
+
+对某像素按从近到远的顺序排列实际参与累积的 Gaussian，令 $T_0=1$、
+$\mathbf C_0=\mathbf0$。这里 $T$ 是透射率，即尚未被遮挡的比例。
+\begin{align}
+ w_k&=T_{k-1}\alpha_k,\\
+ \mathbf C_k&=\mathbf C_{k-1}+w_k\mathbf c_k,\\
+ T_k&=T_{k-1}(1-\alpha_k).
+\end{align}
+展开后有
+\begin{equation}
+ T_n=\prod_{k=1}^n(1-\alpha_k),\qquad
+ \mathbf C_{\mathrm{out}}=
+ \sum_{k=1}^n\left[\alpha_k\prod_{j<k}(1-\alpha_j)\right]\mathbf c_k
+ +T_n\mathbf c_{\mathrm{bg}}.
+\end{equation}
+累积 alpha 为 $A_{\mathrm{out}}=1-T_n$。
+权重之和 $\sum_k w_k=1-T_n$，所以连同背景权重恰好为一。
+这些公式不要求颜色在 $[0,1]$ 中，但若颜色是常规 RGB，就具有直观的混色含义。
+
+交换前后顺序一般会改变颜色，因为后面的颜色要乘上前面留下的透射率。
+单个像素上的前后递推因此有依赖；大量像素之间却能并行。
+这正是 tile rasterization 通常让线程对应像素、在线程内部遍历 Gaussian 列表的原因。
+基于中心深度的排序是 3DGS 的近似处理，不是对所有相交椭球做精确的逐像素体排序。
+
+\subsection{阈值是渲染语义，不只是性能开关}
+
+本次对照路径包含 alpha 上限 $0.999$、低贡献阈值 $1/255$，以及
+$T\leq10^{-4}$ 的停止条件。需要区分三种操作：
+\begin{enumerate}
+ \item 将 $\widetilde\alpha$ 限制为 $\alpha=\min(0.999,\widetilde\alpha)$；
+ \item 若 $h<0$ 或 alpha 太小，跳过这个候选；
+ \item 先算 $T_{\mathrm{next}}=T(1-\alpha)$，若满足终止条件则退出。
+\end{enumerate}
+在本文对照的 exclusive termination 中，第 3 步触发退出的那个 Gaussian
+也不累积颜色，$T$ 保持在上一次已接受贡献之后的值。
+若改为先累积再退出，就变成 inclusive termination，不能声称与原实现逐 bit 等价。
+理论上正定 conic 保证 $h\geq0$；源码检查负值是防御性处理，不应把负值当作正常 Gaussian 的特征。
+
+阈值还意味着函数分段光滑。一般 backward 对当前选中的排序、贡献集合及分支求导，
+不对离散排序或“刚好跨过阈值”这一事件求通常意义的连续导数。
+以下 VJP 推导针对已接受、未饱和且不在阈值边界上的贡献。
+
+\subsection{手算一个有背景的例子}
+
+取
+\begin{equation}
+ \Sigma_{2D}=\begin{bmatrix}4&0\\0&1\end{bmatrix},\quad
+ \Lambda=\begin{bmatrix}1/4&0\\0&1\end{bmatrix},\quad
+ \mathbf d=(2,0)^T,\quad o_1=0.8.
+\end{equation}
+于是 $Q=1$、$h=0.5$，第一层 alpha 为
+\begin{equation}
+ \alpha_1=0.8\exp(-0.5)\approx0.485224528.
+\end{equation}
+令第一层为红色 $(1,0,0)$，第二层为绿色 $(0,1,0)$，
+第二层在该像素的 alpha 为 $\alpha_2=0.25$，背景为蓝色 $(0,0,1)$。
+逐步计算得到
+\begin{align}
+ w_1&=0.485224528, &T_1&=0.514775472,\\
+ w_2&=T_1\times0.25=0.128693868,
+ &T_2&=T_1\times0.75=0.386081604,\\
+ \mathbf C_{\mathrm{out}}&=(0.485224528,\;0.128693868,\;0.386081604),
+ &A_{\mathrm{out}}&=0.613918396.
+\end{align}
+RGB 三个分量在此恰好是红、绿、蓝三层的权重，和为一。
+若把第二层绿色放到前面，红色权重变为 $0.75\alpha_1$，绿色权重变为 $0.25$；
+总透射率不变，但颜色改变。这是遮挡顺序不能随意重排的最小示例。
+
+\section{Reverse compositing 与 VJP：为什么反向要倒着走？}
+
+\subsection{VJP 不是构造一个巨大 Jacobian}
+
+若 $\mathbf y=f(\mathbf x)$，损失传来的上游梯度为
+$\overline{\mathbf y}=\partial L/\partial\mathbf y$，
+反向需要的是 $\overline{\mathbf x}=J_f^T\overline{\mathbf y}$。
+这称为 vector--Jacobian product 的反向传播形式；
+实际计算不必显式保存图像所有像素对全部 Gaussian 参数的巨型 Jacobian。
+一个线程先算本像素的局部贡献，再将共享 Gaussian 的梯度归并即可。
+
+用上横线表示伴随量。忽略背景时，一层状态更新的局部反向为
+\begin{align}
+ \overline{\mathbf c}_k
+ &=T_{k-1}\alpha_k\overline{\mathbf C}_k,\\
+ \overline\alpha_k
+ &=T_{k-1}\left(
+   \overline{\mathbf C}_k\mathbin{\cdot}\mathbf c_k-\overline T_k\right),\\
+ \overline T_{k-1}
+ &=\alpha_k\left(\overline{\mathbf C}_k\mathbin{\cdot}\mathbf c_k\right)
+ +(1-\alpha_k)\overline T_k,\\
+ \overline{\mathbf C}_{k-1}&=\overline{\mathbf C}_k.
+\end{align}
+这些等式直接来自对 $\mathbf C_k=\mathbf C_{k-1}+T_{k-1}\alpha_k\mathbf c_k$
+和 $T_k=T_{k-1}(1-\alpha_k)$ 分别求导。
+opacity 增大时，一方面增加本层颜色，另一方面压暗全部后景；
+$\overline\alpha_k$ 中的两个项正好对应这两种效果。
+
+若最终输出含背景和累积 alpha，初始化应为
+\begin{equation}
+ \overline{\mathbf C}_n=\overline{\mathbf C}_{\mathrm{out}},\qquad
+ \overline T_n=
+ \overline{\mathbf C}_{\mathrm{out}}\mathbin{\cdot}\mathbf c_{\mathrm{bg}}
+ -\overline A_{\mathrm{out}},
+\end{equation}
+这里假定没有额外直接输出 $T_n$；若有，还需加上它的上游梯度。
+不能把背景项漏掉，否则 opacity 梯度即使在颜色图像看似正常时也可能错误。
+期望深度一类含归一化的输出还要先对归一化做 VJP，不能直接套用 RGB 的上游梯度。
+
+\subsection{恢复透射率与尾部裁剪}
+
+从最后一个已接受贡献开始，有
+\begin{equation}
+ T_{k-1}=\frac{T_k}{1-\alpha_k}.
+\end{equation}
+因此可以保存最终透射率和最后贡献索引，再反向重算 alpha，
+而不为每个像素保存完整的所有中间状态。
+alpha cap 保证分母非零，但除法恢复并不等于撤销一次浮点乘法，仍会有舍入误差。
+被 cutoff 跳过的候选不能误当成已接受贡献来恢复 $T$；
+exclusive termination 中触发退出的候选同样不在这个递推序列内。
+
+同一 tile 的不同像素可能在不同深度停止。
+若每个像素保存最后实际贡献的相交索引 $\ell_p$，
+则 tile 的共同反向上界可以取 $\max_p\ell_p$。
+其后的候选对 tile 中所有像素都没有参与前向，反向便可一起省略。
+这就是完全遮挡尾部裁剪的数学依据：它删除的是已证明无贡献的公共尾部，
+并不意味着可以任意删除中间候选、重排 ID，或更改停止阈值。
+
+\subsection{从 alpha 梯度回到 conic 和中心}
+
+在未触及 cap 的光滑区域，设 $\overline\alpha=\partial L/\partial\alpha$，则
+\begin{align}
+ \overline o&=\overline\alpha\exp(-h),\\
+ \overline h&=-\overline\alpha\alpha,\\
+ \overline a&=\tfrac12\overline h\,d_x^2,\qquad
+ \overline b=\overline h\,d_xd_y,\qquad
+ \overline c=\tfrac12\overline h\,d_y^2,\\
+ \overline{\mathbf m}&=\overline h\,\Lambda\mathbf d.
+\end{align}
+最后一式使用了本章的 $\mathbf d=\mathbf m-\mathbf p$；若定义反过来，中间符号也要跟着改变。
+这里 $b$ 表示对称矩阵两个位置共享的一个存储参数，所以其导数已经包含两处贡献。
+如果将矩阵每个元素视为独立变量，不能再把这个打包梯度原样塞入两个非对角位置。
+
+数学上的 $\min$ 在上限以上导数为零，在拐点没有唯一通常导数。
+实际 CUDA backward 是否严格使用该分段导数、采用何种边界约定，应以待比较版本为准；
+不能仅从前向公式推定所有历史实现的梯度规则。
+本节公式只用于未饱和贡献，不能替代对 cap、cutoff 和终止分支的源码回归测试。
+
+协方差求逆的微分满足
+\begin{equation}
+ d\Lambda=-\Lambda\,(d\Sigma_{2D})\,\Lambda.
+\end{equation}
+其后还要反传到 $J,W,\Sigma$，再到尺度和四元数。
+由于 $J$ 依赖中心位置，三维中心梯度不仅有屏幕中心那一条路径，
+还有屏幕协方差随投影 Jacobian 改变的路径。
+这说明“screen-space gradient 对齐”是重要的局部证据，但不是完整参数梯度验证的替代品。
+
+\subsection{用手算例子检验反向直觉}
+
+仍取前述红、绿、蓝例子，令损失只是最终绿色分量 $L=C_{\mathrm{out},G}$。
+于是 $L=(1-\alpha_1)\alpha_2$，直接得到
+\begin{equation}
+ \frac{\partial L}{\partial\alpha_1}=-\alpha_2=-0.25,
+ \qquad
+ \frac{\partial L}{\partial\alpha_2}=1-\alpha_1\approx0.514775472.
+\end{equation}
+第一层红色自身没有绿色，增加其 opacity 却会挡住后面的绿色，故梯度为负。
+若只写“alpha 增大则本层贡献增大”，而没有反向的后景项，就无法得到这个负号。
+
+\section{可运行的最小 Python 数学实验}
+
+以下代码只依赖 Python 标准库，不需要 PyTorch、NumPy 或 GPU。
+它演示未触发 cap、cutoff 和 early termination 的两层情形，
+不是实际 gsplat 的浮点精度或性能基准。可将代码复制到脚本中运行；
+在本仓库运行时应使用已有的 \texttt{@venv/bin/python}，没有该环境时不要为本章安装依赖。
+
+\begin{lstlisting}[language=Python,numbers=left]
+import math
+
+def gaussian_alpha(dx, dy, a, b, c, opacity):
+    h = 0.5 * (a * dx * dx + 2 * b * dx * dy + c * dy * dy)
+    return opacity * math.exp(-h)
+
+a1 = gaussian_alpha(2.0, 0.0, 0.25, 0.0, 1.0, 0.8)
+a2 = 0.25
+colors = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)]
+background = (0.0, 0.0, 1.0)
+C, T = [0.0, 0.0, 0.0], 1.0
+for alpha, color in zip((a1, a2), colors):
+    weight = T * alpha
+    C = [x + weight * y for x, y in zip(C, color)]
+    T *= 1.0 - alpha
+C = [x + T * y for x, y in zip(C, background)]
+print("alpha1, RGB, A:", a1, C, 1.0 - T)
+
+def green_loss(alpha1):
+    return (1.0 - alpha1) * a2
+
+eps = 1e-6
+finite_diff = (green_loss(a1 + eps) - green_loss(a1 - eps)) / (2 * eps)
+analytic = -a2
+assert math.isclose(sum(C), 1.0, abs_tol=1e-12)
+assert math.isclose(finite_diff, analytic, rel_tol=1e-8, abs_tol=1e-9)
+print("d_green/d_alpha1:", analytic, finite_diff)
+\end{lstlisting}
+
+逐行理解如下，行号包括空行：
+\begin{description}
+ \item[第 1 行] 导入指数函数；没有调用随机数或外部渲染库。
+ \item[第 3 行] 函数参数是像素偏移、打包 conic 和已激活 opacity。
+ \item[第 4 行] 计算 $h=Q/2$；注意交叉项中的二倍因子。
+ \item[第 5 行] 返回未截断 alpha，不含概率密度的归一化常数。
+ \item[第 7 行] 代入手算例子的第一层 Gaussian。
+ \item[第 8 行] 直接指定第二层在这个像素的 alpha，不假装重新构造三维场景。
+ \item[第 9--10 行] 分别定义前后层 RGB 和背景 RGB。
+ \item[第 11 行] 初始化累计颜色与透射率，不能把初始 $T$ 写成零。
+ \item[第 12 行] 按固定从近到远顺序遍历两层。
+ \item[第 13 行] 用更新前的 $T$ 计算当前层权重。
+ \item[第 14 行] 对三个颜色通道累加本层贡献。
+ \item[第 15 行] 当前层累加后，更新留给后景的透射率。
+ \item[第 16 行] 将剩余透射率分配给背景。
+ \item[第 17 行] 打印第一层 alpha、最终颜色和总 alpha，可与手算值对照。
+ \item[第 19--20 行] 把绿色通道写成独立的标量损失函数。
+ \item[第 22 行] 指定双精度中心差分步长；不是 CUDA float32 的推荐通用步长。
+ \item[第 23 行] 用两次函数求值近似 $\partial L/\partial\alpha_1$。
+ \item[第 24 行] 写出解析梯度，它是负数。
+ \item[第 25 行] 检查本例三个纯色权重之和为一；一般 RGB 不满足这个断言。
+ \item[第 26 行] 检查有限差分与解析导数相符。
+ \item[第 27 行] 打印二者，预期都接近 $-0.25$。
+\end{description}
+空行只是区分计算阶段。该实验验证了公式和符号，不验证并行 atomic 顺序、
+阈值边界、相机模型、SH 或真实 CUDA backward 的正确性。
+
+\section{把数学放到 GPU：线程、存储和同步}
+
+\subsection{Block、warp 和 lane 的层级}
+
+一次 kernel launch 产生一个 grid，grid 包含多个 thread block。
+一个 block 被安排在某个流式多处理器 SM 上执行；一个 SM 可以同时驻留多个 block。
+CUDA 程序不能假定不同 block 的执行顺序，也不能用普通 block barrier 同步整个 grid。
+
+NVIDIA GPU 的 warp 通常包含 32 个线程，lane 是线程在 warp 内的编号 $0,\ldots,31$。
+二维 block 的线性编号是
+\begin{equation}
+ t=\texttt{threadIdx.x}
+   +\texttt{blockDim.x}\,\texttt{threadIdx.y},\qquad
+ \text{lane}=t\bmod32.
+\end{equation}
+因此 $16\times16$ 的 block 有 256 个线程，即 8 个完整 warp；
+$4\times4$ 只有 16 个线程，是一个不完整 warp。
+这不是纯粹的性能细节：使用 full-mask shuffle 的优化若假定所有 32 个 lane 都存在，
+就不能无条件覆盖后者。本文实验最终为非整 warp 大小的 block 保留原 reduction 回退路径。
+
+典型 tile kernel 让一个 block 处理一个 tile，每线程负责一个像素。
+这里的“负责”是逻辑映射，不代表像素一定有贡献，也不代表每个 lane 都做一样多的有效计算。
+边缘 tile 中的越界像素、提前被遮挡的像素仍可能需要参与 block 级同步。
+
+\subsection{寄存器、shared memory、L2 和显存}
+
+\begin{description}
+ \item[寄存器] 保存线程私有的 $T$、颜色、偏移和梯度临时量。
+ 访问便宜，但数量有限。每线程寄存器越多，可能允许同时驻留的 warp 越少；
+ 编译器 spill 到 local memory 后，还会产生经过缓存的设备内存访问。
+ 因此“把所有数据都提前读进来”未必更快。
+ \item[Shared memory] block 内共享、显式管理的片上存储。
+ 多个像素会读取同一批 Gaussian，可协作加载后复用，减少重复全局读取。
+ 同步、bank conflict 和 shared 容量也有成本，使用 shared 并不自动带来加速。
+ \item[L2 cache] GPU 上多个 SM 共享的缓存层。
+ 它能复用 Gaussian 属性、相交表和部分梯度访问，但不能代替程序所需的同步。
+ 是否命中由工作集和访问顺序决定，不由“这个数组常被访问”直接保证。
+ \item[显存] 保存全部参数、相交记录、输出和梯度，容量大但访问延迟与带宽成本高。
+ 相邻 lane 读取相邻地址通常更容易形成合并访问。
+ 反向随机写回、重复 ID 和大相交表则可能增加流量或争用。
+\end{description}
+
+RTX 4090 属于 Ada 架构、计算能力 8.9，具有 128 个 SM 和 72 MB L2。
+其显存为 24 GB，标称显存带宽约为 $1008$ GB/s；实际可达带宽取决于访问模式。
+以本次 $20{,}789{,}814$ 个 Gaussian 为例，仅每个 Gaussian 一个 float32 标量就约占
+$83.2$ MB，已经大于这块 GPU 的 L2。
+这不等于每次访问都会 miss：可见子集、tile 内复用和相机视角仍然很重要。
+但它说明不能把整场景参数常驻 L2 当作默认前提，也不能直接复制 A100 的性能结论。
+
+\subsection{为什么 backward 需要 atomic add？}
+
+前向每个像素通常只写自己的输出，不存在多个线程争写同一个颜色位置的问题。
+反向则不同：一个 Gaussian 影响很多像素，多个像素线程会同时贡献
+$\overline{\mathbf m}_i,\overline\Lambda_i,\overline o_i,\overline{\mathbf c}_i$。
+普通的“读取、相加、写回”会丢失并发更新，需要 atomic add 或其他正确的归并机制。
+
+若同一个 warp 中的 lane 当前处理同一个 Gaussian，可以先做 warp reduction，
+再由少数 lane 发出 atomic，将最多 32 份更新压缩成较少的更新。
+关键前提是归并键确实相同；任意 32 个线程的梯度不能因为相邻就直接相加。
+reduce-scatter 进一步把不同梯度分量的最终和分散到不同 lane，
+避免全部分量由 lane 0 串行完成。
+它改变的是归并和发射方式，不是梯度的数学定义。
+
+atomic 保证单次更新不会互相覆盖，但通常不保证来自不同 warp 的加法顺序。
+float32 不满足实数的结合律：
+\begin{equation}
+ \operatorname{fl}(\operatorname{fl}(a+b)+c)
+ \neq\operatorname{fl}(a+\operatorname{fl}(b+c)).
+\end{equation}
+因此减少 atomic 或改 reduction 树，即使前向完全不变，也可能改变梯度的末位。
+不能把所有误差都归因于 atomic 噪声；仍要分别排除漏梯度、错误 mask 和越界。
+本次结果中，单次 full-path quaternion 相对 L2 约 $1.63\times10^{-4}$，
+没有通过严格 $10^{-4}$ 门槛；重复平均的结果更接近，不能抹去这条限制。
+
+\section{CUDA 教学伪代码：协作加载与像素递推}
+
+下面是\textbf{概念 CUDA 伪代码，不可直接编译，也不是 gsplat 源码替代品}。
+假定一维 block 的线程数为 \texttt{B}，每个 tile 有 \texttt{B} 个像素，
+每批也最多加载 \texttt{B} 个候选。
+\texttt{G}、\texttt{Candidate}、tile 范围及颜色运算都是解释用抽象。
+所有 Gaussian 属性均假定有限；为突出同步和 compositing，没有展开排序及反向。
+
+\begin{lstlisting}[language=C++,numbers=left]
+__shared__ Candidate batch[B];
+int t = threadIdx.x;
+Pixel p = pixel_for(blockIdx.x, t);
+bool inside = pixel_inside_image(p);
+bool done = !inside;
+float T = 1.0f;
+Color C = zero_color();
+for (int base = begin; base < end; base += B) {
+    int count = min(B, end - base);
+    if (t < count) batch[t] = G[sorted_ids[base + t]];
+    __syncthreads();
+    if (!done) {
+        for (int j = 0; j < count; ++j) {
+            Candidate g = batch[j];
+            Vec2 d = g.mean - pixel_center(p);
+            float h = 0.5f * (g.a*d.x*d.x + g.c*d.y*d.y)
+                      + g.b*d.x*d.y;
+            float alpha = min(0.999f, g.opacity * expf(-h));
+            if (h < 0.0f || alpha < 1.0f/255.0f) continue;
+            float next_T = T * (1.0f - alpha);
+            if (next_T <= 1e-4f) { done = true; break; }
+            C += (T * alpha) * g.color;
+            T = next_T;
+        }
+    }
+    __syncthreads();
+    if (__syncthreads_count(!done) == 0) break;
+}
+if (inside) store(p, C + T * background, 1.0f - T);
+\end{lstlisting}
+
+逐行解释：
+\begin{description}
+ \item[第 1 行] 为整个 block 声明共享候选缓冲，不是每线程一份。
+ \item[第 2 行] 取得一维 block 中的线程编号，二维情形需先线性化。
+ \item[第 3 行] 将 block 和线程映射到 tile 内像素。
+ \item[第 4 行] 判断边缘 tile 的像素是否位于图像内。
+ \item[第 5 行] 越界线程不参与像素数学，但稍后仍参与协作和同步。
+ \item[第 6--7 行] 在寄存器中初始化透射率和累计颜色。
+ \item[第 8 行] 分批遍历已经按深度排序的相交记录范围。
+ \item[第 9 行] 最后一批可能不足一个 block。
+ \item[第 10 行] 各线程各加载一个候选；即使像素已经 done，线程仍可承担加载。
+ \item[第 11 行] 等全部共享写入完成后才能读取，所有线程都必须到达。
+ \item[第 12 行] 已终止的像素跳过后续数学，而不是从 kernel 提前返回。
+ \item[第 13 行] 每个活跃像素按相同候选顺序处理当前批。
+ \item[第 14 行] 读取共享属性；是否被编译器放进寄存器取决于实际代码和编译结果。
+ \item[第 15 行] 按前文定义计算中心减像素中心的偏移。
+ \item[第 16--17 行] 计算半二次型，交叉项在此只乘一次 $b$。
+ \item[第 18 行] 计算并限制 alpha；这里的 \texttt{expf} 不承诺与源码近似指令逐 bit 相同。
+ \item[第 19 行] 丢弃无效或过小贡献；这是可能出现 warp 分歧的位置。
+ \item[第 20 行] 预计算若接受当前层后的透射率。
+ \item[第 21 行] 保留 exclusive termination：当前候选不进入颜色累积。
+ \item[第 22 行] 使用旧 $T$ 计算颜色权重。
+ \item[第 23 行] 仅在该贡献被接受后更新 $T$。
+ \item[第 24--25 行] 结束候选循环和活跃像素分支，重新汇合到公共同步位置。
+ \item[第 26 行] 等所有线程读完共享缓冲，防止下一批覆盖尚在使用的数据。
+ \item[第 27 行] 全 block 共同判断是否都已结束；此 collective 不能只让活跃线程调用。
+ \item[第 28 行] 当前批结束；若还有活跃像素则协作加载下一批。
+ \item[第 29 行] 仅对图像内像素写回颜色及总 alpha，并补上背景。
+\end{description}
+
+这个框架故意保留两处清晰的 barrier，便于检查生命周期，而不是追求最少同步次数。
+实际 kernel 可能采用不同批大小、向量化属性、异步加载和专门的 warp primitive。
+优化前必须先说明候选由谁加载、何时可读、何时可以覆盖；
+仅仅把 \texttt{continue} 改成乘零，不会自动满足这些契约。
+
+\section{SIMT 分歧：少一个分支为什么不一定更快？}
+
+SIMT 让一个 warp 的多个 lane 执行同一条指令流，但每个 lane 有自己的数据。
+如果一部分 lane 进入分支、另一部分不进入，硬件可能用不同执行掩码先后执行路径。
+这不等于启动两组新线程；代价主要是部分 lane 暂时不能有效利用指令槽。
+如果整个 warp 都跳过一大段昂贵计算，分支反而很有价值。
+
+对于 \texttt{alpha < cutoff}，可以设想把无效 lane 的 alpha 置零，统一继续计算。
+这可能降低控制流开销，却也可能执行原本能跳过的指数、加载和梯度计算，
+增加寄存器活跃区间，并让更多无效值进入计算。
+特别是 IEEE 浮点中 $0\times\infty$ 和 $0\times\mathrm{NaN}$ 都不是安全的零。
+所以“数学上乘零无贡献”不足以证明 branchless backward 安全。
+
+本次保留的是受限的、安全的窄通道 alpha predication：
+无效或相应饱和状态的 lane 仍需按实现规则阻止危险的 geometry、opacity、absgrad 和颜色缓冲更新。
+这与“所有分支全部删除”不是一回事。
+也不能只看 CUDA 源码判断最终有没有分支；编译器可能将短条件转换为 predication。
+真实性能应结合生成代码、活跃 lane 比例和 profiler，而不是以源文件中的 if 数量衡量。
+
+\section{如何读懂 RTX 4090 上的计时：roofline 与 Amdahl}
+
+\subsection{Roofline 是上界模型，不是自动诊断}
+
+设某段计算完成 $F$ 次浮点运算，实际从所研究存储层传输 $M$ 字节，
+算术强度定义为 $I=F/M$。
+最简单的 roofline 给出吞吐量上界
+\begin{equation}
+ P\leq\min(P_{\mathrm{peak}},B_{\mathrm{mem}}I),
+ \qquad
+ t\gtrsim\max\left(\frac{F}{P_{\mathrm{peak}}},
+                       \frac{M}{B_{\mathrm{mem}}}\right).
+\end{equation}
+其含义是：运算量很少而搬运量很大时，单纯减少几次乘加不一定明显加速；
+反过来，如果已经受计算吞吐限制，减少显存字节也未必立即见效。
+使用显存带宽时，$M$ 应是相应层级的实际流量，而不是简单把源代码 load 次数乘以四。
+L2 和 shared 复用会改变它，多级存储可以建立各自的 roofline。
+
+例如一次简化计算若做 32 FLOP、产生 32 字节显存流量，则 $I=1$ FLOP/byte。
+使用约 $1008$ GB/s 的理论带宽，其带宽上界约为 $1.008$ TFLOP/s，
+远低于 RTX 4090 约 $82.6$ TFLOP/s 的标称 FP32 峰值。
+这只是\emph{假设流量}下的例子，不是对本次 kernel 的实测分类。
+FLOP 统计通常把一个 FMA 计作两次运算；指数、排序、原子操作和同步不能简单按相同成本折算。
+
+实际 raster backward 还可能受同地址 atomic 争用、指令延迟、寄存器压力、
+活跃 warp 数不足或 warp 分歧限制。
+因此 warp reduce-scatter 的收益不能只用“减少了多少 FLOP”解释。
+需要 profiler 区分 DRAM/L2 流量、atomic 活动、stall、occupancy 和指令发射瓶颈。
+高 occupancy 是隐藏延迟的手段，而不是必须最大化的最终指标。
+
+\subsection{Amdahl：raster 加速不能直接当成完整渲染加速}
+
+设完整流程中可优化部分耗时占比为 $f$，该部分加速 $s$ 倍，其余成本不变，则
+\begin{equation}
+ S_{\mathrm{full}}=
+ \frac{1}{(1-f)+f/s}.
+\end{equation}
+本次 RTX 4090、$1280\times720$、全量约 2080 万 Gaussian 的 RGB camera 0 记录中，
+raster 为 $23.319\to17.444$ ms，即约 $1.337$ 倍；
+完整路径为 $69.148\to62.851$ ms，即约 $1.100$ 倍。
+若粗略取 $f=23.319/69.148\approx0.337$，
+Amdahl 预测完整耗时约为
+\begin{equation}
+ 69.148-23.319+17.444=63.273\ \mathrm{ms},
+\end{equation}
+相应加速约 $1.093$ 倍，量级与实测一致。
+两者无需严格相等：独立计时存在波动，缓存、其他阶段和测量边界也可能变化。
+不能把不同测量中的中位数强行当成同一次运行的可加分项。
+
+camera 2552 的 raster 记录为 $3.269\to1.984$ ms，约 $1.648$ 倍，
+完整路径却只有 $40.360\to39.728$ ms，约 $1.016$ 倍。
+这不是矛盾，而是 raster 已经只占很小一部分；
+投影、相交生成、排序和其他后向阶段仍然存在。
+即使把占比 $f$ 的部分彻底变成零成本，完整加速上限也只有 $1/(1-f)$。
+
+\subsection{异步执行与可比较的实验条件}
+
+CUDA launch 对主机通常是异步的，用普通 CPU 时钟只包围一次 launch，
+很可能测到的是提交时间而非 GPU 完成时间。
+常见方法是在同一 stream 上放置 CUDA events，等待结束 event 后读取间隔。
+若使用 CPU 墙钟，则必须在合适边界同步，并明确是否把同步和主机工作计入。
+跨 stream 的依赖需要显式事件或其他同步，不能默认事件覆盖所有异步工作。
+
+对本次比较，至少要固定以下条件：
+\begin{enumerate}
+ \item 相机、分辨率、点数、SH 阶数和相交生成方式一致；
+ \item RGB、RGB+ED、absgrad、packed/unpacked 等路径不能混作同一个指标；
+ \item 预热后重复测量，避免将 JIT 编译、扩展加载和首次内存分配当成稳定 kernel 时间；
+ \item 说明 raster-only 与 full-render 的边界，尤其是否包含 backward 和梯度清零；
+ \item 固定二进制与版本，并记录 GPU 状态，尽量控制其他 GPU 负载、温度和频率漂移。
+\end{enumerate}
+性能和正确性应分开检查：图像/alpha 一致、局部 screen-space VJP 一致、
+原始参数 VJP 一致，以及训练长期行为一致，是不同层级的结论。
+sanitize 检查也有独立价值：没有图像差异不代表没有越界或错误同步。
+
+\section{把本章公式映射回优化问题}
+
+现在可以沿着同一条逻辑链阅读博客和 gsplat 对照：
+\begin{enumerate}
+ \item 用 log-scale、四元数构造三维形状，确认传给接口的是原始参数还是激活值。
+ \item 用局部投影得到屏幕 conic，再利用 $Q$ 与 opacity 阈值估计覆盖范围。
+ \item 将覆盖关系转换成有序相交列表；这一阶段决定后续要处理多少候选。
+ \item 像素线程按 $T\alpha$ 递推，严格保留阈值和 exclusive termination 的语义。
+ \item 反向从最后有效贡献恢复透射率，用 VJP 将颜色损失转成 Gaussian 属性梯度。
+ \item 在 lane、warp 与 block 层面安全归并，减少无用尾部遍历和有争用的原子更新。
+ \item 最后用完整流水线计时和分层误差验证，判断收益是否足以覆盖复杂度。
+\end{enumerate}
+
+本次真正保留的 backward 优化是 warp reduce-scatter、完全遮挡尾部裁剪，
+以及安全的窄通道 alpha predication。
+这些操作分别作用于\emph{归并方式}、\emph{候选遍历范围}和\emph{执行掩码}；
+并不更改 Gaussian 表示、投影方程或目标损失。
+但数学目标相同不等于执行细节天然等价：
+四元数约定、conic 非对角系数、浮点累加顺序、无效 lane 和同步边界，
+都必须纳入验证。
+理解这一点，才能把“少做一些工作”的优化直觉，变成在 RTX 4090 上可解释、可复核的工程结果。

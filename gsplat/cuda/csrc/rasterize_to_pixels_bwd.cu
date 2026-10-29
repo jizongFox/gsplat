@@ -1,6 +1,7 @@
 #include "bindings.h"
 #include "helpers.cuh"
 #include "types.cuh"
+#include "warp_reduce_scatter.cuh"
 #include <cooperative_groups.h>
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
@@ -89,9 +90,11 @@ __global__ void rasterize_to_pixels_bwd_kernel(
         (camera_id == C - 1) && (tile_id == tile_width * tile_height - 1)
             ? n_isects
             : tile_offsets[tile_id + 1];
+    // Tile-uniform exit, before any collectives or exclusive-end arithmetic.
+    if (range_start == range_end) {
+        return;
+    }
     const uint32_t block_size = block.size();
-    const uint32_t num_batches =
-        (range_end - range_start + block_size - 1) / block_size;
 
     extern __shared__ int s[];
     int32_t *id_batch = (int32_t *)s; // [block_size]
@@ -124,6 +127,24 @@ __global__ void rasterize_to_pixels_bwd_kernel(
     cg::thread_block_tile<32> warp = cg::tiled_partition<32>(block);
     const int32_t warp_bin_final =
         cg::reduce(warp, bin_final, cg::greater<int>());
+    // last_ids are absolute intersection positions. Trim the tile's fully
+    // occluded suffix before staging backwards, not only inside each warp's
+    // pixel loop. Keep the original positions/IDs and do not mutate binning
+    // buffers, which may be reused by other channel chunks.
+    if (tr == 0) {
+        id_batch[0] = range_start;
+    }
+    block.sync();
+    if (warp.thread_rank() == 0) {
+        atomicMax(id_batch, warp_bin_final);
+    }
+    block.sync();
+    const int64_t exclusive_end = static_cast<int64_t>(id_batch[0]) + 1;
+    range_end = static_cast<int32_t>(
+        exclusive_end < range_end ? exclusive_end : range_end
+    );
+    const uint32_t num_batches =
+        (range_end - range_start + block_size - 1) / block_size;
     for (uint32_t b = 0; b < num_batches; ++b) {
         // resync all threads before writing next batch of shared mem
         block.sync();
@@ -164,7 +185,7 @@ __global__ void rasterize_to_pixels_bwd_kernel(
             vec3<S> conic;
             S vis;
 
-            if (valid) {
+            if (valid || COLOR_DIM <= 4) {
                 conic = conic_batch[t];
                 vec3<S> xy_opac = xy_opacity_batch[t];
                 opac = xy_opac.z;
@@ -177,6 +198,11 @@ __global__ void rasterize_to_pixels_bwd_kernel(
                 if (sigma < 0.f || alpha < 1.f / 255.f) {
                     valid = false;
                 }
+                // Narrow-channel pixels stay converged through the recurrence.
+                // Misses use the identity transmittance update. Final gradient
+                // contributions and buffer updates must still be gated: zero
+                // factors alone do not suppress nonfinite operands.
+                alpha = valid ? alpha : 0.f;
             }
 
             // if all threads are inactive in this warp, skip this loop
@@ -189,7 +215,7 @@ __global__ void rasterize_to_pixels_bwd_kernel(
             vec2<S> v_xy_abs_local = {0.f, 0.f};
             S v_opacity_local = 0.f;
             // initialize everything to 0, only set if the lane is valid
-            if (valid) {
+            if (valid || COLOR_DIM <= 4) {
                 // compute the current T for this gaussian
                 S ra = 1.0f / (1.0f - alpha);
                 T *= ra;
@@ -197,7 +223,7 @@ __global__ void rasterize_to_pixels_bwd_kernel(
                 const S fac = alpha * T;
                 GSPLAT_PRAGMA_UNROLL
                 for (uint32_t k = 0; k < COLOR_DIM; ++k) {
-                    v_rgb_local[k] = fac * v_render_c[k];
+                    v_rgb_local[k] = valid ? fac * v_render_c[k] : 0.f;
                 }
                 // contribution from this pixel
                 S v_alpha = 0.f;
@@ -218,7 +244,10 @@ __global__ void rasterize_to_pixels_bwd_kernel(
                     v_alpha += -T_final * ra * accum;
                 }
 
-                if (opac * vis <= 0.999f) {
+                const bool differentiable = valid && opac * vis <= 0.999f;
+                // Keep initialized zeros when invalid or clamped, rather than
+                // multiplying zero by potentially overflowing geometry.
+                if (differentiable) {
                     const S v_sigma = -opac * vis * v_alpha;
                     v_conic_local = {
                         0.5f * v_sigma * delta.x * delta.x,
@@ -235,42 +264,102 @@ __global__ void rasterize_to_pixels_bwd_kernel(
                     v_opacity_local = vis * v_alpha;
                 }
 
-                GSPLAT_PRAGMA_UNROLL
-                for (uint32_t k = 0; k < COLOR_DIM; ++k) {
-                    buffer[k] += rgbs_batch[t * COLOR_DIM + k] * fac;
+                if (valid) {
+                    GSPLAT_PRAGMA_UNROLL
+                    for (uint32_t k = 0; k < COLOR_DIM; ++k) {
+                        buffer[k] += rgbs_batch[t * COLOR_DIM + k] * fac;
+                    }
                 }
             }
-            warpSum<COLOR_DIM, S>(v_rgb_local, warp);
-            warpSum<decltype(warp), S>(v_conic_local, warp);
-            warpSum<decltype(warp), S>(v_xy_local, warp);
-            if (v_means2d_abs != nullptr) {
-                warpSum<decltype(warp), S>(v_xy_abs_local, warp);
-            }
-            warpSum<decltype(warp), S>(v_opacity_local, warp);
-            if (warp.thread_rank() == 0) {
-                int32_t g = id_batch[t]; // flatten index in [C * N] or [nnz]
-                S *v_rgb_ptr = (S *)(v_colors) + COLOR_DIM * g;
-                GSPLAT_PRAGMA_UNROLL
-                for (uint32_t k = 0; k < COLOR_DIM; ++k) {
-                    gpuAtomicAdd(v_rgb_ptr + k, v_rgb_local[k]);
-                }
-
-                S *v_conic_ptr = (S *)(v_conics) + 3 * g;
-                gpuAtomicAdd(v_conic_ptr, v_conic_local.x);
-                gpuAtomicAdd(v_conic_ptr + 1, v_conic_local.y);
-                gpuAtomicAdd(v_conic_ptr + 2, v_conic_local.z);
-
-                S *v_xy_ptr = (S *)(v_means2d) + 2 * g;
-                gpuAtomicAdd(v_xy_ptr, v_xy_local.x);
-                gpuAtomicAdd(v_xy_ptr + 1, v_xy_local.y);
-
+            auto standard_reduce = [&]() {
+                warpSum<COLOR_DIM, S>(v_rgb_local, warp);
+                warpSum<decltype(warp), S>(v_conic_local, warp);
+                warpSum<decltype(warp), S>(v_xy_local, warp);
                 if (v_means2d_abs != nullptr) {
-                    S *v_xy_abs_ptr = (S *)(v_means2d_abs) + 2 * g;
-                    gpuAtomicAdd(v_xy_abs_ptr, v_xy_abs_local.x);
-                    gpuAtomicAdd(v_xy_abs_ptr + 1, v_xy_abs_local.y);
+                    warpSum<decltype(warp), S>(v_xy_abs_local, warp);
                 }
+                warpSum<decltype(warp), S>(v_opacity_local, warp);
+                if (warp.thread_rank() == 0) {
+                    int32_t g = id_batch[t]; // flatten index in [C * N] or [nnz]
+                    S *v_rgb_ptr = (S *)(v_colors) + COLOR_DIM * g;
+                    GSPLAT_PRAGMA_UNROLL
+                    for (uint32_t k = 0; k < COLOR_DIM; ++k) {
+                        gpuAtomicAdd(v_rgb_ptr + k, v_rgb_local[k]);
+                    }
 
-                gpuAtomicAdd(v_opacities + g, v_opacity_local);
+                    S *v_conic_ptr = (S *)(v_conics) + 3 * g;
+                    gpuAtomicAdd(v_conic_ptr, v_conic_local.x);
+                    gpuAtomicAdd(v_conic_ptr + 1, v_conic_local.y);
+                    gpuAtomicAdd(v_conic_ptr + 2, v_conic_local.z);
+
+                    S *v_xy_ptr = (S *)(v_means2d) + 2 * g;
+                    gpuAtomicAdd(v_xy_ptr, v_xy_local.x);
+                    gpuAtomicAdd(v_xy_ptr + 1, v_xy_local.y);
+
+                    if (v_means2d_abs != nullptr) {
+                        S *v_xy_abs_ptr = (S *)(v_means2d_abs) + 2 * g;
+                        gpuAtomicAdd(v_xy_abs_ptr, v_xy_abs_local.x);
+                        gpuAtomicAdd(v_xy_abs_ptr + 1, v_xy_abs_local.y);
+                    }
+
+                    gpuAtomicAdd(v_opacities + g, v_opacity_local);
+                }
+            };
+            if constexpr (COLOR_DIM <= 4) {
+                // Scatter requires all 32 lanes, including upper component
+                // owners. Use the baseline path for any partial-warp block.
+                if (block_size % 32 != 0) {
+                    standard_reduce();
+                    continue;
+                }
+                // RGB/depth have a narrow gradient vector: distribute its
+                // reduced components across lanes instead of reducing every
+                // component redundantly and serializing all atomics in lane 0.
+                // Packed gradient layout. Reuse these boundaries for both
+                // packing and writeback so component offsets have one owner.
+                constexpr int conic_begin = COLOR_DIM;
+                constexpr int mean_begin = conic_begin + 3;
+                constexpr int opacity_index = mean_begin + 2;
+                constexpr int abs_mean_begin = opacity_index + 1;
+                constexpr int gradient_count = abs_mean_begin + 2;
+                S values[gradient_count];
+                GSPLAT_PRAGMA_UNROLL
+                for (uint32_t k = 0; k < COLOR_DIM; ++k) {
+                    values[k] = v_rgb_local[k];
+                }
+                values[conic_begin] = v_conic_local.x;
+                values[conic_begin + 1] = v_conic_local.y;
+                values[conic_begin + 2] = v_conic_local.z;
+                values[mean_begin] = v_xy_local.x;
+                values[mean_begin + 1] = v_xy_local.y;
+                values[opacity_index] = v_opacity_local;
+                values[abs_mean_begin] = v_xy_abs_local.x;
+                values[abs_mean_begin + 1] = v_xy_abs_local.y;
+                const auto reduced = warp_reduce_scatter(values, warp);
+                if (reduced.owner) {
+                    const int component = reduced.component;
+                    int32_t g = id_batch[t];
+                    S *destination = nullptr;
+                    if (component < conic_begin) {
+                        destination = v_colors + COLOR_DIM * g + component;
+                    } else if (component < mean_begin) {
+                        destination =
+                            (S *)v_conics + 3 * g + component - conic_begin;
+                    } else if (component < opacity_index) {
+                        destination =
+                            (S *)v_means2d + 2 * g + component - mean_begin;
+                    } else if (component == opacity_index) {
+                        destination = v_opacities + g;
+                    } else if (v_means2d_abs != nullptr) {
+                        destination =
+                            (S *)v_means2d_abs + 2 * g + component - abs_mean_begin;
+                    }
+                    if (destination != nullptr) {
+                        gpuAtomicAdd(destination, reduced.value);
+                    }
+                }
+            } else {
+                standard_reduce();
             }
         }
     }

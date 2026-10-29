@@ -1,0 +1,918 @@
+% Included chapter fragment. Requires only the packages in the main preamble.
+% This file deliberately defines no document class, fonts, or global macros.
+
+\section{阅读地图：把文章当作一条可验证的优化链}
+
+George Kopanas 的文章 \emph{What the 3DGS Literature Left on the Table}
+不是一份 CUDA 技巧清单，而是一堂关于\textbf{瓶颈迁移}的课程：先消除不必要的
+相交对，再降低原子操作和归约成本，然后处理寄存器、无用反向工作、分歧以及
+执行流水线。前一个步骤改变了后一个步骤成立的条件。例如，没有精确的子块筛选，
+把逐像素分支全部改成无分支计算，可能只是让更多无效像素消耗算力。
+
+本章依次讲解 \texttt{s00} 至 \texttt{s06}。每一步都区分三件事：文章的设计、
+本仓库所用 gsplat 分支原来具备的能力，以及这次移植实验实际保留的内容。
+代码片段是解释依赖关系的教学伪代码，不是可以直接替换通用内核的补丁；
+省略的边界、同步和张量布局检查不能在生产代码中省略。
+
+\paragraph{先划清数字的适用边界。}
+文章使用一张 NVIDIA A100-SXM4-40GB，在九个 Mip-NeRF 360 场景的
+7k、30k 检查点上测量。其标题中的 $7.30\times$（30k）和 $8.38\times$（7k）
+对应最终 BF16 SH 版本的前向加反向渲染流水线，与 Inria 参考实现比较；
+它们不是任意训练器的优化器、损失、数据加载与增密循环的整体倍率。
+文章最终 FP32 SH 版本在相应集合上的数字也不同：分别为 $6.54\times$ 和
+$7.55\times$。不能把 BF16 的标题归到纯 FP32 版本上。
+
+本任务使用 RTX 4090、20,789,814 个高斯、一阶 SH、$1280\times720$ 图像，
+对比的是已经具备部分优化的 gsplat 分支。硬件、场景、初始实现、SH 阶数和
+接口契约都不相同。因此\textbf{文章的 A100 计数器、启动参数和标题倍率均不可直接迁移}。
+本章中有关本任务的结论以
+\texttt{benchmarks/blog\_eval/REPORT.md} 的最终重建记录为准，
+不把较早的探索性数字拼接成一个不存在的最终结果。
+
+\subsection{先建立一个关于成本的模型}
+
+记总高斯数为 $N$，当前相机可见的高斯数为 $M$，发出的 tile--Gaussian
+相交对数为 $P$，实际执行的像素--Gaussian 混合次数为 $E$。
+这四个数决定了不同阶段的主要工作量：
+\begin{equation}
+ t_{\mathrm{step}}\approx
+ t_{\mathrm{project}}(N)+t_{\mathrm{SH}}(M)
+ +t_{\mathrm{bin/sort}}(P,M)+t_{\mathrm{raster}}(E)
+ +t_{\mathrm{VJP}}(N,M).
+\end{equation}
+这里 VJP 指向量--雅可比乘积，即反向传播中的链式法则计算。该式不是拟合出的
+性能公式，而是一张诊断地图：如果排序占主导，优化归约并不会让排序自动变快；
+如果反向预处理仍扫描全部 $N$，减少像素混合次数也不会消除所有大场景开销。
+
+假设某阶段占原总时间的比例为 $f$，该阶段获得倍率 $s$，则整个调用最多变为
+\begin{equation}
+ S_{\mathrm{total}}=\frac{1}{(1-f)+f/s}.
+\end{equation}
+这解释了为什么本任务可以看到明显的 raster 加速，却只有较小的完整渲染收益。
+还要注意，CUDA-event 的内核阶段之和与同步的端到端延迟不是同一个统计量：
+启动、框架调度、等待和内存初始化可以出现在后者中。文章的一视图阶段图、
+九场景均值，以及本任务三视图测量，不能混在同一张倍率表里。
+
+\section{\texttt{s00}：忠实基线比一个慢基线更重要}
+
+\subsection{五阶段流水线和不可随意改变的语义}
+
+文章的 \texttt{s00\_baseline} 是在统一测试框架中忠实重写 Inria CUDA
+光栅器，而不是故意制造一个低效版本。后续包逐步增加优化，使每一段差异可以
+单独归因。文章对 Inria 的倍率仍以实测的 Inria 为分母，并不偷偷换成更慢的重写版本。
+
+一个高斯的世界空间参数为位置、尺度、旋转、不透明度和 SH 系数。投影之后，
+光栅器主要使用二维中心 $\boldsymbol\mu'$、逆协方差
+\begin{equation}
+ \Lambda=\begin{bmatrix}a&b\\b&c\end{bmatrix},\qquad
+ q(\boldsymbol d)=a d_x^2+2b d_xd_y+c d_y^2,
+ \qquad \boldsymbol d=\boldsymbol p-\boldsymbol\mu'.
+\end{equation}
+对正定的 $\Lambda$，$q\geq0$。高斯权重和混合不透明度为
+\begin{equation}
+ G=\exp(-q/2),\qquad
+ \alpha_{\mathrm{raw}}=oG,\qquad
+ \alpha=\min(\alpha_{\max},\alpha_{\mathrm{raw}}).
+\end{equation}
+这里只把 $o$ 定义为已经激活后的不透明度；若保存的是 logit，调用前需要 sigmoid。
+同理，保存的对数尺度必须先取指数。把训练文件中的原始参数直接传给要求物理尺度的
+接口，虽然可能仍能渲染，却已经不是同一个场景。本任务早期一次探索就犯过对数尺度
+未激活的错误，那些时间和图像比较均已作废。
+
+按深度从前到后，颜色与透射率的递推为
+\begin{align}
+ \boldsymbol C_k&=\boldsymbol C_{k-1}
+                  +T_{k-1}\alpha_k\boldsymbol c_k,\\
+ T_k&=T_{k-1}(1-\alpha_k),\qquad T_0=1,\\
+ \boldsymbol I&=\boldsymbol C_K+T_K\boldsymbol c_{\mathrm{bg}}.
+\end{align}
+低于 cutoff 的 splat 不参与混合；像素达到透射率终止条件后停止。特别要区分：
+检测终止的是更新前还是更新后的 $T$，触发终止的 splat 是先混合还是先拒绝，
+以及停止索引采用包含还是不包含端点。这些是基线语义，不是实现小节。
+
+\begin{lstlisting}[language=C++,basicstyle=\ttfamily\small,breaklines=true]
+// Semantic skeleton: keep the reference's precise stop ordering.
+project_and_shade();
+count_pairs_then_prefix_scan();
+emit_and_depth_sort_per_tile();
+for (splat : front_to_back_list) {
+    alpha = evaluate_with_reference_cutoff_and_cap(splat, pixel);
+    if (!reference_accepts(alpha, T)) continue;
+    C += (T * alpha) * color;
+    T *= (1.0f - alpha);
+    record_reference_last_index();
+}
+// Backward replays the accepted prefix in reverse order.
+for (splat : reverse_accepted_prefix) {
+    T_before = T_after / (1.0f - alpha);
+    accumulate_screen_space_vjp();
+}
+apply_projection_covariance_and_SH_vjp();
+\end{lstlisting}
+
+\subsection{反向为什么昂贵}
+
+一个高斯会影响多个像素、多个 warp、甚至多个 tile。屏幕空间梯度通常包含中心
+2 项、conic 3 项、不透明度 1 项、RGB 3 项，共 9 项。若每个像素直接向全局数组
+执行 9 次原子加，许多线程会竞争同一高斯地址。反向还需要逆序重建透射率：
+\begin{equation}
+ T_{k-1}=\frac{T_k}{1-\alpha_k}.
+\end{equation}
+因此 alpha cap 不只控制图像，也保证分母不为零；改变 cap 会同时改变渲染和梯度。
+文章示意路径使用 $0.99$，本任务必须保留 gsplat 的 $0.999$。两者不能因为
+``都很接近 1''就互换。
+
+\paragraph{预期瓶颈与风险。}
+忠实基线常见的瓶颈是宽松分箱产生过多 $P$、逐像素原子操作以及反向重放。
+但是基线还承担可验证性职责：相等深度顺序、像素中心、背景梯度、clamp 导数、
+空输入和异步流都必须固定。PSNR 相同不意味着参数梯度相同，图像误差很小也不能
+单独证明反向正确。
+
+\paragraph{本分支与本任务。}
+本任务没有把 gsplat 改写成文章的 \texttt{s00}，而是以固定提交
+\texttt{ffe2db3} 为自身基线。最终比较还固定参数激活、四元数归一化和 compact-box
+配置。文章对 dense reference 的阈值提供了方法论，但不能代替本分支的差分测试。
+
+\section{\texttt{s01}：先把五类已有文献优化讲透}
+
+文章把 DISTWAR、Taming 3DGS、StopThePop、FlashGS、Speedy-Splat、
+Splatshop、Faster-GS、HiGS、gsplat、LichtFeld Studio 等工作中的技术综合起来。
+这一步的价值在于消除基线遗漏，不应将其全部算作本任务的新发明。
+
+\subsection{第一类：warp butterfly 归约，先少写再谈快算}
+
+同一个 warp 的 32 个像素线程在同一次迭代处理同一个高斯，设线程 $\ell$ 对
+梯度分量 $j$ 的贡献为 $g_{\ell j}$。需要写入的是
+\begin{equation}
+ G_j=\sum_{\ell=0}^{31}g_{\ell j},\qquad j=0,\ldots,8.
+\end{equation}
+先在寄存器之间归约，最后仅由 lane 0 写每一项，可把同一 warp 的原子更新数
+最多降低 32 倍。shuffle 是 lane 间寄存器交换，不经过共享内存。
+
+\begin{lstlisting}[language=C++,basicstyle=\ttfamily\small,breaklines=true]
+// Every lane must participate; rejected pixels supply exact zero.
+for (int j = 0; j < 9; ++j) {
+    float sum = grad[j];
+    for (int d = 16; d != 0; d >>= 1)
+        sum += __shfl_xor_sync(0xffffffffu, sum, d);
+    if (lane == 0) atomicAdd(dst + j, sum);
+}
+\end{lstlisting}
+
+5 次交换之后每个线程都有总和，但其中 31 份会被丢弃。9 个分量需要
+$9\times5=45$ 条 shuffle，lane 0 还要发出 9 条原子指令。这里的
+``一条指令''是 warp 级发射，不是一个地址上的交易量；减少指令数不等于消除跨 tile
+对同一高斯的竞争。
+
+\paragraph{瓶颈、风险和状态。}
+该方法针对原子压力，随后瓶颈会迁移到 shuffle 和指令发射。必须保证归约成员都
+处理同一个高斯，且不能让部分 lane 提前退出而仍使用完整掩码。本 fork 原来已有
+逐分量全 warp 归约与 lane-0 原子写回；本任务的新内容是下一节的 reduce-scatter，
+不是再次发明 warp 聚合。
+
+\subsection{第二类：不透明度感知的精确行跨度}
+
+原始 $3\sigma$ 外接圆再包成正方形，忽略了椭圆各向异性，也忽略了低不透明度
+高斯的有效面积。令 cutoff 为 $\tau=1/255$，只要 $o\geq\tau$，有效区域满足
+\begin{equation}
+ o\exp(-q/2)\geq\tau
+ \quad\Longleftrightarrow\quad
+ q\leq\rho^2,\qquad \rho^2=2\ln(o/\tau).
+\end{equation}
+若 $o<\tau$，整个高斯都不能通过该 cutoff；若恰好相等，边界退化情形仍需按
+比较符号处理。令 $D=ac-b^2>0$，椭圆的紧 AABB 半宽为
+\begin{equation}
+ x_{\max}=\rho\sqrt{c/D},\qquad
+ y_{\max}=\rho\sqrt{a/D}.
+\end{equation}
+AABB 已经优于最大特征值圆，但倾斜椭圆的四角仍会产生无效 tile 测试。
+
+对固定相对纵坐标 $y$，解二次方程可以得到横向边界
+\begin{equation}
+ x_\pm(y)=-\frac{b}{a}y
+ \ \pm\ \sqrt{\frac{\rho^2}{a}-\frac{D}{a^2}y^2}.
+\end{equation}
+真正的 tile 行不是一条水平线，而是一个纵向带状区间 $[y_0,y_1]$。
+该行跨度要取区间中 $x_-$ 的最小值与 $x_+$ 的最大值：检查区间端点以及落在
+区间内的驻点，再将连续坐标映射成离散 tile 索引。只在行中心代入公式会漏掉
+擦过上下边缘的椭圆；那不是精确行跨度。
+
+\begin{lstlisting}[language=C++,basicstyle=\ttfamily\small,breaklines=true]
+if (opacity < cutoff) return no_pairs;
+rho2 = 2 * log(opacity / cutoff);
+for (int ty = first_row; ty < end_row; ++ty) {
+    Strip strip = reference_tile_strip(ty);
+    Bounds x = extrema_of_ellipse_over_strip(conic, rho2, strip);
+    Span span = conservative_discrete_tile_span(x, image_bounds);
+    for (int tx = span.begin; tx < span.end; ++tx)
+        emit(tx, ty, gaussian_id);
+}
+\end{lstlisting}
+
+\paragraph{瓶颈与风险。}
+这是减少 $P$ 的算法性优化，同时减轻发射、排序、共享 staging 与像素测试。
+它往往比内层少一条乘法更值得先做。风险在于病态 conic、根号的小负舍入、
+切线相交、像素中心约定和整数端点。浮点实现应保守，不允许为了少发一个 tile
+而丢掉任何参考实现会接受的像素；对非正定或溢出情况应有明确回退。
+
+\paragraph{本分支与本任务。}
+本 fork 的 \texttt{isect\_tiles.cu} 已有 opacity-aware compact-box 和解析 sweep，
+\texttt{compact\_box\_impl="sweep"} 是实现选择的默认值，但是否启用 compact-box
+仍是另一个开关。产品封装原来已经默认启用。相机 0 的消融显示相交对约从
+16.05M 降为 9.52M。这是已有能力的验证，不是本任务新增的收益。
+
+\subsection{第三类：$8\times4$ 子块掩码和 48 字节结构体}
+
+一个 $16\times16$ tile 有 256 个像素。让 8 个 warp 分别拥有一个
+$8\times4$ 矩形，可把每个高斯对 8 个子块的几何重叠关系压成一个 8 位掩码。
+对于 warp $w$，掩码的第 $w$ 位为 0，意味着整个 warp 可以完全跳过该高斯。
+这比 32 个线程先分别计算高斯再投票更早地消除了工作。
+
+把 32 个 staging 高斯看作一个小批次：lane $\ell$ 检查第 $\ell$ 个高斯是否
+覆盖当前 warp，ballot 把 32 个布尔值组成工作表，再用最低置位迭代。
+
+\begin{lstlisting}[language=C++,basicstyle=\ttfamily\small,breaklines=true]
+unsigned work = __ballot_sync(0xffffffffu,
+    lane < batch_count && ((batch_mask[lane] >> warp_id) & 1));
+while (work != 0) {
+    int j = __ffs(work) - 1;
+    work &= work - 1;  // preserve increasing splat/depth order
+    blend_shared_splat(j);
+}
+
+struct alignas(16) Splat48 {
+    float4 center_and_aux;
+    float4 conic_and_opacity;
+    float4 rgb_and_aux;
+};  // Illustrative field assignment: 3 * 16 bytes.
+\end{lstlisting}
+
+48 字节结构体将二维中心、conic、颜色和不透明度连续存储，使单线程可以用
+3 次 16 字节宽读取完成 staging。此处的收益是减少散乱的标量地址与加载指令，
+不是宣称每个 warp 只产生 48 字节流量。相邻线程访问不同高斯时，实际事务仍取决于
+布局、缓存扇区和访问模式；\texttt{float4} 名称本身也不能保证最终机器码一定向量化。
+
+\paragraph{瓶颈与风险。}
+掩码针对 warp 级空转，打包针对 staging 指令和局部性。计算 mask 本身也有成本，
+必须由跳过的工作偿还。布局改变还涉及 packed camera、多通道特征、对齐和 ABI。
+几何 mask 只是``可能覆盖''，不是``确实贡献''，不能拿来直接证明该高斯的梯度非零。
+
+\paragraph{本分支与本任务。}
+本任务没有移植文章的精确 conic 子块 mask，也没有交付 48 字节打包结构。
+曾测试 $8\times4$ 像素所有权加保守 AABB mask 的前向原型，FP32 版本约有
+$1.020\times$ 的 raster 收益，但小且有噪声，并增加专用循环和回退，最终撤回。
+这不是对文章精确算法的反证：AABB 更松，病态 conic 回退更多，原型并不等价。
+
+\subsection{第四类：两阶段排序，把重复的深度工作提到前面}
+
+传统方法为每个相交对构造 $({\rm tile},{\rm depth})$ 宽键，在 $P$ 个元素上排序。
+同一个高斯的深度会随其覆盖的 tile 数重复参与排序。若先把 $M$ 个可见高斯按
+32 位深度排序，再按此顺序发射 tile 对，整个相交数组已经具有全局深度顺序。
+最后对 tile ID 做\textbf{稳定}排序，就能在按 tile 分组的同时保留组内深度顺序。
+
+\begin{equation}
+ \operatorname{stableSort}_{\rm tile}
+ \left(\operatorname{emit}\left(
+ \operatorname{sort}_{\rm depth}(\text{visible Gaussians})\right)\right)
+ \ \Longrightarrow\ \text{每个 tile 内深度有序}.
+\end{equation}
+
+\begin{lstlisting}[language=C++,basicstyle=\ttfamily\small,breaklines=true]
+visible = filter(count_tiles > 0);
+visible = stable_sort_by_depth(visible);
+offsets = exclusive_scan(count_tiles[visible]);
+emit_at_scanned_offsets(visible, offsets, tile_keys, gaussian_ids);
+stable_radix_sort(tile_keys, gaussian_ids);  // narrow tile key
+find_tile_ranges();
+\end{lstlisting}
+
+扫描偏移很重要：如果每个高斯用无序的全局原子 append 发射，``深度顺序发射''
+就不再成立。相等深度也需要沿用基线 tie-break；透明混合并不交换，稳定性是
+图像语义的一部分。正的有限相机深度通常可以用相应浮点位序构造单调键；
+负深度、NaN 或不同编码不能靠强制类型转换草率处理。
+
+\paragraph{瓶颈、风险和状态。}
+文章用 32 位可见深度排序加 16 位 tile 稳定排序减少 radix pass 和字节流量。
+收益依赖 $P/M$、可见过滤成本和排序库。16 位 tile 键要求整个命名空间可表示，
+多相机 tile 编码也必须算进去。本任务相机图像仅有 3,600 个 $16\times16$ tile，
+但通用 API 不能因此永久假定 16 位足够。本 fork 仍走原有排序路径；本任务只做
+源码评估，没有实现或测量该步骤，不能报告其增量收益。
+
+\subsection{第五类：少做 SH、宽加载、base-2 指数与标量反向状态}
+
+\subsubsection{可见性之后才读 SH}
+
+三阶 SH 有 16 个基函数，每个 RGB 三通道，一共 48 个 FP32，即每高斯
+192 字节。若先算完整 SH 再发现高斯在视锥外，就浪费了带宽和寄存器。
+先做便宜的可见性判断，再读取 SH，是按数据依赖重排工作，不是数值近似。
+连续系数用宽加载还能减少加载指令，但基函数与 RGB 的交错布局需要正确处理。
+
+\begin{lstlisting}[language=C++,basicstyle=\ttfamily\small,breaklines=true]
+Projection p = project_geometry(id);
+if (!visible_and_has_tiles(p)) return;
+float4 v0 = load_aligned_SH_group(id, 0);
+float4 v1 = load_aligned_SH_group(id, 1);
+evaluate_visible_color(v0, v1, /* more groups */);
+\end{lstlisting}
+
+\subsubsection{把自然指数改写为硬件 base-2 指数}
+
+令 $\beta=-\tfrac12\log_2 e$，则
+\begin{equation}
+ \exp(-q/2)=2^{\beta q}.
+\end{equation}
+把 conic 的缩放提前到预处理，可以让内层直接形成 base-2 指数输入，使用硬件
+快速指数路径。要注意交叉项 $2bd_xd_y$ 的系数约定：有的布局已把 2 合进去，
+有的没有，拷贝三个数字而忽略该差异会渲染出错误椭圆。
+
+\paragraph{瓶颈与风险。}
+可见性门控减少 $M$ 对应的 SH 流量，宽读减少 LSU 发射压力，指数重排减少
+内层转换工作。但是快速指数有近似和 FTZ 语义，系数预缩放也会改变舍入。
+若原有 \texttt{\_\_expf} 加 fast-math 已经生成同样的硬件路径，仅把函数名改为
+\texttt{exp2} 未必会少任何指令，不能从源代码名称推断收益。
+
+\subsubsection{把反向的 RGB 状态投影成一个标量}
+
+设像素的上游 RGB 梯度为 $\boldsymbol u=\partial L/\partial\boldsymbol I$，
+当前高斯之后、以该处透射率归一的尾部颜色为 $\boldsymbol B_i$，其中包含背景。
+在固定当前像素的 $\boldsymbol u$ 下，
+\begin{equation}
+ \frac{\partial L}{\partial\alpha_i}
+ =T_{i-1}\left(\boldsymbol u\cdot\boldsymbol c_i
+              -\boldsymbol u\cdot\boldsymbol B_i\right).
+\end{equation}
+后续计算只需要尾部颜色在 $\boldsymbol u$ 方向上的投影。因此令
+$b_i=\boldsymbol u\cdot\boldsymbol B_i$，用一个标量递推取代 RGB 三个分量：
+\begin{equation}
+ b_{i-1}=\alpha_i(\boldsymbol u\cdot\boldsymbol c_i)
+                  +(1-\alpha_i)b_i.
+\end{equation}
+这没有删掉颜色梯度本身：$\partial L/\partial\boldsymbol c_i
+=T_{i-1}\alpha_i\boldsymbol u$ 仍然是向量。标量化的是反向遍历的运行状态。
+上游梯度在像素内部固定、尾部递推线性，才允许这种投影交换。
+
+\begin{lstlisting}[language=C++,basicstyle=\ttfamily\small,breaklines=true]
+float behind_dot = dot(upstream_rgb, background_rgb);
+for (splat : reverse_list) {
+    float color_dot = dot(upstream_rgb, splat.rgb);
+    float d_alpha = T_before * (color_dot - behind_dot);
+    behind_dot = alpha * color_dot + (1 - alpha) * behind_dot;
+    accumulate_color_and_geometry_gradients(d_alpha);
+}
+\end{lstlisting}
+
+\paragraph{本分支与本任务。}
+本 fork 的 SH VJP 已按颜色通道分工，不能把文章的 SH 寄存器模型原样套用。
+本任务未新增交付 forward SH 宽加载或 base-2 重排；现有快速指数路径也不算新收益。
+标量颜色投影及背景点积外提确实实现并测试过，112 个小例通过，但对应一轮
+raster 中位数从 13.945 ms 变为 14.496 ms，没有收益，最终撤回。代数上减少
+状态并不保证在特定编译器和 GPU 上更快；依赖链和寄存器分配同样重要。
+
+\section{\texttt{s02}：让归约形状匹配梯度宽度}
+
+\subsection{halving reduce-scatter 的核心不变量}
+
+butterfly 计算了所有 lane 都不需要的重复结果。我们真正需要的是：每个分量在
+\emph{某个} lane 上有完整总和，然后由那个 lane 写回。不需要 32 个 lane
+都持有全部 9 项。这就是 reduce-scatter：在归约像素维度的同时，把输出分量分散。
+
+用 4 个线程、4 个分量的教学模型说明。第一步让线程 $(0,2)$、$(1,3)$ 配对，
+每对中的一个保留分量 0、1 的局部和，另一个保留 2、3。第二步在拥有同一分量区间
+的线程间配对，继续把区间一分为二。最后每个线程只保留一个完整分量的和。
+
+\begin{equation}
+ \underbrace{4\times4}_{\text{每线程持有所有分量}}
+ \ \longrightarrow\ \underbrace{4\times2}_{\text{合并两线程的部分和}}
+ \ \longrightarrow\ \underbrace{4\times1}_{\text{每分量唯一拥有者}}.
+\end{equation}
+
+9 项不是 2 的幂，可以按实现的所有权规则补零、切分奇数区间，并保证虚拟项
+不写回。文章给出的有效窗口长度为
+\begin{equation}
+ 9\longrightarrow5\longrightarrow3\longrightarrow2
+ \longrightarrow1\longrightarrow1,
+ \qquad 5+3+2+1+1=12.
+\end{equation}
+因此从每 splat 45 条 shuffle 降至约 12 条，最后由 9 个拥有者在同一 warp
+原子指令中写出 9 项。全局原子地址更新的总项数仍为 9，并没有神奇地合并成一个地址。
+
+\begin{lstlisting}[language=C++,basicstyle=\ttfamily\small,breaklines=true]
+// Conceptual collective, not a literal shuffle implementation.
+Window w = initial_gradient_window(local_grad);
+for (int stride = 16; stride != 0; stride >>= 1) {
+    Ownership next = split_components_between_partners(w, lane, stride);
+    Window remote = exchange_partner_selected_half(w, next, stride);
+    w = add_selected_local_and_remote(w, remote, next);
+}
+if (owns_real_component(lane))
+    atomicAdd(component_address(lane), owned_sum(w));
+\end{lstlisting}
+
+写真正的 shuffle 代码时，源 lane 要发送对方所需的分量，不是所有 lane 读取同一个
+数组下标就会自动正确。最有效的验证是给每个输入 $(\ell,j)$ 唯一标记，在小模型中
+追踪每一步的分量所有权，证明每个 $G_j$ 覆盖恰好 32 个输入且只写一次。
+
+\subsection{两 splat half-warp folding：填满尾部的空闲位置}
+
+9 个输出连半个 warp 都放得下。单 splat 的后期归约仍要跨 32 lane 合并，却已
+不能再把一项拆成半项。文章将两个连续 splat A、B 的像素贡献同时保留：
+先跨上下半 warp 配对，把 A 的 32 像素贡献折叠进低半 warp，把 B 折叠进高半 warp；
+再在两个 16-lane 组内并行执行 reduce-scatter。
+
+\begin{align}
+ A'_{\ell j}&=A_{\ell j}+A_{\ell+16,j},\quad 0\leq\ell<16,\\
+ B'_{\ell j}&=B_{\ell j}+B_{\ell-16,j},\quad16\leq\ell<32.
+\end{align}
+两组各自完成 16 像素局部和的再归约后，就得到各自完整的 32 像素结果。
+初次 folding 交换 9 项，后面的半 warp 窗口归约花费 $5+3+2+1=11$，
+合计每对 20 次，即平均每 splat 10 次，而不是单独执行两次 12。
+
+\paragraph{预期瓶颈与风险。}
+收益来自更少 shuffle 和更平行的写回，但代价是同时存活的两个 splat 状态。
+寄存器数过高会降低驻留率，甚至 spill 到 local memory。文章的 SM80 启动约束
+是其编译结果的一部分，不是跨 GPU 的最佳常数。还要处理奇数结尾、两 splat
+不同的有效像素集合、absgrad 和非 RGB 通道。
+
+\paragraph{本分支与本任务。}
+最终只保留\textbf{单 splat halving reduce-scatter}，两 splat folding 未移植。
+窄通道路径支持至多 4 个颜色/特征通道，并把可选绝对中心梯度纳入实际归约窗口；
+通道更宽时沿用原实现。因此文章的 ``9 项、12 次''是教学例，不是本 fork 所有配置
+的指令计数。
+
+一次后续检查发现 $4\times4$ tile 只有 16 个线程：假定完整 warp 的拥有者可能
+根本不存在，导致本应非零的不透明度梯度变零。\textbf{传入 active mask 不能创造
+缺失的拥有者。}最终提交 \texttt{88513ea} 对
+\texttt{block\_size \% 32 != 0} 的整个 block 回退到旧路径，覆盖 $4\times4$
+及 $6\times6$ 等配置。最终 RGB backward 报告 48 个寄存器、无 stack/local
+memory；早期 scatter-only 的静态指令计数不能冒充含回退分支的最终二进制总计数。
+
+\section{\texttt{s03}：SH 寄存器流式化与协作清零}
+
+\subsection{为什么 SH 不需要同时保存全部输入和输出}
+
+设方向为 $\boldsymbol d$，SH 基函数为 $Y_k$，RGB 系数为 $\boldsymbol s_k$：
+\begin{align}
+ \boldsymbol c(\boldsymbol d)&=\sum_kY_k(\boldsymbol d)\boldsymbol s_k,\\
+ \frac{\partial L}{\partial\boldsymbol s_k}
+ &=Y_k(\boldsymbol d)\boldsymbol u,\\
+ \frac{\partial L}{\partial\boldsymbol d}
+ &=\sum_k(\boldsymbol u\cdot\boldsymbol s_k)
+                 \nabla_{\boldsymbol d}Y_k(\boldsymbol d).
+\end{align}
+系数梯度只依赖该基函数和上游梯度，写完就可以释放寄存器；方向梯度只需要一个
+三分量运行和。于是没有必要同时保留 48 个输入系数和 48 个输出梯度。
+颜色非负截断等前向操作的导数掩码应先作用于 $\boldsymbol u$，不能在流式化时丢掉。
+
+文章把 16 个三阶基函数分成 4 组，每组 4 个，即 12 个 RGB 浮点数。
+12 同时能被 RGB 宽度 3 和向量读取宽度 4 整除，适合作为一个寄存器窗口。
+
+\begin{lstlisting}[language=C++,basicstyle=\ttfamily\small,breaklines=true]
+float3 d_direction = make_float3(0, 0, 0);
+for (int group = 0; group < 4; ++group) {
+    float v[12];
+    load_three_float4(group, v);
+    for (int k = 0; k < 4; ++k) {
+        Basis y = basis_and_direction_derivative(4 * group + k);
+        store_SH_gradient(4 * group + k, y.value * upstream_rgb);
+        d_direction += dot(upstream_rgb, rgb(v, k)) * y.derivative;
+    }
+}
+propagate_normalized_direction_vjp(d_direction);
+\end{lstlisting}
+
+\paragraph{预期瓶颈与风险。}
+这针对活跃寄存器数量和由此产生的驻留率，而非减少 SH 的数学项数。
+文章的 FP32 backward 寄存器数从 152 降至 104，是 A100 具体内核的结果。
+窗口太小会增加加载与索引，太大又失去驻留率收益。方向归一化的雅可比仍需正确
+回传，不能把方向导数直接当作位置导数。
+
+\subsection{移除 bulk memset 不是允许输出未初始化}
+
+若完整参数梯度缓冲区先清零，再由可见高斯覆盖，每个活跃元素被写了两次。
+文章让活跃项直接写最终梯度，非活跃项由内核写零，移除单独的全量 memset。
+但有一个所有权前提：这些输出必须是最终赋值，而不是依赖预先清零的原子累加目标。
+光栅阶段共享的累加梯度缓冲区不能不加区分地照搬该方法。
+
+朴素地让每个线程清自己高斯的 192 字节 SH 行，会使 warp 同一条存储指令的地址
+相隔 192 字节。A100 的缓存按 32 字节 sector 传输，许多 sector 只写一小部分。
+更好的方式是让 warp 协作线性扫描 32 个高斯的连续 SH 区域，以 16 字节块为单位：
+
+\begin{lstlisting}[language=C++,basicstyle=\ttfamily\small,breaklines=true]
+unsigned active = __ballot_sync(0xffffffffu, gaussian_is_active);
+// 32 rows, each with 12 float4 chunks for degree-3 RGB SH.
+for (int chunk = lane; chunk < 32 * 12; chunk += 32) {
+    int owner = chunk / 12;
+    if (((active >> owner) & 1) == 0)
+        store_float4_zero(warp_SH_base + chunk);
+}
+// Active rows are fully assigned by their VJP owners.
+\end{lstlisting}
+
+相邻 lane 总访问相邻 16 字节块，因此合并性改善，而非活跃行仍有正确的零梯度。
+尾 warp、实际系数数 $K$ 大于当前阶数所用数量、未启用方向梯度等情况，都需要
+定义哪些元素由 VJP 写、哪些由零填充写，确保没有遗漏和重叠竞态。
+
+\paragraph{本分支与本任务。}
+本 fork 的 SH backward 是 $N\times3$ 个线程，每线程处理一个颜色通道，
+在 VJP 中直接写系数梯度，不存在文章同样的 ``48 输入加 48 输出都常驻''结构。
+数据又是一阶 SH，不能套用三阶的带宽与寄存器收益。
+本任务实现过选择性协作清零，288 个 SH 回归例覆盖阶数 0--4、mask、超额 $K$
+和方向梯度开关，全部通过；但配对完整渲染测量没有可靠收益，一轮中位数为
+64.056 ms 对 64.973 ms，最终撤回。\texttt{zeros\_like} 改成
+\texttt{empty\_like} 而不负责所有未写元素，绝不是这一优化的正确简化。
+
+\section{\texttt{s04}：前向知道谁贡献过，就不要让反向重新猜}
+
+\subsection{几何重叠与真实贡献的区别}
+
+一个高斯可以与 tile 椭圆相交，却因为低权重或遮挡没有对任何像素产生实际混合。
+几何 mask 是保守候选集合；贡献 mask 是执行了基线接受逻辑之后得到的事实。
+记 tile 中第 $i$ 个高斯的 warp 贡献掩码为
+\begin{equation}
+ m_i=\sum_{w=0}^{7}2^w
+ \mathbf{1}\{\text{warp }w\text{ 至少一个像素实际混合了 }i\}.
+\end{equation}
+当 $m_i=0$，该高斯在这个 tile 内可以从反向列表中删去。注意这里要求的是
+``实际混合''，不是仅满足 $\alpha\geq\tau$；已经终止的像素不能使它成为贡献者。
+
+\subsection{原位压缩和停止索引的重映射}
+
+设原列表中的贡献标记为 $v_i=\mathbf{1}\{m_i\ne0\}$，稳定压缩后的位置为
+\begin{equation}
+ r_i=\sum_{j<i}v_j.
+\end{equation}
+保留原顺序，把第 $i$ 项移到 $r_i$，于是压缩后的顺序仍是深度顺序。
+一个像素原来的停止位置也必须用相同前缀计数映射；否则反向可能在错误的 splat
+停止，甚至使用一个压缩前位置索引压缩后数组。
+
+\begin{lstlisting}[language=C++,basicstyle=\ttfamily\small,breaklines=true]
+stage_whole_batch_before_overwriting_source();
+for (splat : batch) {
+    unsigned cmask = collect_actual_blend_bits_from_all_warps(splat);
+    keep[splat] = (cmask != 0);
+}
+rank = exclusive_scan(keep);
+for (splat : batch) {
+    if (keep[splat])
+        list[tile_begin + prior_kept + rank[splat]] = pack(splat);
+}
+remap_per_pixel_last_indices_using_same_prefix();
+\end{lstlisting}
+
+``原位''的安全依据是输出写指针不超过当前读指针，并且当前批次已完整 staging。
+若某 warp 提前覆盖另一个 warp 尚未读取的元素，数学上的稳定压缩依然会在实现中
+变成数据竞争。tile 的切片、跨 batch 的计数和同步点都必须纳入证明。
+
+\subsection{高字节 \texttt{cmask} 与全局 \texttt{touched}}
+
+文章将 8 位贡献掩码打包进 32 位列表项的高字节：
+\begin{equation}
+ \text{packed}=\left(m_i\ll24\right)\mathbin{|}\text{id},\qquad
+ \text{id}=\text{packed}\mathbin{\&}(2^{24}-1).
+\end{equation}
+反向直接使用该掩码，避免重新计算子块几何边界。另设每个高斯的
+\texttt{splat\_touched} 标记，只有实际贡献过的高斯才运行昂贵的预处理 VJP。
+这会把``视锥可见但完全遮挡''的高斯从 SH backward 工作集中移除。
+
+\paragraph{24 位限制不能靠场景平均规模回避。}
+这种格式只容纳 $0$ 至 $2^{24}-1$ 的 ID。本任务有 20,789,814 个高斯，
+超过 $2^{24}=16,777,216$；最终实测列表 ID 达到 20,789,812。
+直接截低 24 位会把某些高斯别名到另一些高斯，输出可能仍然看似合理，却产生
+错误梯度。安全设计可以采用独立 mask 缓冲区、64 位条目、可见集合重映射，
+或明确的按规模回退；每一种都有额外字节、扫描和接口代价。
+
+\paragraph{预期瓶颈与风险。}
+前向额外做投票、计数和写回，以换取反向少 staging、少求值、少 VJP。
+因此纯前向可能更慢。\texttt{touched} 还需要正确初始化、跨 tile 更新与跨内核
+可见性；不能仅因为多个线程都写 1 就忽略内存模型或竞争检查。
+多通道分块调用、多个消费者复用原列表时，修改输入列表尤其危险。
+
+\subsection{本任务选择更小的改动：只裁掉完全无用的尾部}
+
+完整原位压缩、打包 \texttt{cmask} 和新的 \texttt{touched} 契约都没有移植。
+本任务利用已有逐像素 \texttt{last\_ids} 求 tile 内最大停止索引，只删去所有
+像素都未使用的后缀：
+\begin{equation}
+ L_{\mathrm{tile}}=\max_{p\in\mathrm{tile}}L_p.
+\end{equation}
+反向从这个边界开始，不再 staging 更深的完全遮挡后缀；中间没有贡献的洞仍保留。
+该方案不修改共享列表，不压缩 ID，也不改变停止索引的坐标系，适合本 fork 的
+通道分块复用。它不是文章完整压缩的同义词。
+
+空 tile 必须先统一返回；从包含端点变成排他端点的加一应先提升整数宽度，避免
+靠近整数上界时溢出。初期隔离实验中，在 scatter 之上加入后缀裁剪有明显收益，
+因而最终保留；但最终总倍率来自重建后二进制的重新配对测量，不能把早期倍率
+与后期倍率相乘来宣称最终性能。
+
+\section{\texttt{s05}：分歧、谓词化与精确的数值分支边界}
+
+\subsection{为什么 ``少执行线程''未必意味着少发射指令}
+
+warp 中各 lane 共享指令发射。若 31 个像素都 miss、1 个像素 hit，普通分支下
+warp 仍要发射混合和梯度指令，只是其中多数 lane 被禁用。若候选 mask 已经保证
+至少一个像素有用，逐像素的多个 \texttt{continue} 常常只增加重汇合与谓词管理。
+让 miss lane 的有效 $\alpha=0$，可以把递推写成连续直线代码：
+\begin{equation}
+ \alpha_{\mathrm{eff}}=
+ \begin{cases}\alpha,&\text{hit},\\0,&\text{miss},\end{cases}
+ \qquad
+ \Delta\boldsymbol C=T\alpha_{\mathrm{eff}}\boldsymbol c,
+ \qquad T'=T(1-\alpha_{\mathrm{eff}}).
+\end{equation}
+在有限数、没有副作用的理想代数中，miss lane 的状态完全不变。
+
+\begin{lstlisting}[language=C++,basicstyle=\ttfamily\small,breaklines=true]
+float power = exact_shared_quadratic(conic, dx, dy);
+float raw = opacity * fast_exp(power);
+float capped = min(reference_cap, raw);
+bool hit = active && reference_power_test(power)
+                  && reference_cutoff_test(capped);
+float alpha = hit ? capped : 0.0f;
+// Reference termination ordering must still be applied here.
+C += (T * alpha) * color;
+T *= (1.0f - alpha);
+\end{lstlisting}
+
+\paragraph{本 fork 没有文章同样的先决条件。}
+本任务未交付精确 warp 贡献 mask，所以候选高斯仍可能整 warp 都 miss。
+保留 warp-wide all-miss 跳过才合理；不能借文章的结构不变量，删除本实现中
+仍有价值的统一分支。宽通道路径也保留原来的条件求值，避免所有 lane 对大量
+特征执行无效运算。
+
+\subsection{精确舍入：前后向必须在同一侧跨过 cutoff}
+
+若前向把某像素判为 hit，而反向因 FMA 融合方式不同判为 miss，反向会漏掉一次
+$T/(1-\alpha)$ 恢复，后面整条反向递推都会受影响。问题不只是一个高斯边缘上
+极小的局部误差，而是离散控制流变化。
+
+因此文章用显式 round-to-nearest-even 操作固定二次型求值的表达式树。
+下面只是展示固定树的方法；实际树必须与目标基线一致：
+
+\begin{lstlisting}[language=C++,basicstyle=\ttfamily\small,breaklines=true]
+// Illustrative RN tree; use exactly the same helper in fwd and bwd.
+float xx = __fmul_rn(dx, dx);
+float xy = __fmul_rn(dx, dy);
+float yy = __fmul_rn(dy, dy);
+float axx = __fmul_rn(a, xx);
+float bxy = __fmul_rn(two_b, xy);
+float cyy = __fmul_rn(c, yy);
+float q = __fadd_rn(__fadd_rn(axx, bxy), cyy);
+float power = __fmul_rn(-0.5f, q);
+\end{lstlisting}
+
+不能把这个教学树直接覆盖到已有 fork：若原基线使用另一种乘加树，固定为新树
+虽然让新前后向一致，仍可能改变与旧实现的 cutoff 归属。本任务没有交付新的
+前向表达式、conic 预缩放或 base-2 重排，而是保持现有前向语义进行差分验证。
+所谓 ``exact rounding'' 是操作舍入可控，不是高斯函数的实数精确求值。
+
+\subsection{clamp、cutoff 和反向零贡献不是同一件事}
+
+cutoff 是``不接受这个混合项''；cap 是``接受，但把 alpha 饱和''。
+对于 cap 已饱和的像素，颜色梯度仍然存在，而通过 alpha 到几何、不透明度的导数
+应按参考实现的饱和导数规则门控。不能把这两类掩码合成一个随意的 \texttt{hit}。
+
+另外 IEEE 浮点满足 $0\times\infty=\mathrm{NaN}$，并不满足
+``乘了零就是零''。有限 conic 也可能在中间乘法溢出；被拒绝 lane 的上游梯度
+还可能是非有限值。若先无条件算出 NaN，再乘零，归约就会污染其他像素。
+
+\begin{lstlisting}[language=C++,basicstyle=\ttfamily\small,breaklines=true]
+Grad g = exact_zero_grad();
+if (hit) {
+    update_backward_color_state();
+    g.color = accepted_color_vjp();
+    if (reference_alpha_derivative_is_enabled(raw)) {
+        g.geometry = geometry_vjp();
+        g.opacity = opacity_vjp();
+        g.abs_mean = optional_abs_mean_vjp();
+    }
+}
+reduce_gradients(g);  // invalid lanes really contribute zero
+\end{lstlisting}
+
+这说明安全实现可以只让某些递推谓词化，仍对危险导数求值保留显式门控。
+追求源代码 ``没有 if'' 不是目标；减少真实机器码分歧并保留语义才是目标。
+NaN 的比较、最小值指令行为、clamp 边界的等号约定也要继承基线。
+
+\paragraph{本任务结果。}
+窄通道 backward predication 在加固后保留，前向完全不变。加固内容包括拒绝 lane
+不更新颜色运行缓冲，拒绝或饱和 lane 不计算几何、不透明度及 absgrad 导数。
+一次最终集成消融中，相机 0 在 scatter 加 trim 之上约有 $1.038\times$ 的
+增量 raster 收益；这是该测量序列的结果，不是任意场景或最终全部相机的独立倍率。
+有限但溢出的 conic、非有限拒绝 lane 和非默认流已进入最终回归矩阵。
+
+\section{\texttt{s06}：多行映射与执行流水线平衡}
+
+\subsection{每线程两个竖直像素：先在线程内合并}
+
+文章将一个 warp 的像素覆盖从 $8\times4$ 改为 $8\times8$，每个线程负责
+同一列的两个相邻像素。一个 $16\times16$ tile 从 256 线程变为 128 线程，
+即由 8 个 warp 变为 4 个 warp。两个像素共享 $d_x$、横向二次项和高斯属性设置。
+反向先在线程寄存器中把两个像素的梯度相加，再做 warp 归约，故每 tile 的归约
+次数和对应原子小计数减半。
+
+\begin{lstlisting}[language=C++,basicstyle=\ttfamily\small,breaklines=true]
+Pixel top = pair_top_pixel(lane, warp_id);
+Pixel bottom = top + vertical_offset(1);
+Column col = setup_shared_x_terms(splat, top.x);
+State s0 = update_one_row(col, top, state0);
+State s1 = update_one_row(col, bottom, state1);
+Grad local = s0.grad + s1.grad;
+warp_reduce_scatter(local);
+\end{lstlisting}
+
+两个像素仍有独立颜色、透射率、上游梯度和终止状态，不能因为共享列就共用一份
+像素状态。屏幕底边和不整齐图像边缘可能只有其中一个像素有效。
+
+\subsection{warp 私有 staging：去掉等待最慢邻居的时间}
+
+旧结构的所有 warp 共用一个 tile 级共享 batch；即使某 warp 的区域很空，也必须
+在 \texttt{\_\_syncthreads()} 等待最繁忙的 warp。文章在 backward 给每个 warp
+分配独立的 32-splat staging 切片，只在本 warp 内同步，并根据贡献 mask 独立遍历。
+这不是把同步函数名直接改成 \texttt{\_\_syncwarp()}：共享内存的所有权和生产消费
+范围必须一起重设计，否则其他 warp 可能覆盖仍在读取的数据。
+
+\paragraph{流水线视角。}
+文章用合成场景的 Nsight Compute 指标说明，某些步骤受 block barrier 拖累，
+另一些步骤受 FMA、ALU 或总发射率限制。各执行管线都不到满载，并不表示没有瓶颈：
+如果 scheduler 每周期只能发射有限条指令，混合整数、浮点、指数和加载指令的总量
+可以先耗尽发射带宽。要区分 ``少 FMA''和``少总指令''，也要区分运行时动态计数
+与静态 SASS 中出现了多少条指令。
+
+\subsection{把不透明度并入指数，复用列常数}
+
+对 $o>0$，有
+\begin{equation}
+ o\,2^p=2^{p+\log_2o}.
+\end{equation}
+预处理保存 $\log_2o$，列设置时将它合进横向常数，每行指数输出就直接是
+$\alpha_{\mathrm{raw}}$，少一次逐行不透明度乘法。反向几何使用的 log-alpha
+导数也可保留 $o$ 因子，到输出不透明度梯度的拥有者处再恢复相应比例。
+
+代数相同不等于浮点位相同：$o=0$、极小 $o$、FTZ、先乘后 cap 与先加 log
+再指数，都会涉及边界。文章还结合列范围检查减少逐像素 power 判断，这依赖其
+完整设计，不是只替换一个指数就能继承的性质。
+
+\subsection{竖直两行矩：把乘法延后到归约之后}
+
+取文章的符号约定，两个像素的相对纵坐标为 $y$ 与 $y-1$，相应 log-alpha
+梯度为 $g_0,g_1$。定义三个矩：
+\begin{align}
+ m_0&=g_0+g_1,\\
+ S_y&=g_0y+g_1(y-1)=m_0y-g_1,\\
+ S_{yy}&=g_0y^2+g_1(y-1)^2=m_0y^2-g_1(2y-1).
+\end{align}
+这些量足以构造多种均值和 conic 梯度。如果竖直 shuffle 连接的是同一像素列，
+则各线程有同一个 $d_x$，可以利用
+\begin{equation}
+ \sum_\ell d_x m_{0,\ell}=d_x\sum_\ell m_{0,\ell}
+\end{equation}
+把横向乘法延后到竖直部分归约之后。这里节约来自几何映射提供的公共因子。
+若修改 lane 编号使配对不再同列，上式的公共 $d_x$ 假设就失效了。
+
+\subsection{终止状态编码与 BF16 的不同性质}
+
+文章还用透射率的符号位编码像素是否已终止，避免单独维护某些布尔状态：
+负号表示完成，绝对值仍保存输出所需透射率。这只适用于 $T$ 原本非负的约定；
+所有使用点都得区分``存储状态''和``物理透射率''，背景混合或恢复导数时不能
+误用负值。负零、下溢和最终取绝对值也需要明确语义。
+
+BF16 SH 则属于另一类优化：通过降低系数存储宽度减少带宽，而不是单纯重排计算。
+BF16 保留与 FP32 相同数量的指数位，但有效精度更低；应说明是否以 FP32
+累加、梯度如何保存、优化器是否有主副本，以及参数更新时何处发生量化。
+文章在其测试中报告相同到 0.01 dB 的 PSNR，不等于任意场景的逐元素结果相同，
+更不能自动证明任意优化器的训练轨迹不变。
+
+\paragraph{预期瓶颈、风险和本任务状态。}
+多行减少设置、归约和原子次数，warp 私有 staging 减少 barrier 等待；代价是
+每线程更多像素状态和更复杂 mask 映射。RGB+ED 或宽特征增加寄存器压力，可能
+使 RGB 上的收益反转。BF16 对三阶 SH 更有动力，本任务一阶系数流量本来就小。
+上述多行、私有 staging、管线数学重排、符号编码和 BF16 都只做了源码/硬件
+适用性评估，\textbf{未实现、未测量、未作为交付内容}。不能给这些步骤填入
+来自 A100 的预期倍率，冒充 4090 上已经获得的收益。
+
+\section{负结果：失败实验教会了什么}
+
+文章单列了 17 个负结果及硬件陷阱。它们的教学价值不是形成一份永远禁止使用的
+技巧名单，而是说明同一个局部优化可以撞到另一个约束。下面按因果关系整理这些
+陷阱，并与本任务实际撤回的实验区分；不把未在本任务运行的方案说成已经失败。
+
+\subsection{驻留率不是越高越好，寄存器也不是越少越好}
+
+强制压低寄存器可以增加理论驻留 warp 数，却可能导致 spill，产生 local memory
+读写；反过来，放宽寄存器预算可以消除 spill，却可能跨过驻留 block 的台阶。
+正确的问题不是 ``occupancy 达到多少''，而是新增的 warp 是否能隐藏当前瓶颈的
+延迟，以及为它付出了多少额外流量。一个依赖链很长的指数--除法递推，也不会仅靠
+少两条独立加法就完全变快。
+
+因此应该联合记录寄存器、spill、活跃 warp、内核时间，不能只展示源代码行数减少。
+本任务最终保留的 reduce-scatter 需要更多局部部分和，但仍无 local memory；
+两 splat folding 则没有测量，不能假设进一步减少 shuffle 必然更快。
+
+\subsection{共享内存缓存并不免费，更多并行也可能引入等待}
+
+把重复读取放进共享内存可能节约全局加载，也增加 staging、屏障、bank conflict
+和容量占用。将工作拆成更多 warp 可能改善覆盖，却增加归约次数；把工作合并给
+更少线程可能降低设置成本，却增加寄存器和长尾。文章的方形多行映射与私有 staging
+是配套变化，不是两个可以无条件相加的独立倍率。
+
+\begin{lstlisting}[language=C++,basicstyle=\ttfamily\small,breaklines=true]
+// A useful experiment record contains both intent and a rejection gate.
+Hypothesis h = "less staging or fewer issued instructions";
+Candidate c = change_one_mechanism(h);
+if (!differential_correctness(c)) reject(c);
+else if (!paired_repeated_target_timing_improves(c)) reject(c);
+else retain_with_documented_scope(c);
+\end{lstlisting}
+
+\subsection{缓存局部性和排序的收益会互相影响}
+
+宽键变窄会少搬字节，但新增过滤、扫描和中间数组也有成本；tile 更精确会减少
+排序规模，但也可能让其他固定开销占比升高。重新排列高斯以改善某阶段的连续读，
+可能让另一个阶段的梯度写回更分散。L2 命中率单独变高并不是充分证据：如果总请求
+数和指令数一起增长，绝对时间仍可能更差。
+
+文章的两阶段排序针对重复深度排序这一具体问题。本任务没有实现它，所以本任务
+的 ``未交付''不能被写成 ``实测无效''。同样，AABB 子块原型的弱收益也不能用于
+否定文章精确 conic mask 加紧凑布局的组合。
+
+\subsection{本任务三个明确撤回的实验}
+
+\begin{enumerate}
+ \item \textbf{标量颜色累加。}数学线性化成立，112 个小回归通过，但对应
+ raster 测量没有收益，故恢复原计算。这里的结论是目标负载上不值得交付，
+ 不是标量投影公式错误。
+ \item \textbf{SH 选择性协作清零。}288 个专门测试通过，但完整渲染配对结果
+ 没有可靠增益。索引、除法、掩码开销和非活跃行比例可能抵消减少的写流量；
+ 这是解释假说，而不是已经由硬件计数器证明的瓶颈诊断。
+ \item \textbf{前向 AABB warp culling。}通过小回归但收益小、噪声显著，
+ 专用循环和病态边界回退增加维护负担。早期 FP64 边界原型还暴露了与浮点溢出
+ 基线兼容的风险，所以没有交付任何前向源码修改。
+\end{enumerate}
+
+此外，部分 warp 缺失拥有者不是一次可以接受的性能负结果，而是必须修复的
+正确性缺陷。最终引入回退并重新构建、重新测量，先前二进制退出交付，不能继续
+使用它更漂亮的历史数字。判定性能之前必须先确认测量的就是待交付二进制。
+
+\section{把文章读完之后：怎样评价这次移植}
+
+\subsection{交付范围与最终测量}
+
+最终提交 \texttt{88513ea} 的内核变化仅在 backward rasterization 和归约辅助
+代码：窄通道 reduce-scatter、遮挡后缀裁剪、安全的 alpha predication，以及
+部分 warp 回退。前向和 SH 源码已恢复，完整压缩、两阶段排序、two-splat folding、
+多行和 BF16 均未移植。该状态是隔离的优化/审查分支，不是已经替换用户安装包
+或合并到主工作区的生产发布。
+
+最终重建后的全量场景 RGB 配对结果如下。raster 指前后向光栅 API；完整渲染
+还包括投影、SH、分箱和相应反向等。数字是作业中位数的中位数，不是取最快一次。
+
+\begin{center}
+\begin{tabular}{rcc}
+\hline
+相机索引 & raster 倍率 & 完整可微渲染倍率 \\
+\hline
+0    & $1.337\times$ & $1.100\times$ \\
+2552 & $1.648\times$ & $1.016\times$ \\
+5103 & $1.363\times$ & $1.039\times$ \\
+\hline
+\end{tabular}
+\end{center}
+
+这只有三个视图，不是全部 5,104 个相机。相机 2552 的两个完整渲染配对方向
+不一致，其小幅汇总收益仍不确定。产品 RGB+ED 加 absgrad 设置在相机 0 上为
+$1.311\times$ raster、$1.081\times$ 完整渲染；不能用 RGB 三通道结果代替
+四通道产品设置。未测试优化器、损失、训练循环整体收益或训练收敛。
+
+\subsection{正确性证据也需要分层}
+
+最终二进制在默认流和非默认流上各通过 136 个差分测试，memcheck 和 synccheck
+均报告 0 错误。全量场景 RGB/alpha 与基线逐位相同，直接屏幕空间梯度的最差
+relative-L2 为 $2.62\times10^{-6}$（RGB）及 $1.48\times10^{-6}$
+（RGB+ED），低于保持不变的 $10^{-4}$ 门槛。
+
+但是完整参数路径的单次 raw-quaternion 梯度比较约为 $1.63\times10^{-4}$，
+\textbf{没有通过严格的 $10^{-4}$ 门槛}。重复原子累加噪声和近退化投影会放大
+误差，是理解现象的上下文，而不是豁免阈值的理由。固定 16 次运行、CPU FP64
+累积的平均梯度检查通过，四元数平均 relative-L2 分别为
+$4.57\times10^{-5}$ 和 $3.50\times10^{-5}$；这只支持均值一致性，
+不把单次失败变成通过，更不构成收敛证明。
+
+\subsection{一套可以带走的思考顺序}
+
+\begin{enumerate}
+ \item \textbf{固定语义。}先写清参数激活、像素中心、cutoff、cap、终止顺序、
+ 相等深度、空输入与流语义。否则所谓加速可能只是换了问题。
+ \item \textbf{减少集合。}先问能否减少 $P$、实际遍历次数和不必要 SH 行，
+ 再问单次求值能否少一条指令。
+ \item \textbf{匹配硬件形状。}把 9 项输出映射到拥有者，把 SH 活跃窗口限制在
+ 必要范围，把共享数据与线程像素映射一起设计，而不是照抄某个函数名。
+ \item \textbf{检查代数背后的浮点。}线性投影、log 指数合并和零 alpha 都有
+ 有效范围；边界比较、非有限中间值及原子顺序仍然决定实现正确性。
+ \item \textbf{逐步过门。}每个改动独立建立假说、差分回归、消融和配对时间；
+ 拒绝无收益方案，保留不确定性，不把未实现部分写成已完成结果。
+\end{enumerate}
+
+文章最值得迁移的不是 $7.30\times$ 这个数字，而是这条从算法工作量到硬件映射、
+从数值契约到证据边界的推理链。对本 fork 而言，较小且可验证的 backward 改动
+已经带来了可重复的 raster 收益；剩余方案应作为新的、独立的研究问题，
+而不是从 A100 图表中预支的性能承诺。

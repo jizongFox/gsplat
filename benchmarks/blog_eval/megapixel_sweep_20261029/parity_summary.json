@@ -1,0 +1,147 @@
+{
+  "binary_sha256": {
+    "base": "edd3fe4d939e22bdeecbb8148705d1c339d98662671bec1d6fa02ace7f1c2088",
+    "pr": "cffbc4e0d8c6e6322d867bfb4f7d3e1f38831e8409b1f473b2a35943c8e25f2a"
+  },
+  "timing_rows": 252,
+  "quality_cases": 42,
+  "forward_passes": 42,
+  "gradient_case_passes": 31,
+  "gradient_comparisons": 231,
+  "gradient_comparison_passes": 220,
+  "gradient_failures": [
+    {
+      "scope": "full",
+      "width": 1280,
+      "height": 720,
+      "camera_index": 0,
+      "gradient": "grad.quats",
+      "rel_l2": 0.0003762403786046367,
+      "max_abs": 0.2120044231414795,
+      "baseline_repeat_rel_l2": 0.00016453563543101192,
+      "candidate_repeat_rel_l2": 0.0002558994535323982,
+      "passed": false
+    },
+    {
+      "scope": "full",
+      "width": 1920,
+      "height": 1080,
+      "camera_index": 0,
+      "gradient": "grad.quats",
+      "rel_l2": 0.0007506152125312285,
+      "max_abs": 0.8067178726196289,
+      "baseline_repeat_rel_l2": 0.000261373844327645,
+      "candidate_repeat_rel_l2": 8.850916120493001e-05,
+      "passed": false
+    },
+    {
+      "scope": "full",
+      "width": 2560,
+      "height": 1440,
+      "camera_index": 0,
+      "gradient": "grad.quats",
+      "rel_l2": 0.0002423235773413894,
+      "max_abs": 0.2088794708251953,
+      "baseline_repeat_rel_l2": 0.00040271784720676733,
+      "candidate_repeat_rel_l2": 0.0003519295808437516,
+      "passed": false
+    },
+    {
+      "scope": "full",
+      "width": 3200,
+      "height": 1800,
+      "camera_index": 0,
+      "gradient": "grad.quats",
+      "rel_l2": 0.000729179837988559,
+      "max_abs": 0.9122161865234375,
+      "baseline_repeat_rel_l2": 0.0005318320582705105,
+      "candidate_repeat_rel_l2": 0.0007663649657412805,
+      "passed": false
+    },
+    {
+      "scope": "full",
+      "width": 3840,
+      "height": 2160,
+      "camera_index": 0,
+      "gradient": "grad.quats",
+      "rel_l2": 0.002330701904297456,
+      "max_abs": 4.690647125244141,
+      "baseline_repeat_rel_l2": 0.002042959772694642,
+      "candidate_repeat_rel_l2": 0.002441355814649058,
+      "passed": false
+    },
+    {
+      "scope": "full",
+      "width": 2560,
+      "height": 1440,
+      "camera_index": 2552,
+      "gradient": "grad.quats",
+      "rel_l2": 0.0005588439550260523,
+      "max_abs": 0.9219970703125,
+      "baseline_repeat_rel_l2": 0.00022957292196603492,
+      "candidate_repeat_rel_l2": 0.0006019650681480529,
+      "passed": false
+    },
+    {
+      "scope": "full",
+      "width": 3840,
+      "height": 2160,
+      "camera_index": 2552,
+      "gradient": "grad.quats",
+      "rel_l2": 0.0005948014774686023,
+      "max_abs": 2.028717041015625,
+      "baseline_repeat_rel_l2": 0.0005498267494910391,
+      "candidate_repeat_rel_l2": 0.0013748428549466717,
+      "passed": false
+    },
+    {
+      "scope": "full",
+      "width": 1920,
+      "height": 1080,
+      "camera_index": 5103,
+      "gradient": "grad.quats",
+      "rel_l2": 0.00020191918871559936,
+      "max_abs": 0.045055389404296875,
+      "baseline_repeat_rel_l2": 0.00019690520710418595,
+      "candidate_repeat_rel_l2": 8.040956822476086e-05,
+      "passed": false
+    },
+    {
+      "scope": "full",
+      "width": 2560,
+      "height": 1440,
+      "camera_index": 5103,
+      "gradient": "grad.quats",
+      "rel_l2": 0.0006390834997588433,
+      "max_abs": 0.19571304321289062,
+      "baseline_repeat_rel_l2": 0.00012232826515699824,
+      "candidate_repeat_rel_l2": 0.0003214599224568748,
+      "passed": false
+    },
+    {
+      "scope": "full",
+      "width": 3200,
+      "height": 1800,
+      "camera_index": 5103,
+      "gradient": "grad.quats",
+      "rel_l2": 0.00043385176164655406,
+      "max_abs": 0.16351318359375,
+      "baseline_repeat_rel_l2": 0.0003214929896170988,
+      "candidate_repeat_rel_l2": 0.00035977795936195303,
+      "passed": false
+    },
+    {
+      "scope": "full",
+      "width": 3840,
+      "height": 2160,
+      "camera_index": 5103,
+      "gradient": "grad.quats",
+      "rel_l2": 0.00037238430655548674,
+      "max_abs": 0.15258097648620605,
+      "baseline_repeat_rel_l2": 0.0003548794141567263,
+      "candidate_repeat_rel_l2": 0.001084284796773611,
+      "passed": false
+    }
+  ],
+  "skipped_cases": []
+}
