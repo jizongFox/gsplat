@@ -1,6 +1,7 @@
 #include "bindings.h"
 #include "helpers.cuh"
 #include "types.cuh"
+#include "warp_reduce_scatter.cuh"
 #include <cooperative_groups.h>
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
@@ -90,8 +91,6 @@ __global__ void rasterize_to_pixels_bwd_kernel(
             ? n_isects
             : tile_offsets[tile_id + 1];
     const uint32_t block_size = block.size();
-    const uint32_t num_batches =
-        (range_end - range_start + block_size - 1) / block_size;
 
     extern __shared__ int s[];
     int32_t *id_batch = (int32_t *)s; // [block_size]
@@ -124,6 +123,21 @@ __global__ void rasterize_to_pixels_bwd_kernel(
     cg::thread_block_tile<32> warp = cg::tiled_partition<32>(block);
     const int32_t warp_bin_final =
         cg::reduce(warp, bin_final, cg::greater<int>());
+    // last_ids are absolute intersection positions. Trim the tile's fully
+    // occluded suffix before staging backwards, not only inside each warp's
+    // pixel loop. Keep the original positions/IDs and do not mutate binning
+    // buffers, which may be reused by other channel chunks.
+    if (tr == 0) {
+        id_batch[0] = range_start;
+    }
+    block.sync();
+    if (warp.thread_rank() == 0) {
+        atomicMax(id_batch, warp_bin_final);
+    }
+    block.sync();
+    range_end = min(range_end, id_batch[0] + 1);
+    const uint32_t num_batches =
+        (range_end - range_start + block_size - 1) / block_size;
     for (uint32_t b = 0; b < num_batches; ++b) {
         // resync all threads before writing next batch of shared mem
         block.sync();
@@ -240,6 +254,48 @@ __global__ void rasterize_to_pixels_bwd_kernel(
                     buffer[k] += rgbs_batch[t * COLOR_DIM + k] * fac;
                 }
             }
+            if constexpr (COLOR_DIM <= 4) {
+                // RGB/depth have a narrow gradient vector: distribute its
+                // reduced components across lanes instead of reducing every
+                // component redundantly and serializing all atomics in lane 0.
+                constexpr int DIM = COLOR_DIM + 8;
+                S values[DIM];
+                GSPLAT_PRAGMA_UNROLL
+                for (uint32_t k = 0; k < COLOR_DIM; ++k) {
+                    values[k] = v_rgb_local[k];
+                }
+                values[COLOR_DIM] = v_conic_local.x;
+                values[COLOR_DIM + 1] = v_conic_local.y;
+                values[COLOR_DIM + 2] = v_conic_local.z;
+                values[COLOR_DIM + 3] = v_xy_local.x;
+                values[COLOR_DIM + 4] = v_xy_local.y;
+                values[COLOR_DIM + 5] = v_opacity_local;
+                values[COLOR_DIM + 6] = v_xy_abs_local.x;
+                values[COLOR_DIM + 7] = v_xy_abs_local.y;
+                int component = 0;
+                bool owner = true;
+                S sum = WarpReduceScatter<DIM, 16>::run(
+                    values, warp.thread_rank(), component, owner
+                );
+                if (owner) {
+                    int32_t g = id_batch[t];
+                    S *destination = nullptr;
+                    if (component < COLOR_DIM) {
+                        destination = v_colors + COLOR_DIM * g + component;
+                    } else if (component < COLOR_DIM + 3) {
+                        destination = (S *)v_conics + 3 * g + component - COLOR_DIM;
+                    } else if (component < COLOR_DIM + 5) {
+                        destination = (S *)v_means2d + 2 * g + component - COLOR_DIM - 3;
+                    } else if (component == COLOR_DIM + 5) {
+                        destination = v_opacities + g;
+                    } else if (v_means2d_abs != nullptr) {
+                        destination = (S *)v_means2d_abs + 2 * g + component - COLOR_DIM - 6;
+                    }
+                    if (destination != nullptr) {
+                        gpuAtomicAdd(destination, sum);
+                    }
+                }
+            } else {
             warpSum<COLOR_DIM, S>(v_rgb_local, warp);
             warpSum<decltype(warp), S>(v_conic_local, warp);
             warpSum<decltype(warp), S>(v_xy_local, warp);
@@ -271,6 +327,7 @@ __global__ void rasterize_to_pixels_bwd_kernel(
                 }
 
                 gpuAtomicAdd(v_opacities + g, v_opacity_local);
+            }
             }
         }
     }
