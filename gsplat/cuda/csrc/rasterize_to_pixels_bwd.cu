@@ -271,7 +271,47 @@ __global__ void rasterize_to_pixels_bwd_kernel(
                     }
                 }
             }
+            auto standard_reduce = [&]() {
+                warpSum<COLOR_DIM, S>(v_rgb_local, warp);
+                warpSum<decltype(warp), S>(v_conic_local, warp);
+                warpSum<decltype(warp), S>(v_xy_local, warp);
+                if (v_means2d_abs != nullptr) {
+                    warpSum<decltype(warp), S>(v_xy_abs_local, warp);
+                }
+                warpSum<decltype(warp), S>(v_opacity_local, warp);
+                if (warp.thread_rank() == 0) {
+                    int32_t g = id_batch[t]; // flatten index in [C * N] or [nnz]
+                    S *v_rgb_ptr = (S *)(v_colors) + COLOR_DIM * g;
+                    GSPLAT_PRAGMA_UNROLL
+                    for (uint32_t k = 0; k < COLOR_DIM; ++k) {
+                        gpuAtomicAdd(v_rgb_ptr + k, v_rgb_local[k]);
+                    }
+
+                    S *v_conic_ptr = (S *)(v_conics) + 3 * g;
+                    gpuAtomicAdd(v_conic_ptr, v_conic_local.x);
+                    gpuAtomicAdd(v_conic_ptr + 1, v_conic_local.y);
+                    gpuAtomicAdd(v_conic_ptr + 2, v_conic_local.z);
+
+                    S *v_xy_ptr = (S *)(v_means2d) + 2 * g;
+                    gpuAtomicAdd(v_xy_ptr, v_xy_local.x);
+                    gpuAtomicAdd(v_xy_ptr + 1, v_xy_local.y);
+
+                    if (v_means2d_abs != nullptr) {
+                        S *v_xy_abs_ptr = (S *)(v_means2d_abs) + 2 * g;
+                        gpuAtomicAdd(v_xy_abs_ptr, v_xy_abs_local.x);
+                        gpuAtomicAdd(v_xy_abs_ptr + 1, v_xy_abs_local.y);
+                    }
+
+                    gpuAtomicAdd(v_opacities + g, v_opacity_local);
+                }
+            };
             if constexpr (COLOR_DIM <= 4) {
+                // Scatter requires all 32 lanes, including upper component
+                // owners. Use the baseline path for any partial-warp block.
+                if (block_size % 32 != 0) {
+                    standard_reduce();
+                    continue;
+                }
                 // RGB/depth have a narrow gradient vector: distribute its
                 // reduced components across lanes instead of reducing every
                 // component redundantly and serializing all atomics in lane 0.
@@ -316,38 +356,7 @@ __global__ void rasterize_to_pixels_bwd_kernel(
                     }
                 }
             } else {
-                warpSum<COLOR_DIM, S>(v_rgb_local, warp);
-                warpSum<decltype(warp), S>(v_conic_local, warp);
-                warpSum<decltype(warp), S>(v_xy_local, warp);
-                if (v_means2d_abs != nullptr) {
-                    warpSum<decltype(warp), S>(v_xy_abs_local, warp);
-                }
-                warpSum<decltype(warp), S>(v_opacity_local, warp);
-                if (warp.thread_rank() == 0) {
-                    int32_t g = id_batch[t]; // flatten index in [C * N] or [nnz]
-                    S *v_rgb_ptr = (S *)(v_colors) + COLOR_DIM * g;
-                    GSPLAT_PRAGMA_UNROLL
-                    for (uint32_t k = 0; k < COLOR_DIM; ++k) {
-                        gpuAtomicAdd(v_rgb_ptr + k, v_rgb_local[k]);
-                    }
-
-                    S *v_conic_ptr = (S *)(v_conics) + 3 * g;
-                    gpuAtomicAdd(v_conic_ptr, v_conic_local.x);
-                    gpuAtomicAdd(v_conic_ptr + 1, v_conic_local.y);
-                    gpuAtomicAdd(v_conic_ptr + 2, v_conic_local.z);
-
-                    S *v_xy_ptr = (S *)(v_means2d) + 2 * g;
-                    gpuAtomicAdd(v_xy_ptr, v_xy_local.x);
-                    gpuAtomicAdd(v_xy_ptr + 1, v_xy_local.y);
-
-                    if (v_means2d_abs != nullptr) {
-                        S *v_xy_abs_ptr = (S *)(v_means2d_abs) + 2 * g;
-                        gpuAtomicAdd(v_xy_abs_ptr, v_xy_abs_local.x);
-                        gpuAtomicAdd(v_xy_abs_ptr + 1, v_xy_abs_local.y);
-                    }
-
-                    gpuAtomicAdd(v_opacities + g, v_opacity_local);
-                }
+                standard_reduce();
             }
         }
     }
