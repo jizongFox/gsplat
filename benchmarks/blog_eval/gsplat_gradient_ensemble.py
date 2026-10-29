@@ -23,11 +23,12 @@ from pathlib import Path
 import gsplat
 import torch
 
-from gsplat_blog_benchmark import load_scene
+from gsplat_blog_benchmark import inspect_scene_metadata, load_scene
 
 GRADIENT_REL_L2 = 1e-4
 FORWARD_MAX_ABS = 2e-5
 SEED = 2026
+REFERENCE_PROTOCOL = "predeclared_raw_parameter_mean_v2"
 
 
 def file_hash(path: Path) -> str:
@@ -40,6 +41,87 @@ def file_hash(path: Path) -> str:
 
 def tensor_hash(value: torch.Tensor) -> str:
     return hashlib.sha256(value.contiguous().numpy().tobytes()).hexdigest()
+
+
+def reference_provenance(args: argparse.Namespace) -> t.Dict[str, str]:
+    return {
+        "ply": str(args.ply.resolve()),
+        "cameras": str(args.cameras.resolve()),
+        "script": str(Path(__file__).resolve()),
+    }
+
+
+def reference_input_signature(args: argparse.Namespace) -> t.Dict[str, t.Any]:
+    """One owner for every CPU-known compatibility field."""
+    return {
+        "protocol": REFERENCE_PROTOCOL,
+        "script_sha256": file_hash(Path(__file__)),
+        "ply_sha256": file_hash(args.ply),
+        "cameras_sha256": file_hash(args.cameras),
+        "camera_index": args.camera_index,
+        "max_points": args.max_points,
+        "mode": args.mode,
+        "absgrad": args.mode == "RGB+ED",
+        "packed": False,
+        "tile_size": 16,
+        "compact_box": True,
+        "compact_box_impl": "sweep",
+        "settings_note": (
+            "Compact-box sweep corrected before candidate ensemble collection; "
+            "unpaired baseline-only results replaced. Count and thresholds unchanged."
+        ),
+        "seed": SEED,
+        "upstream": "seeded_cuda_randn_image_and_alpha_v1_fixed_across_passes",
+        "repeats": args.repeats,
+        "accumulation": "cpu_float64_add_sample_div_repeats_in_order",
+        "gradient_rel_l2": GRADIENT_REL_L2,
+        "forward_max_abs": FORWARD_MAX_ABS,
+        "torch": str(torch.__version__),
+        "cuda": torch.version.cuda,
+    }
+
+
+def validate_reference_version(reference: t.Dict[str, t.Any]) -> None:
+    if reference.get("signature", {}).get("protocol") != REFERENCE_PROTOCOL:
+        raise ValueError("Reference protocol version differs; regenerate the baseline")
+
+
+def validate_reference_signature(
+    reference: t.Dict[str, t.Any],
+    signature: t.Dict[str, t.Any],
+    *,
+    partial: bool = False,
+) -> None:
+    validate_reference_version(reference)
+    saved = reference["signature"]
+    if partial:
+        saved = {key: saved.get(key) for key in signature}
+    if saved != signature or reference["repeats"] != signature["repeats"]:
+        raise ValueError("Reference protocol/scene/mode/repeats signature differs")
+
+
+def preflight_reference(args: argparse.Namespace):
+    reference = None
+    if args.compare_reference:
+        reference = torch.load(
+            args.compare_reference, map_location="cpu", weights_only=True
+        )
+        validate_reference_version(reference)
+    signature = reference_input_signature(args)
+    if reference is not None:
+        validate_reference_signature(reference, signature, partial=True)
+    scene_metadata = inspect_scene_metadata(
+        args.ply, args.cameras, args.max_points, args.camera_index
+    )
+    signature.update(
+        points_used=scene_metadata["points_used"],
+        points_total=scene_metadata["points_total"],
+        resolution=scene_metadata["resolution"],
+        degree=scene_metadata["degree"],
+    )
+    if reference is not None:
+        validate_reference_signature(reference, signature)
+    return reference, signature, scene_metadata
 
 
 def accumulate(
@@ -88,7 +170,7 @@ def compare(
     return metrics
 
 
-def main() -> None:
+def parse_args(argv: t.Optional[t.Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--extension", type=Path, required=True)
     parser.add_argument("--mode", choices=("RGB", "RGB+ED"), default="RGB")
@@ -105,15 +187,23 @@ def main() -> None:
     action.add_argument("--save-reference", type=Path)
     action.add_argument("--compare-reference", type=Path)
     parser.add_argument("--output", type=Path, help="Optional JSON report")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.ply is None or args.cameras is None:
-        parser.error("--ply and --cameras are required for the self-contained gsplat benchmark")
+        parser.error(
+            "--ply and --cameras are required for the self-contained gsplat benchmark"
+        )
     if args.repeats < 1 or args.max_points < 0 or args.camera_index < 0:
         parser.error("repeats must be positive; max-points/camera-index nonnegative")
     if args.save_reference and args.save_reference.resolve().is_relative_to(
         Path(__file__).resolve().parents[1]
     ):
         parser.error("Save large PT references outside Git, e.g. /tmp/opencode/")
+    return args
+
+
+def main() -> None:
+    args = parse_args()
+    reference, signature, scene_metadata = preflight_reference(args)
 
     torch.set_num_threads(8)
     # Match the blog harness: install gsplat.csrc before importing _backend.
@@ -145,7 +235,20 @@ def main() -> None:
         height,
         degree,
         total_n,
-    ) = load_scene(args.ply, args.cameras, args.max_points, args.camera_index)
+    ) = load_scene(
+        args.ply,
+        args.cameras,
+        args.max_points,
+        args.camera_index,
+        scene_metadata=scene_metadata,
+    )
+    if (
+        int(means.shape[0]) != signature["points_used"]
+        or total_n != signature["points_total"]
+        or [width, height] != signature["resolution"]
+        or degree != signature["degree"]
+    ):
+        raise RuntimeError("Loaded scene does not match preflight metadata")
     inputs = {
         "means": means,
         "quats": quats,
@@ -160,46 +263,12 @@ def main() -> None:
         torch.randn((1, height, width, channels), generator=generator, device="cuda")
         for channels in (3 if args.mode == "RGB" else 4, 1)
     )
-    signature = {
-        "protocol": "predeclared_raw_parameter_mean_v1",
-        "script_sha256": file_hash(Path(__file__)),
-        "ply": str(args.ply.resolve()),
-        "ply_sha256": file_hash(args.ply),
-        "cameras": str(args.cameras.resolve()),
-        "cameras_sha256": file_hash(args.cameras),
-        "camera_index": args.camera_index,
-        "points_used": int(means.shape[0]),
-        "points_total": total_n,
-        "resolution": [width, height],
-        "degree": degree,
-        "mode": args.mode,
-        "absgrad": args.mode == "RGB+ED",
-        "packed": False,
-        "tile_size": 16,
-        "compact_box": True,
-        "compact_box_impl": "sweep",
-        "settings_note": (
-            "Compact-box sweep corrected before candidate ensemble collection; "
-            "unpaired baseline-only results replaced. Count and thresholds unchanged."
-        ),
-        "seed": SEED,
-        "upstream": "seeded_cuda_randn_image_and_alpha_v1_fixed_across_passes",
-        "upstream_sha256": [tensor_hash(x.cpu()) for x in upstream],
-        "repeats": args.repeats,
-        "accumulation": "cpu_float64_add_sample_div_repeats_in_order",
-        "gradient_rel_l2": GRADIENT_REL_L2,
-        "forward_max_abs": FORWARD_MAX_ABS,
-        "torch": str(torch.__version__),
-        "cuda": torch.version.cuda,
-        "device": torch.cuda.get_device_name(),
-    }
-    reference = None
-    if args.compare_reference:
-        reference = torch.load(
-            args.compare_reference, map_location="cpu", weights_only=True
-        )
-        if reference["signature"] != signature or reference["repeats"] != args.repeats:
-            raise ValueError("Reference protocol/scene/mode/repeats signature differs")
+    signature.update(
+        upstream_sha256=[tensor_hash(x.cpu()) for x in upstream],
+        device=torch.cuda.get_device_name(),
+    )
+    if reference is not None:
+        validate_reference_signature(reference, signature)
 
     averages: t.Dict[str, torch.Tensor] = {}
     finite_passes = []
@@ -261,6 +330,7 @@ def main() -> None:
         torch.save(
             {
                 "signature": signature,
+                "provenance": reference_provenance(args),
                 "extension_identity": extension_identity,
                 "repeats": args.repeats,
                 "tensors": averages,
@@ -270,6 +340,7 @@ def main() -> None:
         )
     result = {
         "signature": signature,
+        "provenance": reference_provenance(args),
         "extension_identity": extension_identity,
         "reference_extension_identity": (
             reference["extension_identity"] if reference else None

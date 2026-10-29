@@ -315,44 +315,47 @@ __global__ void rasterize_to_pixels_bwd_kernel(
                 // RGB/depth have a narrow gradient vector: distribute its
                 // reduced components across lanes instead of reducing every
                 // component redundantly and serializing all atomics in lane 0.
-                constexpr int DIM = COLOR_DIM + 8;
-                S values[DIM];
+                // Packed gradient layout. Reuse these boundaries for both
+                // packing and writeback so component offsets have one owner.
+                constexpr int conic_begin = COLOR_DIM;
+                constexpr int mean_begin = conic_begin + 3;
+                constexpr int opacity_index = mean_begin + 2;
+                constexpr int abs_mean_begin = opacity_index + 1;
+                constexpr int gradient_count = abs_mean_begin + 2;
+                S values[gradient_count];
                 GSPLAT_PRAGMA_UNROLL
                 for (uint32_t k = 0; k < COLOR_DIM; ++k) {
                     values[k] = v_rgb_local[k];
                 }
-                values[COLOR_DIM] = v_conic_local.x;
-                values[COLOR_DIM + 1] = v_conic_local.y;
-                values[COLOR_DIM + 2] = v_conic_local.z;
-                values[COLOR_DIM + 3] = v_xy_local.x;
-                values[COLOR_DIM + 4] = v_xy_local.y;
-                values[COLOR_DIM + 5] = v_opacity_local;
-                values[COLOR_DIM + 6] = v_xy_abs_local.x;
-                values[COLOR_DIM + 7] = v_xy_abs_local.y;
-                int component = 0;
-                bool owner = true;
-                S sum = WarpReduceScatter<DIM, 16>::run(
-                    values, warp.thread_rank(), component, owner
-                );
-                if (owner) {
+                values[conic_begin] = v_conic_local.x;
+                values[conic_begin + 1] = v_conic_local.y;
+                values[conic_begin + 2] = v_conic_local.z;
+                values[mean_begin] = v_xy_local.x;
+                values[mean_begin + 1] = v_xy_local.y;
+                values[opacity_index] = v_opacity_local;
+                values[abs_mean_begin] = v_xy_abs_local.x;
+                values[abs_mean_begin + 1] = v_xy_abs_local.y;
+                const auto reduced = warp_reduce_scatter(values, warp);
+                if (reduced.owner) {
+                    const int component = reduced.component;
                     int32_t g = id_batch[t];
                     S *destination = nullptr;
-                    if (component < COLOR_DIM) {
+                    if (component < conic_begin) {
                         destination = v_colors + COLOR_DIM * g + component;
-                    } else if (component < COLOR_DIM + 3) {
+                    } else if (component < mean_begin) {
                         destination =
-                            (S *)v_conics + 3 * g + component - COLOR_DIM;
-                    } else if (component < COLOR_DIM + 5) {
+                            (S *)v_conics + 3 * g + component - conic_begin;
+                    } else if (component < opacity_index) {
                         destination =
-                            (S *)v_means2d + 2 * g + component - COLOR_DIM - 3;
-                    } else if (component == COLOR_DIM + 5) {
+                            (S *)v_means2d + 2 * g + component - mean_begin;
+                    } else if (component == opacity_index) {
                         destination = v_opacities + g;
                     } else if (v_means2d_abs != nullptr) {
                         destination =
-                            (S *)v_means2d_abs + 2 * g + component - COLOR_DIM - 6;
+                            (S *)v_means2d_abs + 2 * g + component - abs_mean_begin;
                     }
                     if (destination != nullptr) {
-                        gpuAtomicAdd(destination, sum);
+                        gpuAtomicAdd(destination, reduced.value);
                     }
                 }
             } else {

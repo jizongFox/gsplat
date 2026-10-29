@@ -15,6 +15,7 @@ import contextlib
 import hashlib
 import importlib.util
 import json
+import math
 import platform
 import sys
 import typing as t
@@ -29,7 +30,7 @@ from gsplat.cuda import _wrapper
 from gsplat.rendering import rasterization
 
 DEFAULT_SCENE = None  # Supply --ply and --cameras for an external scene.
-REFERENCE_PROTOCOL_VERSION = 2
+REFERENCE_PROTOCOL_VERSION = 3
 
 
 def file_sha256(path: Path) -> str:
@@ -40,24 +41,14 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def reference_signature(
-    args: argparse.Namespace,
-    points_used: int,
-    width: int,
-    height: int,
-    degree: int,
-) -> t.Dict[str, t.Any]:
-    """Identify the input contents and rendering workload, outside timing."""
+def reference_input_signature(args: argparse.Namespace) -> t.Dict[str, t.Any]:
+    """CPU-known identity; local paths belong to provenance, not equality."""
     return {
         "protocol_version": REFERENCE_PROTOCOL_VERSION,
-        "ply": str(args.ply.resolve()),
         "ply_sha256": file_sha256(args.ply),
-        "cameras": str(args.cameras.resolve()),
         "cameras_sha256": file_sha256(args.cameras),
         "camera_index": args.camera_index,
-        "points_used": points_used,
-        "resolution": [width, height],
-        "degree": degree,
+        "max_points": args.max_points,
         "seed": args.seed,
         "raster_only": args.raster_only,
         "packed": args.packed,
@@ -71,18 +62,144 @@ def reference_signature(
     }
 
 
-def validate_reference_signature(
-    reference: t.Dict[str, t.Any], signature: t.Dict[str, t.Any]
-) -> None:
-    saved_signature = reference.get("signature", {})
-    if saved_signature.get("protocol_version") != REFERENCE_PROTOCOL_VERSION:
+def reference_provenance(args: argparse.Namespace) -> t.Dict[str, str]:
+    return {name: str(getattr(args, name).resolve()) for name in ("ply", "cameras")}
+
+
+def reference_signature(
+    args: argparse.Namespace,
+    points_used: int,
+    width: int,
+    height: int,
+    degree: int,
+    input_signature: t.Optional[t.Dict[str, t.Any]] = None,
+) -> t.Dict[str, t.Any]:
+    return {
+        **(
+            reference_input_signature(args)
+            if input_signature is None
+            else input_signature
+        ),
+        "points_used": points_used,
+        "resolution": [width, height],
+        "degree": degree,
+    }
+
+
+def validate_reference_version(reference: t.Dict[str, t.Any]) -> None:
+    if (
+        reference.get("signature", {}).get("protocol_version")
+        != REFERENCE_PROTOCOL_VERSION
+    ):
         raise ValueError("Reference protocol version differs; regenerate the baseline")
+
+
+def validate_reference_signature(
+    reference: t.Dict[str, t.Any],
+    signature: t.Dict[str, t.Any],
+    *,
+    partial: bool = False,
+) -> None:
+    validate_reference_version(reference)
+    saved_signature = reference.get("signature", {})
+    if partial:
+        saved_signature = {key: saved_signature.get(key) for key in signature}
     if saved_signature != signature:
         raise ValueError("Reference input contents or rendering settings differ")
 
 
-def load_scene(ply_path: Path, camera_path: Path, max_points: int, camera_index: int):
-    vertex = PlyData.read(str(ply_path), mmap=True)["vertex"]
+def inspect_scene_metadata(
+    ply_path: Path, camera_path: Path, max_points: int, camera_index: int
+) -> t.Dict[str, t.Any]:
+    """Read CPU-side scene metadata without allocating tensors or initializing CUDA."""
+    plydata = PlyData.read(str(ply_path), mmap=True)
+    vertex = plydata["vertex"]
+    property_names = [prop.name for prop in vertex.properties]
+    if len(property_names) != len(set(property_names)):
+        raise ValueError("3DGS PLY vertex properties contain duplicate names")
+    required = {"x", "y", "z", "opacity"}
+    required.update(f"scale_{index}" for index in range(3))
+    required.update(f"rot_{index}" for index in range(4))
+    required.update(f"f_dc_{index}" for index in range(3))
+    missing = sorted(required.difference(property_names))
+    if missing:
+        raise ValueError(f"3DGS PLY is missing required vertex properties: {missing}")
+
+    rest_names = [name for name in property_names if name.startswith("f_rest_")]
+    try:
+        rest_indices = [int(name.rsplit("_", 1)[1]) for name in rest_names]
+    except ValueError as error:
+        raise ValueError(
+            "3DGS PLY f_rest property names must end in an integer"
+        ) from error
+    rest_names = [name for _, name in sorted(zip(rest_indices, rest_names))]
+    rest_indices.sort()
+    if rest_indices != list(range(len(rest_indices))):
+        raise ValueError("3DGS PLY f_rest properties must be contiguous from f_rest_0")
+    if len(rest_names) % 3 != 0:
+        raise ValueError("3DGS PLY must contain three f_rest coefficients per SH basis")
+    coefficient_count = 1 + len(rest_names) // 3
+    basis_width = math.isqrt(coefficient_count)
+    if basis_width * basis_width != coefficient_count:
+        raise ValueError(
+            "3DGS PLY SH coefficient count must equal three times a square basis count"
+        )
+    if basis_width > 5:
+        raise ValueError("This gsplat CUDA SH path supports degrees 0 through 4")
+
+    point_count = len(vertex)
+    points_used = max_points if 0 < max_points < point_count else point_count
+    degree = basis_width - 1
+    with camera_path.open() as stream:
+        camera = json.load(stream)[camera_index]
+    return {
+        "plydata": plydata,
+        "camera": camera,
+        "points_total": point_count,
+        "points_used": points_used,
+        "resolution": [int(camera["width"]), int(camera["height"])],
+        "degree": degree,
+    }
+
+
+def preflight_reference(args: argparse.Namespace):
+    """Reject incompatible evidence before extension loading or scene upload."""
+    reference = None
+    if args.compare_reference:
+        reference = torch.load(
+            args.compare_reference, map_location="cpu", weights_only=True
+        )
+        # Version comes first, even when the current scene files do not exist.
+        validate_reference_version(reference)
+    signature = reference_input_signature(args)
+    if reference is not None:
+        validate_reference_signature(reference, signature, partial=True)
+    scene_metadata = inspect_scene_metadata(
+        args.ply, args.cameras, args.max_points, args.camera_index
+    )
+    signature.update(
+        points_used=scene_metadata["points_used"],
+        points_total=scene_metadata["points_total"],
+        resolution=scene_metadata["resolution"],
+        degree=scene_metadata["degree"],
+    )
+    if reference is not None:
+        validate_reference_signature(reference, signature)
+    return reference, signature, scene_metadata
+
+
+def load_scene(
+    ply_path: Path,
+    camera_path: Path,
+    max_points: int,
+    camera_index: int,
+    *,
+    scene_metadata: t.Optional[t.Dict[str, t.Any]] = None,
+):
+    scene_metadata = scene_metadata or inspect_scene_metadata(
+        ply_path, camera_path, max_points, camera_index
+    )
+    vertex = scene_metadata["plydata"]["vertex"]
     n = len(vertex)
     if max_points > 0 and max_points < n:
         indices = np.linspace(0, n - 1, max_points, dtype=np.int64)
@@ -110,8 +227,7 @@ def load_scene(ply_path: Path, camera_path: Path, max_points: int, camera_index:
     else:
         colors, degree = coeffs, 0
 
-    with camera_path.open() as f:
-        camera = json.load(f)[camera_index]
+    camera = scene_metadata["camera"]
     rotation = np.asarray(camera["rotation"], dtype=np.float32)
     c2w = np.eye(4, dtype=np.float32)
     c2w[:3, :3] = rotation
@@ -232,6 +348,7 @@ def parse_args(argv: t.Optional[t.Sequence[str]] = None) -> argparse.Namespace:
 
 def main():
     args = parse_args()
+    reference, signature, scene_metadata = preflight_reference(args)
 
     if args.extension:
         spec = importlib.util.spec_from_file_location(
@@ -256,7 +373,20 @@ def main():
         height,
         degree,
         total_n,
-    ) = load_scene(args.ply, args.cameras, args.max_points, args.camera_index)
+    ) = load_scene(
+        args.ply,
+        args.cameras,
+        args.max_points,
+        args.camera_index,
+        scene_metadata=scene_metadata,
+    )
+    if (
+        means.shape[0] != signature["points_used"]
+        or total_n != signature["points_total"]
+        or [width, height] != signature["resolution"]
+        or degree != signature["degree"]
+    ):
+        raise RuntimeError("Loaded scene does not match preflight metadata")
     inputs = dict(
         means=means,
         quats=quats,
@@ -390,13 +520,6 @@ def main():
                 values["grad.means2d_abs"] = absgrad.detach().cpu()
         return values
 
-    signature = reference_signature(args, means.shape[0], width, height, degree)
-    reference = None
-    if args.compare_reference:
-        reference = torch.load(
-            args.compare_reference, map_location="cpu", weights_only=True
-        )
-        validate_reference_signature(reference, signature)
     validation = {} if args.timing_only else snapshot()
     finite = {name: bool(torch.isfinite(x).all()) for name, x in validation.items()}
     checks = {"finite": finite}
@@ -412,6 +535,7 @@ def main():
             torch.save(
                 {
                     "signature": signature,
+                    "provenance": reference_provenance(args),
                     "tensors": validation,
                     "baseline_repeat": repeat,
                     "baseline_noise": checks["baseline_noise"],
@@ -510,6 +634,7 @@ def main():
 
     result = {
         **signature,
+        "provenance": reference_provenance(args),
         "points_total": total_n,
         "points_used": means.shape[0],
         "degree": degree,

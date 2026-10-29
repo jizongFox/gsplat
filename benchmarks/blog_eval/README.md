@@ -28,18 +28,55 @@ never both in one invocation. Conflicting actions are rejected before extension
 loading, scene loading or file writes, so a comparison cannot replace its own
 baseline.
 
-Reference protocol version 2 records SHA-256 hashes of both input files and all
-selected rendering settings, including `tile_size`, `compact_box` and
+Single-pass reference protocol version **3** records SHA-256 hashes of both
+input files and all selected rendering settings, including `tile_size`, `compact_box` and
 `compact_box_impl`. Hashing is setup work outside the timed rendering loop.
-Comparison rejects incompatible workloads before tensor comparison. References
-from the earlier, incomplete protocol must be regenerated; they are not silently
-upgraded. Cross-setting ablations need their own matching baseline references.
+The fixed-count gradient ensemble uses the distinct protocol
+**`predeclared_raw_parameter_mean_v2`**, retaining its own script content hash.
+Absolute input paths (and the ensemble script path) are local `provenance`, not
+equality fields: identical bytes relocated to another directory remain compatible.
+Both protocols check the CPU-loaded reference version first, then input hashes,
+argument-known settings, and scene metadata (dimensions, point count and SH
+degree) before loading the extension or uploading tensors. The same metadata
+object is passed to the loader, avoiding a second PLY/camera parse; the resulting
+tensor shapes are checked against it before rendering. The ensemble checks
+upstream hashes and device identity before its first pass.
+
+The preflight also validates the standard 3DGS vertex fields and SH schema:
+required position/scale/rotation/opacity/DC fields, contiguous numeric
+`f_rest_0...` names, three rest coefficients per basis, and a square basis count.
+Malformed PLY layouts fail with a descriptive `ValueError` before CUDA setup,
+rather than surfacing later as a property lookup or reshape error.
+
+Regenerate the old single-pass v2 and ensemble v1 references with
+`--save-reference` using the updated matching harness/settings, then compare with
+`--compare-reference` in a separate process. There is no implicit conversion of
+old references. Cross-setting ablations need their own matching baselines.
+
+The raster fixture suite also appends channel-2 cases without changing the order
+or index-derived seeds of the existing named fixtures; the saved suite config
+still rejects references made with an earlier suite version.
 
 The protocol and argument guards have CPU-only regression tests:
 
 ```bash
-python -m pytest -q tests/test_blog_benchmark_reference.py
+python -m pytest -q tests/test_blog_benchmark_reference.py tests/test_blog_ensemble_reference.py
 ```
+
+The reduce-scatter helper also has a standalone ownership/sum test independent
+of the rasterizer VJP. From the gsplat repository root, compile and run it with
+the same CUDA toolkit used for the extension:
+
+```bash
+nvcc -std=c++17 -arch=sm_89 -Igsplat/cuda/include \
+  tests/cuda/warp_reduce_scatter_contract.cu -o /tmp/scatter-contract
+/tmp/scatter-contract
+compute-sanitizer --tool memcheck --error-exitcode 99 /tmp/scatter-contract
+```
+
+It checks unique component owners and exact integer sums for dimensions 1–16,
+with one and multiple warps per block. The raster matrix additionally exercises
+the production 9–12 component layouts and the partial-warp fallback.
 
 The canonical evaluation/tutorial is `docs/cuda_blog_zh/`. Final measurements
 and correctly scoped limitations are in `REPORT.md` and

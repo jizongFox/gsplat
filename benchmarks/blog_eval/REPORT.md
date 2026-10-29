@@ -5,7 +5,7 @@
 **Delivery commit: `88513ea`**, including the partial-warp fallback. An extra
 tile4 check caught zero gradients in the earlier `b96efa8` binary; that binary
 is retired. All results in this executive summary were refreshed on the rebuilt
-delivery binary. It passes **136 cases on each stream mode**, memcheck and
+delivery binary. It passes **166 cases on each stream mode**, memcheck and
 synccheck (0 errors), and fixed-16 mean-gradient checks in RGB and RGB+ED.
 
 The retained implementation is **backward-only**: narrow-channel warp
@@ -29,7 +29,7 @@ small/noisy, and camera 2552 regresses in one of its two pairs. No optimizer/los
 speedup or article-level 7× result is claimed.
 
 Final-binary full-scene RGB/alpha are bit-identical. Screen-space gradient
-relative-L2 is at most **2.62e-6**; the 136-case matrix and both sanitizers pass.
+relative-L2 is at most **2.62e-6**; the 166-case matrix and both sanitizers pass.
 **The strict raw-quaternion `1e-4` single-shot gate is not universally met:**
 the rebuilt RGB and RGB+ED comparisons are both about `1.63e-4`. Fixed-16 mean
 quaternion gradients pass (`4.57e-5` / `3.50e-5`) with unchanged thresholds, but
@@ -78,6 +78,41 @@ delivery binary. Earlier data are not pooled into final speedup estimates.
   report relative L2 plus absolute errors, including baseline atomic noise.
 - Preserve gsplat's 0.999 alpha cap and pixel-center/termination semantics,
   rather than adopting the article's different reference implementation.
+
+## Follow-up: reference protocol and preflight ownership
+
+After PR review, the benchmark protocol was made explicit and fail-fast:
+
+- Single-pass snapshots use protocol **v3**; fixed-count mean-gradient snapshots
+  retain the distinct `predeclared_raw_parameter_mean_v2` protocol.
+- Reference compatibility compares SHA-256 input contents and declared workload
+  settings. Absolute paths are recorded separately as local provenance.
+- CPU preflight checks version, content/settings, then PLY/camera-derived point
+  count, resolution, SH degree and required 3DGS property layout before loading
+  the CUDA extension or uploading scene tensors. The parsed metadata is reused
+  by tensor loading and actual shapes are checked against it.
+- Standard 3DGS SH input is validated as contiguous `f_rest_0...`, three
+  coefficients per RGB basis, square basis count, and degree 0--4 supported by
+  this CUDA SH implementation. Invalid schemas fail with a clear `ValueError`.
+- Existing PLY input property names/order, point sampling and tensor transforms
+  are unchanged for valid files; the metadata pass reuses its memory-mapped
+  `PlyData` object rather than parsing/uploading the scene twice.
+- Reference save and compare are mutually exclusive, so a command cannot
+  overwrite a baseline before loading and comparing it.
+
+Old single-pass protocol-v2 and ensemble-v1 references must be regenerated; no
+implicit conversion is attempted. Hashing the scene content is setup work outside
+the timed rendering loop. CUDA device identity is only knowable after runtime
+initialization; the ensemble checks it before its first rendering pass, while
+file/workload/scene metadata incompatibilities fail before CUDA setup.
+
+The review-follow-up candidate rebuilt successfully. It passed **166 differential
+cases** on default and non-default streams, plus memcheck and synccheck (zero
+errors each). CPU benchmark protocol tests and the standalone full-warp helper
+contract test pass. These checks validate the contract refactor; no new performance
+claim is inferred from them. The published timing table above remains the earlier
+delivery-binary measurement because the follow-up changes signatures/layout
+ownership but did not run a new timing study.
 
 ## Checkpoint 1 — source review and benchmark setup
 
@@ -479,10 +514,10 @@ as a 6×6 tile. Complete-warp narrow-channel blocks retain reduce-scatter; wide
 channels retain the baseline path. The helper itself is not made to pretend
 that an active mask fixes missing component owners.
 
-The expanded matrix now has **136 cases**, including tile4 with channels
-1/3/4/8 and absgrad on/off, plus tile6 cases. All pass against a fresh baseline
+The expanded matrix now has **166 cases**, including tile4 with channels
+1/2/3/4/8 and absgrad on/off, plus tile6 cases. All pass against a fresh baseline
 reference on both default and non-default streams. The rebuilt binary also
-passes both memcheck and synccheck over all 136 cases with **0 errors**.
+passes both memcheck and synccheck over all 166 cases with **0 errors**.
 Evidence: `results/partial-warp-{baseline,final-default,final-nondefault}.json`
 and `partial-warp-final-{memcheck,synccheck}.{json,log}`.
 
@@ -518,7 +553,7 @@ manifest. No compilation or other task-owned GPU workload overlapped these runs.
 - Final full-scene intersection IDs reach **20,789,812**, directly exercising
   IDs beyond 24 bits; no truncating contributor-mask packing was introduced.
 
-The source-to-binary checks, **136-case default/non-default suites**, both
+The source-to-binary checks, **166-case default/non-default suites**, both
 sanitizers, ensemble reports, paired timing identities and explicit single-shot
 limitations are consolidated in `results/final_verification.json` and
 `results/build_manifest.json`. Python compilation, Black and diff checks pass.

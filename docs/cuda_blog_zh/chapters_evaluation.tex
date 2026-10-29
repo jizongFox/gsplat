@@ -249,10 +249,20 @@ RGB+ED 还保留深度除以 alpha 的 expected-depth 后处理及其反向；
 
 所有最终任务使用全量点、同一个 compact-box sweep、相同相机与随机种子，
 对图像和 alpha 施加固定随机上游梯度。
-必须显式核对 \texttt{compact\_box} 与 \texttt{compact\_box\_impl}：
-当前 harness 的 reference signature 未涵盖全部这些开关，不能只靠 signature 相等排除配置错误。
-fixed-16 检查曾在采集候选前发现 baseline-only 配置关闭 compact-box，
+必须显式核对 \texttt{compact\_box} 与 \texttt{compact\_box\_impl}。
+最终单次协议 v3 与固定均值协议 v2 均把这两个值放进兼容签名；同时对 PLY 与相机 JSON
+按内容计算 SHA-256，路径则单独记为 provenance。因此相同字节搬到另一挂载点仍可比较，
+而原路径被不同场景文件替换会被拒绝。旧单次 v2 / ensemble v1 reference 必须重建，
+不会自动迁移。fixed-16 检查曾在采集候选前发现 baseline-only 配置关闭 compact-box，
 已统一为 true/sweep 并重新生成两份基线，未保留不匹配对照。
+
+更重要的是，reference preflight 现在按顺序在 CPU 完成：协议版本、输入内容 hash、
+参数已知设置，然后解析 PLY/camera 的点数、分辨率、SH degree 与属性布局；所有可由这些
+输入确定的不匹配都在 extension 加载和 CUDA tensor 上传之前失败。metadata 对象被继续传给
+loader，避免第二次解析，再核对实际 tensor shape。SH schema 会拒绝缺失必需字段、
+不连续的 \texttt{f\_rest\_*}、不是 RGB 三元组的系数数目、非平方 basis 数以及超出当前
+degree-4 CUDA SH 实现范围的输入，并给出明确 ValueError。ensemble 的设备名要初始化
+CUDA 后才能确定，因此设备/upstream hash 的最后一步检查在其第一轮 render/backward 之前。
 
 计时使用 CUDA events，warmup 后同步；逐轮清除梯度与旧输出图，避免图累积影响显存和耗时。
 最终运行串行进行，没有同时编译、安装或本任务的其他 GPU 工作负载，也未操纵 GPU 时钟。
@@ -390,17 +400,17 @@ SH 系数 & \(2.53\times10^{-7}\) & \(3.13\times10^{-7}\)\\
 这为平均梯度没有明显系统偏移提供补充证据，但不是置信区间，
 不保证每一步满足门限，不推翻单次失败，更不证明优化轨迹或训练收敛相同。
 
-\subsection{136 个差分案例与两个 sanitizer}
+\subsection{166 个差分案例与两个 sanitizer}
 
 \path{benchmarks/blog_eval/gsplat_raster_regression.py} 的最终矩阵在默认与非默认 stream
-分别通过 136/136；新增 tile4 的 1/3/4/8 通道、absgrad 开关与 tile6 案例，
+分别通过 166/166；新增 tile4 的 1/2/3/4/8 通道、absgrad 开关与 tile6 案例，
 正是为了封住 partial-warp 的覆盖缺口。
 其他覆盖包括 tile8/16、背景梯度、非对齐图像边缘、空输入与空 intersection、
 多 batch tile 列表、packed 相机布局、channel-list 重用、稀疏 tile、重遮挡、
 opacity cutoff/clamp、有限输入造成的 conic 溢出与被拒绝 lane 的非有限上游梯度。
 非默认 stream 测试还包含同 stream 的输入生产和梯度消费。
 
-重建最终二进制的整个 136-case 矩阵也通过 CUDA compute-sanitizer
+重建最终二进制的整个 166-case 矩阵也通过 CUDA compute-sanitizer
 memcheck 与 synccheck，均为 0 errors。
 差分结果见 \path{benchmarks/blog\_eval/results/partial-warp-final-default.json}
 与 \path{benchmarks/blog\_eval/results/partial-warp-final-nondefault.json}；

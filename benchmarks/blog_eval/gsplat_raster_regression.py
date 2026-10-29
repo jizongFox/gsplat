@@ -52,8 +52,8 @@ def cases() -> t.List[t.Dict[str, t.Any]]:
                             count=192 if scenario == "occlusion" else 24,
                         )
                     )
-    # Focused additions, not another Cartesian product. Keep the original 112
-    # fixtures (and their seeds) unchanged.
+    # Focused additions, not another Cartesian product. Keep existing cases
+    # in their original order because their seeds depend on the case index.
     for scenario in (
         "zero_n",
         "batch_boundary",
@@ -103,6 +103,13 @@ def cases() -> t.List[t.Dict[str, t.Any]]:
                 count=192,
             )
         )
+    # Append channel-2 equivalents to exercise the ten-component layout while
+    # preserving every original case's name, configuration and index-derived seed.
+    result.extend(
+        dict(config, channels=2, name=config["name"].replace("c1_", "c2_"))
+        for config in tuple(result)
+        if config["channels"] == 1
+    )
     return result
 
 
