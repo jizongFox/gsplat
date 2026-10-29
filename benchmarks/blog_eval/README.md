@@ -21,6 +21,26 @@ The data loader expects the supplied 3DGS PLY fields (`x/y/z`, `rot_*`,
 camera-to-world extrinsics to world-to-camera, exponentiates log-scales and
 sigmoids opacity logits before calling the renderer.
 
+## Reference integrity
+
+Use either `--save-reference baseline.pt` or `--compare-reference baseline.pt`,
+never both in one invocation. Conflicting actions are rejected before extension
+loading, scene loading or file writes, so a comparison cannot replace its own
+baseline.
+
+Reference protocol version 2 records SHA-256 hashes of both input files and all
+selected rendering settings, including `tile_size`, `compact_box` and
+`compact_box_impl`. Hashing is setup work outside the timed rendering loop.
+Comparison rejects incompatible workloads before tensor comparison. References
+from the earlier, incomplete protocol must be regenerated; they are not silently
+upgraded. Cross-setting ablations need their own matching baseline references.
+
+The protocol and argument guards have CPU-only regression tests:
+
+```bash
+python -m pytest -q tests/test_blog_benchmark_reference.py
+```
+
 The canonical evaluation/tutorial is `docs/cuda_blog_zh/`. Final measurements
 and correctly scoped limitations are in `REPORT.md` and
 `results/REBUILT_FINAL_SUMMARY.md`; machine-readable final verification and

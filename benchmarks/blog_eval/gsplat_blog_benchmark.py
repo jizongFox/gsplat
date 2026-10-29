@@ -29,6 +29,56 @@ from gsplat.cuda import _wrapper
 from gsplat.rendering import rasterization
 
 DEFAULT_SCENE = None  # Supply --ply and --cameras for an external scene.
+REFERENCE_PROTOCOL_VERSION = 2
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def reference_signature(
+    args: argparse.Namespace,
+    points_used: int,
+    width: int,
+    height: int,
+    degree: int,
+) -> t.Dict[str, t.Any]:
+    """Identify the input contents and rendering workload, outside timing."""
+    return {
+        "protocol_version": REFERENCE_PROTOCOL_VERSION,
+        "ply": str(args.ply.resolve()),
+        "ply_sha256": file_sha256(args.ply),
+        "cameras": str(args.cameras.resolve()),
+        "cameras_sha256": file_sha256(args.cameras),
+        "camera_index": args.camera_index,
+        "points_used": points_used,
+        "resolution": [width, height],
+        "degree": degree,
+        "seed": args.seed,
+        "raster_only": args.raster_only,
+        "packed": args.packed,
+        "render_mode": args.render_mode,
+        "absgrad": args.absgrad,
+        "tile_size": args.tile_size,
+        "compact_box": args.compact_box,
+        "compact_box_impl": args.compact_box_impl,
+        "upstream": "seeded_cuda_randn_image_and_alpha_v1",
+        "quaternion_input": "normalized_like_product_wrapper",
+    }
+
+
+def validate_reference_signature(
+    reference: t.Dict[str, t.Any], signature: t.Dict[str, t.Any]
+) -> None:
+    saved_signature = reference.get("signature", {})
+    if saved_signature.get("protocol_version") != REFERENCE_PROTOCOL_VERSION:
+        raise ValueError("Reference protocol version differs; regenerate the baseline")
+    if saved_signature != signature:
+        raise ValueError("Reference input contents or rendering settings differ")
 
 
 def load_scene(ply_path: Path, camera_path: Path, max_points: int, camera_index: int):
@@ -128,7 +178,7 @@ def compare_tensors(
     return results
 
 
-def main():
+def parse_args(argv: t.Optional[t.Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--ply",
@@ -154,8 +204,9 @@ def main():
     )
     parser.add_argument("--absgrad", action="store_true")
     parser.add_argument("--output", type=Path)
-    parser.add_argument("--save-reference", type=Path)
-    parser.add_argument("--compare-reference", type=Path)
+    reference_action = parser.add_mutually_exclusive_group()
+    reference_action.add_argument("--save-reference", type=Path)
+    reference_action.add_argument("--compare-reference", type=Path)
     parser.add_argument("--profile", action="store_true")
     parser.add_argument("--extension", type=Path)
     parser.add_argument("--seed", type=int, default=2026)
@@ -163,9 +214,11 @@ def main():
     parser.add_argument("--rtol", type=float, default=1e-3)
     parser.add_argument("--gradient-rel-l2", type=float, default=1e-4)
     parser.add_argument("--forward-max-abs", type=float, default=2e-5)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.ply is None or args.cameras is None:
-        parser.error("--ply and --cameras are required for the self-contained gsplat benchmark")
+        parser.error(
+            "--ply and --cameras are required for the self-contained gsplat benchmark"
+        )
     if args.repeats < 1 or args.warmup < 0:
         parser.error("--repeats must be positive and --warmup nonnegative")
     if args.atol < 0 or args.rtol < 0:
@@ -174,6 +227,11 @@ def main():
         parser.error("Reference checks require backward; omit --forward-only")
     if args.timing_only and (args.save_reference or args.compare_reference):
         parser.error("--timing-only cannot save or compare references")
+    return args
+
+
+def main():
+    args = parse_args()
 
     if args.extension:
         spec = importlib.util.spec_from_file_location(
@@ -332,21 +390,13 @@ def main():
                 values["grad.means2d_abs"] = absgrad.detach().cpu()
         return values
 
-    signature = {
-        "ply": str(args.ply.resolve()),
-        "cameras": str(args.cameras.resolve()),
-        "camera_index": args.camera_index,
-        "points_used": means.shape[0],
-        "resolution": [width, height],
-        "degree": degree,
-        "seed": args.seed,
-        "raster_only": args.raster_only,
-        "packed": args.packed,
-        "render_mode": args.render_mode,
-        "absgrad": args.absgrad,
-        "upstream": "seeded_cuda_randn_image_and_alpha_v1",
-        "quaternion_input": "normalized_like_product_wrapper",
-    }
+    signature = reference_signature(args, means.shape[0], width, height, degree)
+    reference = None
+    if args.compare_reference:
+        reference = torch.load(
+            args.compare_reference, map_location="cpu", weights_only=True
+        )
+        validate_reference_signature(reference, signature)
     validation = {} if args.timing_only else snapshot()
     finite = {name: bool(torch.isfinite(x).all()) for name, x in validation.items()}
     checks = {"finite": finite}
@@ -369,11 +419,6 @@ def main():
                 args.save_reference,
             )
         if args.compare_reference:
-            reference = torch.load(
-                args.compare_reference, map_location="cpu", weights_only=True
-            )
-            if reference["signature"] != signature:
-                raise ValueError("Reference scene/mode/seed signature differs")
             checks["reference_baseline_noise"] = reference["baseline_noise"]
             checks["reference"] = compare_tensors(
                 validation, reference["tensors"], args.atol, args.rtol
