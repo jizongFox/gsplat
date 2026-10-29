@@ -41,8 +41,7 @@ differentiable rendering**. Forward image/alpha are exact and screen-space
 gradients including absgrad pass (`≤1.48e-6` relative-L2). The raw quaternion
 gate remains noise-limited (`1.63e-4`); this is not a strict full-parameter pass.
 
-The code is integrated on isolated local branches, not installed over the user's
-package or merged into the primary worktree. Local commits are not pushed.
+The implementation, report, harness and tutorial are maintained in this gsplat repository. This evaluation does not require a parent application checkout or parent gitlink change.
 
 The following sections retain the chronological experiment log. Earlier
 `b96efa8` checkpoints/tables are historical; `REBUILT_FINAL_SUMMARY.md`, the
@@ -52,7 +51,7 @@ delivery binary. Earlier data are not pooled into final speedup estimates.
 ## Scope and environment
 
 - Article: https://grgkopanas.github.io/3dgs_cuda_blog/
-- - gsplat baseline: `ffe2db3c378533767ccb1ad0d8707a3f33549c3e`.
+- gsplat baseline: `ffe2db3c378533767ccb1ad0d8707a3f33549c3e`.
 - Python: use the Python environment configured for this gsplat checkout.
 - GPU: NVIDIA GeForce RTX 4090, compute capability 8.9, ~24 GiB.
 - PyTorch: 2.10.0+cu128; CUDA 12.8. These versions are not changed.
@@ -422,22 +421,19 @@ Final verification evidence:
   non-default stream.
 - CUDA **memcheck and synccheck both report 0 errors**, using the final binary
   and expanded matrix. Racecheck and an exhaustive numerical proof were not run.
-- `black --check`, Python compilation, and parent/gsplat `git diff --check` pass.
+- `black --check`, Python compilation, and `git diff --check` pass.
 - Final source hashes, commit `b96efa8`, tested binary and worktree `csrc.so`
   agree with `results/build_manifest.json`. Candidate SHA-256:
   `22031d5217692b6c0dc01fcc871d7f43b3bb24fc6ea2d73bc0b200504d4a307d`.
 - The gsplat worktree is clean; GLM stays at pinned `33b4a621…` with no source
   changes. Only backward rasterization and its helper differ from `ffe2db3`.
-- Primary parent HEAD remains `56ee2948…`; primary gsplat remains `ffe2db3`.
-  Installed gsplat still resolves under the supplied venv, with binary mtime
-  **2026-08-31** (before this work). It was not replaced by these builds.
+- This gsplat checkout was built with `setup.py build_ext --inplace`; no package-install command was used.
 
 **Integration:** gsplat branch `perf/blog-cuda-speedups` contains commits
-`44b9b41` and `b96efa8`. Parent branch `perf/gsplat-blog-speedups` records the
-gsplat gitlink plus benchmark tools, report and raw evidence. Neither branch is
-merged into the primary worktree or pushed. This is an evidence-backed
-optimization/review branch, **not a claim of verified training convergence or
-universal production acceleration**.
+`44b9b41`, `b96efa8` and the partial-warp correction. The final tutorial and
+evaluation artifacts are stored in this repository beside the implementation.
+This is an evidence-backed optimization/review branch, **not a claim of verified
+training convergence or universal production acceleration**.
 
 ## Supplementary averaged-gradient check
 
@@ -526,9 +522,7 @@ The source-to-binary checks, **136-case default/non-default suites**, both
 sanitizers, ensemble reports, paired timing identities and explicit single-shot
 limitations are consolidated in `results/final_verification.json` and
 `results/build_manifest.json`. Python compilation, Black and diff checks pass.
-The gsplat worktree remains clean, and the parent follow-up records the final
-`88513ea` gitlink plus refreshed evidence. The primary worktree, installed
-package, and nested dependency source/pin remain unchanged.
+The gsplat worktree is clean at the tested revision, and the nested GLM dependency source/pin remains unchanged.
 
 **Recommendation:** keep this as the tested optimization/review branch. It
 delivers reproducible raster gains on the supplied workload, with compatible
