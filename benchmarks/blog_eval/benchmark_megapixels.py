@@ -53,7 +53,7 @@ DEFAULT_RESOLUTIONS = [
 ]
 FORWARD_MAX_ABS = 2e-5
 GRADIENT_REL_L2 = 1e-4
-PROTOCOL = "megapixels_lossless_rows_v1"
+PROTOCOL = "megapixels_lossless_rows_v2_unclamped_sh"
 
 
 def parse_resolution(value: str) -> t.Tuple[int, int]:
@@ -319,6 +319,18 @@ def _load_extension(path: Path):
     return extension
 
 
+def raster_colors(raw, viewmat, meta, degree, wrapper):
+    """Match rendering.rasterization's SH + 0.5 without a color clamp."""
+    dirs = raw["means"][None] - torch.linalg.inv(viewmat)[:, None, :3, 3]
+    colors = (
+        wrapper.spherical_harmonics(
+            degree, dirs, raw["sh_coefficients"][None], masks=meta["radii"] > 0
+        )
+        + 0.5
+    )
+    return torch.cat((colors, meta["depths"][..., None]), dim=-1)
+
+
 def _measure(
     run: t.Callable[
         [bool], t.Tuple[torch.Tensor, torch.Tensor, t.Dict[str, torch.Tensor]]
@@ -499,14 +511,7 @@ def _case(
         with torch.no_grad():
             setup_image, setup_alpha, meta = full_render()
             del setup_image, setup_alpha
-            dirs = raw["means"][None] - torch.linalg.inv(viewmat)[:, None, :3, 3]
-            colors = (
-                wrapper.spherical_harmonics(
-                    degree, dirs, raw["sh_coefficients"][None], masks=meta["radii"] > 0
-                )
-                + 0.5
-            ).clamp_min(0.0)
-            colors = torch.cat((colors, meta["depths"][..., None]), dim=-1)
+            colors = raster_colors(raw, viewmat, meta, degree, wrapper)
             inputs = {
                 name: value.detach().contiguous().requires_grad_(True)
                 for name, value in {
@@ -519,7 +524,7 @@ def _case(
             raster_meta = {
                 name: meta[name] for name in ("isect_offsets", "flatten_ids")
             }
-            del meta, dirs, colors
+            del meta, colors
 
         def raster_render(_train=False):
             image, alpha = wrapper.rasterize_to_pixels(
@@ -588,6 +593,7 @@ def _case(
             run, inputs, upstream, args.warmup, args.repeats, True, torch.cuda, events
         )
         parity, noise, baseline_noise, baseline_provenance = None, None, None, None
+        cross_scope_forward = None
         if not args.skip_validation:
             first, parity, _ = _snapshot(run, inputs, upstream, expected)
             baseline_noise = expected["repeat_noise"] if expected else None
@@ -597,6 +603,27 @@ def _case(
                 run, inputs, upstream, first, keep_reference=False
             )
             del second
+            reference_dir = args.save_reference_dir or args.compare_reference_dir
+            if scope == "raster" and args.scope == "both" and reference_dir:
+                full_name = name.replace("-raster-", "-full-")
+                full_reference = torch.load(
+                    reference_dir / full_name, map_location="cpu", weights_only=True
+                )
+                if full_reference["signature"] != {**signature, "scope": "full"}:
+                    raise ValueError("Full/raster forward reference signatures differ")
+                cross_scope_forward = {
+                    key: compare_image(
+                        first["tensors"][key],
+                        full_reference["tensors"][key],
+                        rgb_depth=key == "image",
+                    )
+                    for key in ("image", "alpha")
+                }
+                del full_reference
+                if not all(v["alignment_passed"] for v in cross_scope_forward.values()):
+                    raise ValueError(
+                        "Raster-only setup does not match the full renderer"
+                    )
             if args.save_reference_dir:
                 args.save_reference_dir.mkdir(parents=True, exist_ok=True)
                 torch.save(
@@ -643,6 +670,7 @@ def _case(
             "repeat_noise": noise,
             "baseline_repeat_noise": baseline_noise,
             "baseline_provenance": baseline_provenance,
+            "cross_scope_forward": cross_scope_forward,
             "isects": training["isects"],
             "max_flatten_id": training["max_flatten_id"],
         }

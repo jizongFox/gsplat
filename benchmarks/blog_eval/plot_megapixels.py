@@ -5,6 +5,8 @@ backward_ms,combined_ms,inference_ms. Quality rows: scope,width,height,
 camera_index,rgb_psnr_db,rgb_exact,image_max_abs,alpha_max_abs,depth_max_abs,
 grad_max_rel_l2,baseline_noise_max_rel_l2,gradient_passed,forward_passed.
 Blank PSNR means positive infinity. Boolean fields accept true/false or 1/0.
+Optional gradient rows: scope,width,height,camera_index,gradient,rel_l2,max_abs,
+baseline_repeat_rel_l2,candidate_repeat_rel_l2,passed.
 """
 
 import argparse
@@ -51,6 +53,166 @@ QUALITY_COLUMNS = {
     "gradient_passed",
     "forward_passed",
 }
+GRADIENT_COLUMNS = {
+    "scope",
+    "width",
+    "height",
+    "camera_index",
+    "gradient",
+    "rel_l2",
+    "max_abs",
+    "baseline_repeat_rel_l2",
+    "candidate_repeat_rel_l2",
+    "passed",
+}
+GRADIENT_GROUPS = {
+    "full": (
+        "grad.means",
+        "grad.quats",
+        "grad.log_scales",
+        "grad.opacity_logits",
+        "grad.sh_coefficients",
+        "grad.means2d_abs",
+    ),
+    "raster": (
+        "grad.means2d",
+        "grad.conics",
+        "grad.colors",
+        "grad.opacities",
+        "grad.means2d_abs",
+    ),
+}
+
+
+def aggregate_gradients(rows: t.List[t.Dict[str, str]], view_sets: dict) -> dict:
+    grouped = {}
+    fields = ("rel_l2", "baseline_repeat_rel_l2", "candidate_repeat_rel_l2")
+    for row in rows:
+        size = resolution(row)
+        scope, gradient = row["scope"], row["gradient"]
+        if gradient not in GRADIENT_GROUPS[scope]:
+            raise ValueError(f"Unknown gradient for {scope}: {gradient!r}")
+        key = (scope, size, gradient)
+        views = grouped.setdefault(key, {})
+        camera = row["camera_index"]
+        if camera in views:
+            raise ValueError(f"Duplicate gradient row: {key}, camera {camera}")
+        number(row["max_abs"], "max_abs")
+        views[camera] = {
+            **{field: number(row[field], field) for field in fields},
+            "passed": boolean(row["passed"]),
+        }
+    expected = {
+        (scope, size, gradient)
+        for scope, size in view_sets
+        for gradient in GRADIENT_GROUPS[scope]
+    }
+    if set(grouped) != expected:
+        raise ValueError(
+            "Gradient groups/resolutions must match the timing scopes/resolutions"
+        )
+    result = {}
+    for (scope, size, gradient), views in grouped.items():
+        if set(views) != view_sets[(scope, size)]:
+            raise ValueError(
+                f"Gradient and timing views differ: {scope}, {size}, {gradient}"
+            )
+        result[(scope, size, gradient)] = {
+            **{field: max(item[field] for item in views.values()) for field in fields},
+            "passed": all(item["passed"] for item in views.values()),
+        }
+    return result
+
+
+def plot_gradients(
+    scope: str, gradients: dict, output_dir: Path, base_label: str, pr_label: str
+) -> None:
+    dims = sorted(
+        {key[1] for key in gradients if key[0] == scope},
+        key=lambda size: (size[0] * size[1], size),
+    )
+    x = np.array([width * height / 1e6 for width, height in dims])
+    fig, axes = plt.subplots(2, 3, figsize=(16, 9))
+    fig.suptitle(
+        f"{'Full renderer parameters' if scope == 'full' else 'Raster attributes'}"
+        " · per-field gradient agreement",
+        fontsize=19,
+        fontweight="bold",
+    )
+    for ax, gradient in zip(axes.flat, GRADIENT_GROUPS[scope]):
+        checks = [gradients[(scope, size, gradient)] for size in dims]
+        for field, label, color, style, marker in (
+            ("rel_l2", "PR vs base", PR_COLOR, "-", "o"),
+            ("baseline_repeat_rel_l2", "Base-repeat noise", "#479A70", "--", "s"),
+            ("candidate_repeat_rel_l2", "PR-repeat noise", "#8856A7", ":", "^"),
+        ):
+            values = np.array([item[field] for item in checks])
+            ax.plot(
+                x,
+                np.maximum(values, ZERO_FLOOR),
+                color=color,
+                linestyle=style,
+                marker=marker,
+                linewidth=2,
+                label=label,
+            )
+        failures = np.array([not item["passed"] for item in checks])
+        if failures.any():
+            values = np.maximum([item["rel_l2"] for item in checks], ZERO_FLOOR)
+            ax.scatter(
+                x[failures],
+                values[failures],
+                color="red",
+                marker="x",
+                s=90,
+                zorder=5,
+                label="Field check failed",
+            )
+        ax.axhline(
+            GRAD_THRESHOLD,
+            color="red",
+            linestyle="--",
+            linewidth=1.3,
+            label="Threshold: 1e−4",
+        )
+        ax.set(
+            title=gradient,
+            xlabel="Image size (megapixels)",
+            ylabel="Worst-view relative L2 error",
+            yscale="log",
+        )
+        ax.grid(True, alpha=0.22)
+        ax.set_axisbelow(True)
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.legend(fontsize=8)
+        if len(x) <= 10 and len(set(x)) == len(x):
+            ax.set_xticks(
+                x,
+                [f"{mp:g}\n{w}×{h}" for mp, (w, h) in zip(x, dims)],
+                rotation=35 if len(x) > 5 else 0,
+                fontsize=8,
+            )
+    for ax in list(axes.flat)[len(GRADIENT_GROUPS[scope]) :]:
+        ax.set_visible(False)
+    fig.text(
+        0.5,
+        0.025,
+        f"Base: {base_label} · PR: {pr_label}\n"
+        "Each field/curve: maximum relative L2 across selected views; "
+        "repeat-noise curves are separate within-variant comparisons.\n"
+        "Display floor: 1e−16 only; zeros remain zero in the data, not measured 1e−16. "
+        "MP = width × height / 1e6. Lines connect measured points only.",
+        ha="center",
+        va="bottom",
+        fontsize=8,
+        color="#444444",
+    )
+    fig.tight_layout(rect=(0, 0.115, 1, 0.95), h_pad=2.5, w_pad=2)
+    for extension in ("png", "svg"):
+        fig.savefig(
+            output_dir / f"gradients_{scope}.{extension}", dpi=300, facecolor="white"
+        )
+    plt.close(fig)
 
 
 def read_csv(path: Path, required: t.Set[str]) -> t.List[t.Dict[str, str]]:
@@ -102,8 +264,10 @@ def aggregate_timings(rows: t.List[t.Dict[str, str]]) -> t.Tuple[dict, dict]:
         camera = row["camera_index"]
         if camera in views:
             raise ValueError(f"Duplicate timing row: {key}, camera {camera}")
-        views[camera] = [number(row[stage], stage, positive=True) for stage in STAGES]
-        number(row["inference_ms"], "inference_ms", positive=True)
+        views[camera] = [
+            number(row[stage], stage, positive=True)
+            for stage in (*STAGES, "inference_ms")
+        ]
     by_resolution = {}
     view_sets = {}
     for (scope, dims, variant, job), views in grouped.items():
@@ -230,7 +394,7 @@ def plot_scope(
         ratio = summaries["base"][:, 0, stage] / summaries["pr"][:, 0, stage]
         ax.plot(x, ratio, marker=marker, color=color, label=label, linewidth=2)
     ax.axhline(1, color="#555555", linestyle="--", linewidth=1, label="1× reference")
-    ax.set(title="Training speedup", ylabel="Base / PR median latency (×)")
+    ax.set(title="Render component speedup", ylabel="Base / PR median latency (×)")
     ax.legend(fontsize=9)
 
     ax = axes[1, 1]
@@ -342,10 +506,63 @@ def plot_scope(
     plt.close(fig)
 
 
+def plot_inference(timings: dict, output_dir: Path, base_label: str, pr_label: str):
+    fig, axes = plt.subplots(1, 2, figsize=(15, 5.5))
+    fig.suptitle("Forward-only inference · no autograd", fontsize=18, fontweight="bold")
+    for ax, scope in zip(axes, SCOPES):
+        sizes = sorted(
+            {key[1] for key in timings if key[0] == scope},
+            key=lambda size: size[0] * size[1],
+        )
+        x = np.array([width * height / 1e6 for width, height in sizes])
+        for variant, color, label in (
+            ("base", BASE_COLOR, base_label),
+            ("pr", PR_COLOR, pr_label),
+        ):
+            med, low, high = np.array(
+                [timings[(scope, size, variant)] for size in sizes]
+            )[:, :, 3].T
+            ax.errorbar(
+                x,
+                med,
+                yerr=[med - low, high - med],
+                marker="o",
+                color=color,
+                label=label,
+                capsize=4,
+                linewidth=2,
+            )
+        ax.set(
+            title="Full renderer" if scope == "full" else "Rasterization only",
+            xlabel="Image size (megapixels)",
+            ylabel="Forward-only latency (ms)",
+            ylim=(0, None),
+        )
+        ax.grid(True, alpha=0.22)
+        ax.legend(fontsize=9)
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.set_xticks(x, [f"{value:g}" for value in x], rotation=35, fontsize=8)
+    fig.text(
+        0.5,
+        0.025,
+        "No-grad forward is measured separately; it is not added to training backward.\n"
+        "Mean of selected views per job, median over job means; whiskers=min/max (not CI).",
+        ha="center",
+        fontsize=9,
+    )
+    fig.tight_layout(rect=(0, 0.11, 1, 0.93))
+    for extension in ("png", "svg"):
+        fig.savefig(
+            output_dir / f"inference_only.{extension}", dpi=300, facecolor="white"
+        )
+    plt.close(fig)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--timings-csv", type=Path, required=True)
     parser.add_argument("--quality-csv", type=Path, required=True)
+    parser.add_argument("--gradients-csv", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--base-label", default="PR base ffe2db3")
     parser.add_argument("--pr-label", default="PR 3c69277")
@@ -353,10 +570,16 @@ def main() -> None:
     try:
         timings, views = aggregate_timings(read_csv(args.timings_csv, TIMING_COLUMNS))
         quality = aggregate_quality(read_csv(args.quality_csv, QUALITY_COLUMNS))
+        gradients = (
+            aggregate_gradients(read_csv(args.gradients_csv, GRADIENT_COLUMNS), views)
+            if args.gradients_csv is not None
+            else None
+        )
         args.output_dir.mkdir(parents=True, exist_ok=True)
         with plt.rc_context(
             {"font.family": "DejaVu Sans", "font.size": 10, "svg.fonttype": "none"}
         ):
+            plot_inference(timings, args.output_dir, args.base_label, args.pr_label)
             for scope in SCOPES:
                 plot_scope(
                     scope,
@@ -367,6 +590,14 @@ def main() -> None:
                     args.base_label,
                     args.pr_label,
                 )
+                if gradients is not None:
+                    plot_gradients(
+                        scope,
+                        gradients,
+                        args.output_dir,
+                        args.base_label,
+                        args.pr_label,
+                    )
     except (ValueError, OSError, KeyError, TypeError) as error:
         parser.error(str(error))
 

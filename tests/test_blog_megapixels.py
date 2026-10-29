@@ -29,6 +29,22 @@ def test_parse_resolution_and_camera_indices(benchmark):
         benchmark.parse_resolution("0x720")
 
 
+def test_raster_colors_preserve_negative_sh_values_like_full_renderer(benchmark):
+    class Wrapper:
+        @staticmethod
+        def spherical_harmonics(degree, dirs, coefficients, masks):
+            return torch.tensor([[[-1.0, -0.5, 0.25], [0.0, 0.5, -0.75]]])
+
+    raw = {
+        "means": torch.zeros(2, 3),
+        "sh_coefficients": torch.zeros(2, 4, 3),
+    }
+    meta = {"radii": torch.ones(1, 2), "depths": torch.tensor([[2.0, 3.0]])}
+    colors = benchmark.raster_colors(raw, torch.eye(4)[None], meta, 1, Wrapper)
+    expected = torch.tensor([[[-0.5, 0.0, 0.75, 2.0], [0.5, 1.0, -0.25, 3.0]]])
+    assert torch.equal(colors, expected)
+
+
 def test_parse_defaults_and_overrides(benchmark, tmp_path):
     args = benchmark.parse_args(
         [
