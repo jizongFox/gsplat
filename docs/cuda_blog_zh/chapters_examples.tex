@@ -1,0 +1,406 @@
+\section{动手算例：从一个像素到一次完整渲染}
+
+本章用可手算的数字和独立的小程序串起投影、合成、梯度归约与性能测量。
+所有时间均为教学用的假设值，不是新的 GPU 实测结果。
+Python 示例只依赖标准库，可以分别保存为一个 \texttt{.py} 文件运行；
+CUDA 部分会明确区分接口示例与算法伪代码。
+这里的四 lane 模型用于解释数据流，不表示 NVIDIA 的硬件 warp 只有四个线程。
+
+\subsection{算例一：从三维输入到 conic，再算两个 splat 的合成}
+
+\paragraph{先确认坐标与参数语义。}
+一个三维 Gaussian 的常见输入包括世界坐标均值
+\(\mu_w\)、尺度 \(s\)、旋转四元数 \(q\)、opacity \(o\)，以及颜色或 SH 系数。
+若保存的是 log-scale 和 opacity logit，须先做
+\(s=\exp(s_{\log})\) 与 \(o=\operatorname{sigmoid}(o_{\log})\)。
+四元数需要按约定归一化，且必须确认分量顺序；不能把
+\((w,x,y,z)\) 与 \((x,y,z,w)\) 直接混用。
+
+对列向量约定，相机的 camera-to-world 矩阵及其逆为
+\[
+ \mathrm{c2w}=\begin{bmatrix}R&t\\0&1\end{bmatrix},\qquad
+ \mathrm{viewmat}=\mathrm{c2w}^{-1}
+ =\begin{bmatrix}R^T&-R^Tt\\0&1\end{bmatrix}.
+\]
+这里假设 \(R\) 是正交旋转。例如相机位于世界坐标 \((1,0,0)\)，
+朝向不变，则世界点 \((1,0,3)\) 变为相机点 \((0,0,3)\)，
+而不是 \((2,0,3)\)。实际调用还要检查相机轴方向、可见深度的符号与矩阵存储约定。
+
+构造三维协方差并投影到二维的局部近似是
+\[
+ \Sigma_w=R(q)\operatorname{diag}(s_x^2,s_y^2,s_z^2)R(q)^T,
+ \qquad \Sigma_{2D}=JW\Sigma_wW^TJ^T+\epsilon I.
+\]
+其中 \(W\) 是 view matrix 的旋转块，\(J\) 是在 Gaussian 中心处计算的
+透视投影雅可比；针孔模型为 \(u=f_x x/z+c_x\)、\(v=f_y y/z+c_y\)。
+所以相机变换、焦距、深度与低通正则项都会影响屏幕足迹。
+以下直接给出正定的二维逆协方差，即 conic：
+\[
+ \Lambda=\Sigma_{2D}^{-1}=\begin{bmatrix}2&0.5\\0.5&1\end{bmatrix},
+ \qquad \det\Lambda=1.75>0.
+\]
+
+\paragraph{一个像素的 alpha。}
+设投影中心是 \((10,20)\)，被采样的像素中心是 \((10.5,19)\)，
+因此 \(d_x=0.5\)、\(d_y=-1\)。注意这里已经指定了采样位置，
+不要在代码中再次额外加半个像素。二次型为
+\begin{align*}
+ Q&=a d_x^2+2b d_xd_y+c d_y^2\\
+  &=2(0.5)^2+2(0.5)(0.5)(-1)+1(-1)^2=1,\\
+ \sigma&=Q/2=0.5,\\
+ \alpha_1&=o_1\exp(-\sigma)=0.8\exp(-0.5)
+          \simeq0.48522453.
+\end{align*}
+这里用 \(Q\) 表示二次型，以免与旋转四元数 \(q\) 混淆。
+该 alpha 高于 \(1/255\)，且未触及 \(0.999\) 上限，因此没有触发阈值或夹紧分支。
+交叉项中的系数是 \(2b\)，漏掉这个 2 会直接改变足迹和梯度。
+
+\paragraph{前后两个 splat。}
+假设深度排序已经确定：前面的 splat 是红色
+\(c_1=(1,0,0)\)，后面的是蓝色 \(c_2=(0,0,1)\)。
+第二个 splat 在本像素中心取样，\(Q_2=0\)、\(o_2=0.25\)，所以
+\(\alpha_2=0.25\)。初始化 \(T_0=1\)、\(C_0=(0,0,0)\)，则
+\begin{align*}
+ w_1&=T_0\alpha_1=0.48522453,& T_1&=0.51477547,\\
+ w_2&=T_1\alpha_2=0.12869387,& T_2&=0.38608160,\\
+ C_2&=(0.48522453,0,0.12869387).
+\end{align*}
+未加背景的累计颜色不是归一化的平均颜色。
+若背景为 \(c_{\mathrm{bg}}=(0.1,0.1,0.1)\)，最终输出是
+\[
+ C=C_2+T_2c_{\mathrm{bg}}
+ \simeq(0.52383269,0.03860816,0.16730203).
+\]
+三个权重满足 \(w_1+w_2+T_2=1\)。交换两个 splat 的深度顺序一般会改变颜色，
+所以排序并不是可以任意重排的实现细节。
+
+\begin{lstlisting}[language=Python]
+from math import exp, isclose
+
+dx, dy = 0.5, -1.0
+a, b, c = 2.0, 0.5, 1.0
+quad = a * dx * dx + 2.0 * b * dx * dy + c * dy * dy
+alpha1 = min(0.999, 0.8 * exp(-0.5 * quad))
+alpha2 = 0.25
+T = 1.0
+C = [0.0, 0.0, 0.0]
+for alpha, color in [(alpha1, (1, 0, 0)), (alpha2, (0, 0, 1))]:
+    weight = T * alpha
+    C = [v + weight * x for v, x in zip(C, color)]
+    T *= 1.0 - alpha
+C = [v + T * 0.1 for v in C]
+assert isclose(quad, 1.0)
+assert isclose(alpha1 + (1.0 - alpha1) * alpha2 + T, 1.0)
+print("alpha:", alpha1, alpha2)
+print("RGB:", C, "remaining T:", T)
+\end{lstlisting}
+
+\subsection{算例二：四 lane、四分量的归约与 reduce-scatter}
+
+反向光栅化时，同一个 Gaussian 会接收多个像素的梯度贡献。
+设四个 lane 分别持有四个分量，行对应 lane，列对应参数：
+\[
+ X=\begin{bmatrix}
+ 1&2&3&4\\10&20&30&40\\100&200&300&400\\1000&2000&3000&4000
+ \end{bmatrix}.
+\]
+我们需要的是列和 \((1111,2222,3333,4444)\)，不是每一行的和。
+普通 butterfly all-reduce 在每个 lane 上保留四个完整和，再选 lane 0 写出；
+reduce-scatter 则让最终的四个和分别属于四个 lane。
+
+第一轮配对距离为 2。lane 0 与 2 配对，只保留分量 0、1；
+lane 1 与 3 同理。lane 2、3 分别保留分量 2、3。
+第一轮之后的局部数组为
+\[
+ \begin{array}{ccl}
+ \text{lane }0&:&(101,202)\quad\text{分量 }(0,1),\\
+ \text{lane }1&:&(1010,2020)\quad\text{分量 }(0,1),\\
+ \text{lane }2&:&(303,404)\quad\text{分量 }(2,3),\\
+ \text{lane }3&:&(3030,4040)\quad\text{分量 }(2,3).
+ \end{array}
+\]
+第二轮距离为 1，低位 lane 保留各自窗口的前半，高位 lane 保留后半。
+最终 ownership 是 lane 0 拥有分量 0 的 1111，lane 1 拥有分量 1 的 2222，
+lane 2 拥有分量 2 的 3333，lane 3 拥有分量 3 的 4444。
+
+下面同时模拟两条路径。每轮先保存旧状态非常重要：shuffle 是同一轮的 lane 间交换，
+不能让 Python 的循环顺序把它变成读取已经更新的邻居。
+\begin{lstlisting}[language=Python]
+X = [[(10 ** lane) * (k + 1) for k in range(4)] for lane in range(4)]
+expected = [sum(row[k] for row in X) for k in range(4)]
+
+# Ordinary all-reduce: keep every component in every lane.
+ordinary = [row[:] for row in X]
+for stride in (2, 1):
+    old = [row[:] for row in ordinary]
+    ordinary = [
+        [old[lane][k] + old[lane ^ stride][k] for k in range(4)]
+        for lane in range(4)
+    ]
+assert all(row == expected for row in ordinary)
+
+# Reduce-scatter: halve the component window at each round.
+values = [row[:] for row in X]
+owners = [list(range(4)) for _ in range(4)]
+for stride in (2, 1):
+    old = [row[:] for row in values]
+    old_owners = [row[:] for row in owners]
+    half = len(old[0]) // 2
+    for lane in range(4):
+        start = half if lane & stride else 0
+        keep = range(start, start + half)
+        peer = lane ^ stride
+        assert old_owners[lane] == old_owners[peer]
+        values[lane] = [old[lane][k] + old[peer][k] for k in keep]
+        owners[lane] = old_owners[lane][start:start + half]
+    print("stride", stride, "owners", owners, "values", values)
+
+scattered = [0] * 4
+for lane in range(4):
+    component = owners[lane][0]
+    scattered[component] = values[lane][0]
+    print("lane", lane, "owns", component, "sum", values[lane][0])
+assert scattered == ordinary[0] == expected
+print("equal:", scattered)
+\end{lstlisting}
+
+此例用整数，因此断言可以逐项精确相等。真实浮点梯度的相加顺序改变后，
+一般只能要求误差在约定容差内，而不能要求逐 bit 相同。
+在这个教学模型里，普通路径每 lane 需要 \(4+4=8\) 次标量交换，
+scatter 路径需要 \(2+1=3\) 次；这不是 GPU kernel 时间必定缩短 \(8/3\) 倍的证明。
+寄存器移动、地址计算、atomic、occupancy 与访存都会影响最终收益。
+
+\subsection{算例三：把 ownership 映射到完整 CUDA warp}
+
+下面是\textbf{算法伪代码，不是可直接编译的 CUDA 源文件}。
+它专门处理每 lane 四个梯度分量、完整 32-lane warp 的情形。
+前两轮拆分分量窗口，后三轮只归约一个标量。
+所有 lane 在每轮执行相同数量的 shuffle，且读取的 peer 寄存器索引保持一致。
+\begin{lstlisting}[language=C++]
+// PSEUDOCODE: one Gaussian key shared by all 32 lanes.
+// v[0..3] are this lane's four finite gradient contributions.
+lane = threadIdx.x % 32;  // assume a one-dimensional block
+mask = 0xffffffffu;
+
+// Exchange matching components before selecting a window.
+for k in 0..3:
+    peer[k] = __shfl_xor_sync(mask, v[k], 16, 32);
+base = (lane & 16) ? 2 : 0;
+for k in 0..1:
+    tmp[k] = v[base + k] + peer[base + k];
+
+// Split each 2-component window into a scalar.
+for k in 0..1:
+    peer2[k] = __shfl_xor_sync(mask, tmp[k], 8, 32);
+index = (lane & 8) ? 1 : 0;
+sum = tmp[index] + peer2[index];
+
+// Finish the reduction within each 8-lane ownership group.
+for stride in [4, 2, 1]:
+    sum += __shfl_xor_sync(mask, sum, stride, 32);
+
+component = lane >> 3;  // lanes 0..7 own component 0, etc.
+if (lane & 7) == 0:
+    atomicAdd(global_gradient[gaussian_id][component], sum);
+\end{lstlisting}
+
+为什么不能先选窗口再交换？因为 XOR 16 的两个 lane 选择互补窗口，
+而 shuffle 读取的是对方在同一条指令上提供的值。
+若直接交换 \texttt{v[base + k]}，对方提供的可能恰好是另一个分量。
+上面的代码先交换同编号分量，再在本地选择窗口，避免了这个陷阱。
+
+这个安全教学版本优先表达正确交换关系，不宣称达到最少 shuffle 指令数。
+更高效的 reduce-scatter 会设计寄存器排列、选择与交换的联合协议；
+不能把 Python 的随机访问 \texttt{old[peer][k]} 机械翻译成 lane 各自选择源寄存器的 shuffle。
+
+\paragraph{完整 mask 是执行契约。}
+\texttt{0xffffffffu} 要求 mask 指定的所有尚未退出线程执行匹配的 collective，
+而且被读取的源 lane 必须确实参与。不能让某些像素线程在 shuffle 前
+\texttt{continue}，剩余线程却仍用 full mask。
+像素无效时可以让线程保留参与资格并提供零梯度，但零值必须在危险计算之前产生。
+此外，所有参与线程应当归约同一个 Gaussian 的同一组参数；
+若 Gaussian ID 不同，数学上就需要分组归约而不是直接相加。
+
+对线程数不是 32 倍数的 block，最后一个 warp 可能不完整。
+例如 \(4\times4\) block 只有 16 个线程，不能使用上述 full-warp 算法。
+保守派发方式是：完整 warp 专用路径仅用于满足其前提的配置，
+其余配置回退到已验证的通用 reduction。
+通用路径必须正确处理部分 warp、参与 mask 与分量写回；
+仅将 full mask 替换为 \texttt{\_\_activemask()} 并不能修复读取缺失 XOR partner 的问题。
+二维 block 还需用线性线程编号计算 lane，而不是直接套用上面的
+\texttt{threadIdx.x \% 32}。
+
+\subsection{算例四：Amdahl 模型解释完整渲染为什么只快一点}
+
+设基线完整渲染时间为 \(F\)，其中被优化的 raster 阶段占 \(R\)，
+其他阶段是 \(U=F-R\)。若 raster 的加速比为 \(s\)，并暂时假定其他阶段不变，
+则
+\[
+ F'=U+R/s,\qquad
+ S_{\mathrm{full}}=\frac{F}{F'}
+ =\frac{1}{(1-f)+f/s},\qquad f=R/F.
+\]
+例如 \(F=20\,\mathrm{ms}\)、\(R=6\,\mathrm{ms}\)、\(s=1.5\)，
+新的 raster 是 4 ms，完整时间是 18 ms，完整加速仅为 \(1.111\) 倍。
+如果忽略其余 14 ms，把 1.5 倍写成完整训练或完整渲染收益，就扩大了结论。
+即使 raster 变成零耗时，这个例子的上限也只有 \(20/14\simeq1.429\) 倍。
+
+\begin{lstlisting}[language=Python]
+from math import isclose
+
+def full_render_model(full_ms, raster_ms, raster_speedup):
+    assert 0.0 <= raster_ms <= full_ms and full_ms > 0.0
+    assert raster_speedup > 0.0
+    unchanged_ms = full_ms - raster_ms
+    candidate_ms = unchanged_ms + raster_ms / raster_speedup
+    return candidate_ms, full_ms / candidate_ms
+
+new_ms, speedup = full_render_model(20.0, 6.0, 1.5)
+assert isclose(new_ms, 18.0)
+assert isclose(speedup, 20.0 / 18.0)
+for raster_ms in (1.0, 6.0, 15.0):
+    new_ms, speedup = full_render_model(20.0, raster_ms, 1.5)
+    print("raster baseline:", raster_ms,
+          "full candidate:", round(new_ms, 3),
+          "full speedup:", round(speedup, 3))
+\end{lstlisting}
+
+模型有意省略 kernel overlap、CPU 提交、缓存、功耗与频率变化。
+CUDA events 测得的阶段时间相加未必等于有重叠流水线的端到端墙钟时间。
+因此 Amdahl 是一致性检查，不是代替实测的性能预测器。
+若优化只针对 backward，也应将 \(R\) 定义为被优化的 backward 部分，
+不能把整个 forward 加 backward 的时间都当成可以按 \(s\) 缩短的部分。
+
+\subsection{算例五：对齐 benchmark，并计算 relL2}
+
+\paragraph{先固定比较对象。}
+两次测试应共享相同的 Gaussian 参数、相机、分辨率、排序输入和 loss 上游梯度。
+还需固定 dtype、SH degree、channel 数、packed 模式、背景、absgrad、
+裁剪阈值、tile 大小与输出类型，例如 RGB 或 RGB 加 expected depth。
+输出深度与颜色的量纲不同，宜分别报告误差，避免某个大尺度通道掩盖另一通道。
+测量之前完成 CUDA 编译与预热；GPU 计时使用同一 stream 上的事件并等待完成，
+或在端到端墙钟计时边界正确同步。
+不要拿异步 launch 的 CPU 返回时间与实际执行完毕的 GPU 时间相比。
+
+对参考向量 \(x\) 和候选向量 \(y\)，这里明确采用
+\[
+ \operatorname{relL2}(y,x)=
+ \frac{\sqrt{\sum_i(y_i-x_i)^2}}
+ {\max\!\left(\sqrt{\sum_i x_i^2},\varepsilon\right)},
+ \qquad \varepsilon=10^{-12}.
+\]
+分母使用参考向量的范数；这是整体张量指标，不是逐元素相对误差的平均值。
+例如 \(x=(3,4)\)、\(y=(3.03,3.96)\)，差的范数是 0.05，
+参考范数是 5，因此 relL2 是 \(0.01\)，即 \(1\%\)。
+同时报告最大绝对误差 \(0.04\)，能补充整体范数可能稀释局部错误的问题。
+
+\begin{lstlisting}[language=Python]
+from math import isclose, isfinite, sqrt
+
+def compare(reference, candidate, eps=1e-12):
+    assert len(reference) == len(candidate) and len(reference) > 0
+    assert eps > 0.0
+    if not all(isfinite(v) for v in reference + candidate):
+        raise ValueError("non-finite input")
+    error = [b - a for a, b in zip(reference, candidate)]
+    error_norm = sqrt(sum(v * v for v in error))
+    reference_norm = sqrt(sum(v * v for v in reference))
+    return (error_norm / max(reference_norm, eps),
+            max(abs(v) for v in error))
+
+rel, maximum = compare([3.0, 4.0], [3.03, 3.96])
+assert isclose(rel, 0.01, rel_tol=1e-12)
+assert isclose(maximum, 0.04, rel_tol=1e-12)
+print("relL2:", rel, "max_abs:", maximum)
+zero_rel, zero_abs = compare([0.0, 0.0], [1e-9, 0.0])
+print("zero-reference case:", zero_rel, zero_abs)
+\end{lstlisting}
+
+零参考例子的 relL2 为 1000，但绝对误差只有 \(10^{-9}\)。
+因此不能只看一个相对阈值，更不能把非有限值静默替换成零之后再宣布通过。
+对大型数组应使用数值稳定的范数计算与足够精度的累加；上面的小程序只是手算验证。
+实践中分别检查 forward、各组参数梯度和 absgrad，额外检查空输入、完全遮挡、
+阈值边界与部分 warp 配置。浮点归约顺序引起的小误差，与 ownership 错位造成的大误差，
+应通过这些局部比较来区分。
+
+时间统计也要对齐：同一工作负载重复多次，报告预热后的中位数与离散程度，
+并区分 raster-only 与完整路径。每个相机先计算自己的比值，
+再明确选择总耗时比、算术平均或几何平均；这些汇总不是同一个统计量。
+
+\subsection{算例六：安全 predication 不是最后乘一个零}
+
+\paragraph{危险来自未选中路径的中间量。}
+考虑单精度浮点数中的无效候选 \(\sigma=-100\)。
+若先无条件计算 \(\exp(-\sigma)=\exp(100)\)，结果会溢出为无穷大。
+即使最后令 alpha 为零，再做
+\(0\times\exp(100)\) 仍得到 NaN，而不是零。
+同理，即使每个输入都有限，两个约 \(10^{30}\) 的数相乘也会在 float 中溢出。
+因此 ``输入 finite'' 并不推出 ``梯度乘积 finite''。
+
+下面是\textbf{合法 CUDA C++ 设备函数片段}，需要 CUDA 编译器；
+不是完整的 kernel 或独立可执行程序。
+它演示一个保守策略：先验证指数参数，再计算 alpha；在普通 alpha 链式梯度路径中，
+上限夹紧的样本不更新 opacity 与几何梯度，但仍保留颜色梯度。
+实际系统须沿用自身对夹紧与阈值边界的导数约定。
+\begin{lstlisting}[language=C++]
+#include <cuda_runtime.h>
+#include <math.h>
+
+__device__ bool safe_alpha(float sigma, float opacity,
+                           bool inside, float* alpha,
+                           float* exponential, bool* grad_alpha) {
+    *alpha = 0.0f;
+    *exponential = 0.0f;
+    *grad_alpha = false;
+    if (!inside || !isfinite(sigma) || sigma < 0.0f ||
+        !isfinite(opacity) || opacity < 0.0f || opacity > 1.0f) {
+        return false;
+    }
+    float e = expf(-sigma);  // non-positive exponent: no overflow
+    float raw = opacity * e;
+    if (raw < 1.0f / 255.0f) {
+        return false;
+    }
+    *alpha = fminf(raw, 0.999f);
+    *exponential = e;
+    *grad_alpha = raw < 0.999f;
+    return true;
+}
+
+__device__ bool finite_product(float x, float y, float* result) {
+    *result = 0.0f;
+    if (!isfinite(x) || !isfinite(y)) {
+        return false;
+    }
+    double p = static_cast<double>(x) * static_cast<double>(y);
+    if (!isfinite(p) || fabs(p) > 3.4028234663852886e38) {
+        return false;
+    }
+    *result = static_cast<float>(p);
+    return true;
+}
+\end{lstlisting}
+
+其中 \texttt{safe\_alpha} 的 bool 返回值表示是否保留该样本的颜色贡献，
+\texttt{grad\_alpha} 单独表示是否进入未夹紧的 alpha 导数路径。
+不能把这两种有效性合并，否则夹紧样本的颜色梯度会被错误删除。
+\texttt{finite\_product} 用 double 检查两个有限 float 的乘积是否可表示为 float；
+它仅用于说明保护方式，不建议无测量地放进所有热路径。
+返回 false 时调用方应报告异常、触发诊断或走明确的回退路径，
+不能把溢出的合法梯度静默视为零。
+连续多个乘法与累加也需要自己的范围分析：保护单次乘法并不保护后续求和或 atomic 累积。
+
+\paragraph{与 warp collective 共存。}
+在实际后向循环里，可以让无效 lane 的局部梯度寄存器初始化为零，
+只在有效分支内计算危险的几何、opacity 和 absgrad 表达式，
+随后所有需要参与的 lane 在分支外执行归约。
+不要让设备函数的局部返回变成调用 kernel 的提前退出；
+也不要为消除分支而重新把危险表达式搬到有效性判断之前。
+数值安全来自控制数据依赖与计算范围，不来自代码表面上没有 \texttt{if}。
+
+\paragraph{最后的自检顺序。}
+先用第一个例子验证 conic、alpha 与前向合成；再用第二个例子固定分量 ownership；
+随后检查 full mask、部分 warp 与无效 lane 的执行契约；
+最后对齐误差和计时口径，用 Amdahl 模型检查完整路径的收益是否合理。
+这条顺序把数学错误、线程协作错误、数值错误和统计错误拆开，
+避免用一个看起来漂亮的加速比掩盖其中任何一种问题。
