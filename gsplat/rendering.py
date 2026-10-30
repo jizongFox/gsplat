@@ -55,8 +55,13 @@ def rasterization(
     distributed: bool = False,
     camera_model: Literal["pinhole", "ortho", "fisheye"] = "pinhole",
     covars: Optional[Tensor] = None,
+    two_stage_sort: bool = False,
 ) -> Tuple[Tensor, Tensor, Dict]:
     """Rasterize a set of 3D Gaussians (N) to a batch of image planes (C).
+
+    ``two_stage_sort=True`` opts into stable depth/tile sorting when the
+    encoded camera/tile namespace fits16bits and live depths are eligible.
+    Ineligible inputs retain the original sorting path and output contract.
 
     This function provides a handful features for 3D Gaussian rasterization, which
     we detail in the following notes. A complete profiling of the these features
@@ -530,6 +535,7 @@ def rasterization(
         compact_box_mult=compact_box_mult,
         compact_box_tau2=compact_box_tau2,
         compact_box_impl=compact_box_impl,
+        two_stage_sort=two_stage_sort,
     )
     # print("rank", world_rank, "Before isect_offset_encode")
     isect_offsets = isect_offset_encode(isect_ids, C, tile_width, tile_height)

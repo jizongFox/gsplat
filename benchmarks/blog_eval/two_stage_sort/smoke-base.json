@@ -1,0 +1,393 @@
+{
+  "two_stage": false,
+  "extension_sha256": "c61a8253f35ebe5883ea6e67dd7f6e8de4cd2bd86b21eb931aad050b69efec06",
+  "inputs": {
+    "ply_sha256": "41fcb0462acc6fd172ca42970ba3923c7de8bbf7c0180755e43001462154da18",
+    "cameras_sha256": "ba00beb95a68763634199c7e2bf64344b729f6c50abcfe55bd0d2518d59f5d4b",
+    "points_total": 1932132,
+    "points_used": 1932132
+  },
+  "config": {
+    "packed": false,
+    "render_mode": "RGB+ED",
+    "absgrad": true,
+    "tile_size": 16,
+    "compact_box": true,
+    "compact_box_impl": "sweep"
+  },
+  "environment": {
+    "torch": "2.10.0+cu128",
+    "cuda": "12.8",
+    "gpu": "NVIDIA GeForce RTX 4090",
+    "extension": "/tmp/opencode/gsplat-two-stage-sort/build/baseline.so"
+  },
+  "warmup": 10,
+  "repeats": 20,
+  "records": [
+    {
+      "camera_index": 1247,
+      "resolution": [
+        1280,
+        720
+      ],
+      "binning": {
+        "api_cuda_event_ms": {
+          "samples_ms": [
+            0.5017600059509277,
+            0.4984639883041382,
+            1.376255989074707,
+            0.48956799507141113,
+            0.4925439953804016,
+            0.49564799666404724,
+            0.49116799235343933,
+            0.4925439953804016,
+            0.49110400676727295,
+            0.4935680031776428,
+            0.4925439953804016,
+            0.4915519952774048,
+            0.5160959959030151,
+            0.5286080241203308,
+            0.502784013748169,
+            0.5007359981536865,
+            0.49561598896980286,
+            0.4915199875831604,
+            0.4915199875831604,
+            0.48844799399375916
+          ],
+          "mean_ms": 0.5411023974418641,
+          "median_ms": 0.4930559992790222
+        },
+        "synchronized_wall_ms": {
+          "samples_ms": [
+            0.5278140015434474,
+            0.50697400001809,
+            2.5527400139253587,
+            0.4971209855284542,
+            0.4999609955120832,
+            0.503683986607939,
+            0.49801901332102716,
+            0.4996659990865737,
+            0.4985450068488717,
+            0.5003330006729811,
+            0.49946000217460096,
+            0.49941500765271485,
+            0.5242560000624508,
+            0.5366780096665025,
+            0.6852009973954409,
+            0.5080270057078451,
+            0.5033009801991284,
+            0.4985029809176922,
+            0.4989159933757037,
+            0.496213004225865
+          ],
+          "mean_ms": 0.6167413492221385,
+          "median_ms": 0.5001469980925322
+        },
+        "input_gaussians": 1932132,
+        "visible_gaussians": 1049168,
+        "intersections": 2909623,
+        "public_dtypes": [
+          "torch.int32",
+          "torch.int64",
+          "torch.int32"
+        ],
+        "baseline_sort_bits": 45,
+        "radix_profile": {
+          "repeats": 5,
+          "kernels": [
+            {
+              "name": "void cub::CUB_200700_890_NS::DeviceRadixSortHistogramKernel<cub::CUB_200700_890_NS::DeviceRadixSortPolicy<long, int, unsigned long long>::Policy900, false, long, unsigned long long, cub::CUB_200700_890_NS::detail::identity_decomposer_t>(unsigned long long*, long const*, unsigned long long, int, int, cub::CUB_200700_890_NS::detail::identity_decomposer_t)",
+              "calls": 5,
+              "total_device_ms": 0.09033600000000001
+            },
+            {
+              "name": "void cub::CUB_200700_890_NS::DeviceRadixSortExclusiveSumKernel<cub::CUB_200700_890_NS::DeviceRadixSortPolicy<long, int, unsigned long long>::Policy900, unsigned long long>(unsigned long long*)",
+              "calls": 5,
+              "total_device_ms": 0.0060479999999993195
+            },
+            {
+              "name": "void cub::CUB_200700_890_NS::DeviceRadixSortOnesweepKernel<cub::CUB_200700_890_NS::DeviceRadixSortPolicy<long, int, unsigned long long>::Policy900, false, long, int, unsigned long long, int, int, cub::CUB_200700_890_NS::detail::identity_decomposer_t>(int*, int*, unsigned long long*, unsigned long long const*, long*, long const*, int*, int const*, int, int, int, cub::CUB_200700_890_NS::detail::identity_decomposer_t)",
+              "calls": 30,
+              "total_device_ms": 1.2341419999999967
+            }
+          ],
+          "summed_device_ms_per_call": 0.2661051999999992
+        }
+      },
+      "full_renderer": {
+        "status": "ok",
+        "seed": 1248298007,
+        "reference_file": "cam1247-1280x720-full-RGB+ED-seed1248298007.pt",
+        "scaled_K": [
+          [
+            562.0256958007812,
+            0.0,
+            641.2510986328125
+          ],
+          [
+            0.0,
+            562.9072875976562,
+            361.9736633300781
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "viewmat": [
+          [
+            0.11131434142589569,
+            -0.010167954489588737,
+            -0.9937332272529602,
+            -0.6171438694000244
+          ],
+          [
+            -0.07882378250360489,
+            0.9967069625854492,
+            -0.01902793161571026,
+            -0.036397986114025116
+          ],
+          [
+            0.9906542897224426,
+            0.08044788986444473,
+            0.11014629900455475,
+            -1.3250646591186523
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "camera_identifier": {
+          "id": 1260,
+          "img_name": "DECXIN2023012348/00001440.jpeg\n",
+          "width": 1280,
+          "height": 720,
+          "fx": 562.0256958007812,
+          "fy": 562.9072875976562,
+          "cx": 641.2510986328125,
+          "cy": 361.9736633300781,
+          "rotation": [
+            [
+              0.11131434231487206,
+              -0.07882378400039147,
+              0.9906542930159173
+            ],
+            [
+              -0.01016795451990863,
+              0.9967069523520413,
+              0.08044789514951048
+            ],
+            [
+              -0.9937332287369124,
+              -0.01902793233552163,
+              0.11014630223092492
+            ]
+          ],
+          "position": [
+            1.3785089709103353,
+            0.13660169696050162,
+            -0.46801797194720907
+          ]
+        },
+        "timing": {
+          "forward_only": {
+            "samples_ms": [
+              3.740544080734253,
+              3.5609920024871826,
+              4.433472156524658,
+              3.721247911453247,
+              3.569472074508667,
+              3.5057919025421143,
+              3.75763201713562,
+              3.5498878955841064,
+              3.5221118927001953,
+              3.478208065032959,
+              3.7586560249328613,
+              3.5265920162200928,
+              4.703296184539795,
+              3.7291839122772217,
+              3.5366721153259277,
+              3.5498239994049072,
+              3.5586559772491455,
+              3.6879360675811768,
+              3.5183680057525635,
+              3.534976005554199
+            ],
+            "mean_ms": 3.6971760153770448,
+            "median_ms": 3.559823989868164
+          },
+          "training_forward": {
+            "samples_ms": [
+              3.8989439010620117,
+              4.074783802032471,
+              3.3364479541778564,
+              3.3176960945129395,
+              3.3209919929504395,
+              3.34118390083313,
+              3.335968017578125,
+              3.5455679893493652,
+              3.3335039615631104,
+              3.2686400413513184,
+              3.5485119819641113,
+              3.3387839794158936,
+              3.788480043411255,
+              3.684159994125366,
+              5.519904136657715,
+              3.3743999004364014,
+              3.383552074432373,
+              3.354048013687134,
+              3.3332479000091553,
+              3.384704113006592
+            ],
+            "mean_ms": 3.5741759896278382,
+            "median_ms": 3.3642239570617676
+          },
+          "backward": {
+            "samples_ms": [
+              5.183712005615234,
+              5.359072208404541,
+              5.090688228607178,
+              5.076255798339844,
+              5.332032203674316,
+              7.179327964782715,
+              5.158880233764648,
+              5.132224082946777,
+              5.1981120109558105,
+              6.394239902496338,
+              5.150591850280762,
+              5.4864959716796875,
+              5.280831813812256,
+              5.204512119293213,
+              5.456960201263428,
+              5.16431999206543,
+              5.145792007446289,
+              5.356991767883301,
+              7.300704002380371,
+              5.337440013885498
+            ],
+            "mean_ms": 5.499459218978882,
+            "median_ms": 5.242671966552734
+          },
+          "combined": {
+            "samples_ms": [
+              9.082655906677246,
+              9.433856010437012,
+              8.427136421203613,
+              8.393952369689941,
+              8.653023719787598,
+              10.520511627197266,
+              8.494848251342773,
+              8.677791595458984,
+              8.5316162109375,
+              9.662879943847656,
+              8.699104309082031,
+              8.82528018951416,
+              9.06931209564209,
+              8.888671875,
+              10.976863861083984,
+              8.53872013092041,
+              8.529343605041504,
+              8.711039543151855,
+              10.633952140808105,
+              8.72214412689209
+            ],
+            "mean_ms": 9.07363519668579,
+            "median_ms": 8.716591835021973
+          }
+        },
+        "peak_memory_gib": 0.7053360939025879,
+        "parity": null,
+        "finite_checks": {
+          "forward_only": {
+            "image": true,
+            "alpha": true
+          },
+          "training": {
+            "image": true,
+            "alpha": true,
+            "grad.means": true,
+            "grad.quats": true,
+            "grad.log_scales": true,
+            "grad.opacity_logits": true,
+            "grad.sh_coefficients": true,
+            "grad.means2d_abs": true
+          }
+        },
+        "alignment_passed": null,
+        "repeat_noise": {
+          "image": {
+            "finite": true,
+            "max_abs": 0.0,
+            "mse": 0.0,
+            "psnr": null,
+            "exact_equal": true,
+            "alignment_passed": true,
+            "psnr_channels": "RGB",
+            "rgb_max_abs": 0.0,
+            "depth_max_abs": 0.0,
+            "data_range": 1.0
+          },
+          "alpha": {
+            "finite": true,
+            "max_abs": 0.0,
+            "mse": 0.0,
+            "psnr": null,
+            "exact_equal": true,
+            "alignment_passed": true
+          },
+          "grad.means": {
+            "finite": true,
+            "max_abs": 6.103515625e-05,
+            "rel_l2": 6.1490389298042e-08,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.quats": {
+            "finite": true,
+            "max_abs": 0.00016254186630249023,
+            "rel_l2": 1.4849699671682396e-06,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.log_scales": {
+            "finite": true,
+            "max_abs": 4.0531158447265625e-05,
+            "rel_l2": 6.316704084371477e-07,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.opacity_logits": {
+            "finite": true,
+            "max_abs": 1.9073486328125e-06,
+            "rel_l2": 1.3469663293270275e-07,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.sh_coefficients": {
+            "finite": true,
+            "max_abs": 4.76837158203125e-06,
+            "rel_l2": 1.3224085109584965e-07,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.means2d_abs": {
+            "finite": true,
+            "max_abs": 2.86102294921875e-06,
+            "rel_l2": 6.959063395589943e-08,
+            "exact_equal": false,
+            "alignment_passed": true
+          }
+        },
+        "baseline_repeat_noise": null,
+        "baseline_provenance": null,
+        "cross_scope_forward": null,
+        "isects": 2909623,
+        "max_flatten_id": 1932131
+      }
+    }
+  ]
+}
