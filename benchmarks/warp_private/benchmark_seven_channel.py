@@ -37,7 +37,7 @@ def parse_args(argv=None):
     parser.add_argument("--colmap", type=Path, default=SCENE / "exports/colmap/sparse")
     parser.add_argument("--camera-indices", nargs="+", default=["0,623,1247"])
     parser.add_argument("--resolutions", nargs="+", default=["native"], help="native, 4k, or WIDTHxHEIGHT")
-    parser.add_argument("--channels", type=int, choices=(3, 4, 7), default=7)
+    parser.add_argument("--channels", type=int, choices=(3, 4, 7, 8), default=7)
     parser.add_argument("--tile-size", type=int, choices=(16,), default=16)
     parser.add_argument("--warmup", type=int, default=20)
     parser.add_argument("--repeats", type=int, default=40)
@@ -121,12 +121,29 @@ def colmap_cameras(directory):
     return sorted(cameras, key=lambda c: c["img_name"])
 
 
-def camera_normals(quats, viewmat):
+def camera_normals(quats, viewmat, means=None, log_scales=None):
     if not bool(torch.isfinite(quats).all()) or bool((quats.norm(dim=-1) == 0).any()):
         raise ValueError("Invalid Gaussian quaternion")
     w, x, y, z = torch.nn.functional.normalize(quats, dim=-1).unbind(-1)
-    world = torch.stack((2*(x*z + w*y), 2*(y*z - w*x), 1 - 2*(x*x + y*y)), dim=-1)
-    return world[None] @ viewmat[:, :3, :3].transpose(-1, -2)
+    rotation = torch.stack(
+        (
+            torch.stack((1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)), dim=-1),
+            torch.stack((2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)), dim=-1),
+            torch.stack((2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)), dim=-1),
+        ),
+        dim=-2,
+    )
+    axis = log_scales.argmin(dim=-1) if log_scales is not None else None
+    if axis is None:
+        return rotation[:, :, 2][None] @ viewmat[:, :3, :3].transpose(-1, -2)
+    local = rotation.transpose(-1, -2).gather(
+        1, axis[:, None, None].expand(-1, 1, 3)
+    ).squeeze(1)
+    normals = local[None] @ viewmat[:, :3, :3].transpose(-1, -2)
+    means_cam = means[None] @ viewmat[:, :3, :3].transpose(-1, -2)
+    means_cam = means_cam + viewmat[:, None, :3, 3]
+    normals = normals * torch.sign((normals * means_cam).sum(dim=-1, keepdim=True))
+    return normals
 
 
 def attributes(raw, viewmat, meta, degree, wrapper, channels):
@@ -135,7 +152,17 @@ def attributes(raw, viewmat, meta, degree, wrapper, channels):
         return rgb_depth[..., :3]
     if channels == 4:
         return rgb_depth
-    return torch.cat((rgb_depth, camera_normals(raw["quats"], viewmat)), dim=-1)
+    normals = camera_normals(
+        raw["quats"], viewmat, raw["means"], raw["log_scales"]
+    )
+    if channels == 7:
+        return torch.cat((rgb_depth, normals), dim=-1)
+    means_cam = raw["means"][None] @ viewmat[:, :3, :3].transpose(-1, -2)
+    means_cam = means_cam + viewmat[:, None, :3, 3]
+    # Match the production PGSR feature layout: RGB, camera-Z depth, minor-axis
+    # normal, and distance-to-plane. The normal is conservatively face-oriented.
+    plane = (means_cam * normals).sum(dim=-1, keepdim=True)
+    return torch.cat((rgb_depth, normals, plane), dim=-1)
 
 
 def image_metrics(actual, expected):

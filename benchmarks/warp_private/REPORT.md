@@ -15,8 +15,8 @@ gsplat's 16×16 tile:
 - full-warp cases use `__syncwarp()` before reuse and after loading a batch;
 - partial physical warps and unsupported/wide paths retain the baseline
   block-wide synchronization path;
-- no contribution mask (`cmask`) was added, so this isolates synchronization
-  and staging from mask-generation costs.
+- a follow-up tested a conservative on-the-fly warp contribution test for cmask;
+  it does not pack metadata into `flatten_ids`. The cmask code is not retained.
 
 The candidate keeps the original recurrence, alpha/clamp/nonfinite guards,
 warp reductions, and global gradient atomics. The baseline and candidate were
@@ -43,6 +43,41 @@ freshly built from the same worktree and CUDA/PyTorch environment.
 - `tests/test_warp_private_benchmark.py` and
   `tests/test_warp_private_layout.py`: validate the harness, normal convention,
   reference identity and fixture coverage.
+
+## Production renderer context and cmask follow-up
+
+Inspection of `dc_reality/splatting/renderers/gsplat_renderer` shows two real
+layouts. `gsplat_renderer_3d_normals.py` sends RGB + per-Gaussian normal and
+requests `RGB+ED`, resulting in seven logical raster channels. `pgsr_renderer.py`
+sends RGB + camera depth + normal + plane depth, i.e. eight channels, with
+`packed=False`, `absgrad=True`, pinhole cameras and compact-box sweep. The
+standalone harness was extended to model the latter eight-channel feature
+layout, including minor-axis Gaussian normals and plane distance.
+
+The cmask follow-up uses PR13 warp-private as its baseline and computes a
+conservative ellipse-vs-warp-subrectangle test on the staged Gaussian. It skips
+only when the whole warp rectangle is outside the alpha-visible ellipse; it
+does not alter `flatten_ids`, and invalid conics conservatively remain active.
+This is deliberately a first isolation experiment, not the final metadata-buffer
+design from the blog.
+
+| PGSR-style 8-channel raster workload | Forward | Backward | Combined |
+|---|---:|---:|---:|
+| Native view0 | 1.008× | 0.915× | 0.935× |
+| Native view623 | 1.006× | 0.976× | 0.982× |
+| Native view1247 | 0.991× | 0.967× | 0.962× |
+| Native geometric mean | **1.002×** | **0.952×** | **0.959×** |
+| 4K geometric mean | **0.944×** | **0.934×** | **0.943×** |
+
+All six production-style parity comparisons pass; maximum gradient relative-L2
+is below `5e-7`. However, the cmask path increases the `COLOR_DIM=8` private
+kernel from 64 to **72 registers/thread** and is slower in both native and 4K
+combined timings. It also fails four guard-focused cases in the expanded
+193-case matrix: `target_finite_overflow_abs{0,1}` and
+`target_rejected_nonfinite_upstream_abs{0,1}` (color and opacity gradients).
+This is a correctness blocker, so the cmask CUDA specialization is excluded
+from the published implementation. The production timing remains evidence
+only; no cmask speedup is claimed.
 
 ## Real workload
 

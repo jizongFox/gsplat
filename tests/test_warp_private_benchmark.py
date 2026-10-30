@@ -36,7 +36,7 @@ def test_defaults_and_resolution_controls(benchmark):
 @pytest.mark.parametrize("extra", [
     ["--save-reference-dir", "/tmp/opencode/base", "--compare-reference-dir", "/tmp/opencode/base"],
     ["--save-reference-dir", str(Path(__file__).resolve().parents[1] / "refs")],
-    ["--warmup", "-1"], ["--repeats", "0"], ["--channels", "8"],
+    ["--warmup", "-1"], ["--repeats", "0"],
     ["--tile-size", "8"], ["--camera-indices", "-1"], ["--resolutions", "0x720"],
 ])
 def test_invalid_cli(benchmark, extra):
@@ -89,19 +89,24 @@ def test_local_z_normal_uses_wxyz_camera_rotation_and_no_flip(benchmark):
             benchmark.camera_normals(bad, view)
 
 
-@pytest.mark.parametrize("channels", [3, 4, 7])
+@pytest.mark.parametrize("channels", [3, 4, 7, 8])
 def test_real_attributes_and_wrapper_owns_padding(benchmark, channels):
     class Wrapper:
         @staticmethod
         def spherical_harmonics(degree, dirs, coefficients, masks):
             return torch.tensor([[[-1., -.5, .25]]])
 
-    raw = {"means": torch.zeros(1, 3), "quats": torch.tensor([[1., 0, 0, 0]]),
-           "sh_coefficients": torch.zeros(1, 1, 3)}
+    raw = {
+        "means": torch.tensor([[0.0, 0.0, 1.0]]),
+        "quats": torch.tensor([[1.0, 0, 0, 0]]),
+        "log_scales": torch.zeros(1, 3),
+        "sh_coefficients": torch.zeros(1, 1, 3),
+    }
     meta = {"radii": torch.ones(1, 1), "depths": torch.tensor([[5.]])}
     result = benchmark.attributes(raw, torch.eye(4)[None], meta, 0, Wrapper, channels)
     assert result.shape == (1, 1, channels)  # no harness-side synthetic eighth attribute
-    torch.testing.assert_close(result, torch.tensor([[[-.5, 0, .75, 5, 0, 0, 1]]])[..., :channels])
+    expected = torch.tensor([[[-.5, 0, .75, 5, 0, 0, 0, 0]]])
+    torch.testing.assert_close(result, expected[..., :channels])
 
 
 def test_image_gates_include_normal_and_depth_but_psnr_is_rgb(benchmark):
