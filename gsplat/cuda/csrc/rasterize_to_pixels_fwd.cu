@@ -88,12 +88,16 @@ __global__ void rasterize_to_pixels_fwd_kernel(
         (range_end - range_start + block_size - 1) / block_size;
 
     extern __shared__ int s[];
-    int32_t *id_batch = (int32_t *)s; // [block_size]
+    // Narrow colors are staged directly, so those specializations need no
+    // shared Gaussian IDs. In particular, tile16 RGBA uses 10 rather than
+    // 11 KiB, avoiding an unnecessary shared-memory residency constraint.
+    int32_t *id_batch = (int32_t *)s; // [block_size] for wide channels only
     vec3<S> *xy_opacity_batch =
-        reinterpret_cast<vec3<float> *>(&id_batch[block_size]); // [block_size]
+        reinterpret_cast<vec3<float> *>(&id_batch[COLOR_DIM <= 4 ? 0 : block_size]);
     vec3<S> *conic_batch =
         reinterpret_cast<vec3<float> *>(&xy_opacity_batch[block_size]
         ); // [block_size]
+    S *color_batch = reinterpret_cast<S *>(&conic_batch[block_size]);
 
     // current visibility left to render
     // transmittance is gonna be used in the backward pass which requires a high
@@ -122,11 +126,19 @@ __global__ void rasterize_to_pixels_fwd_kernel(
         uint32_t idx = batch_start + tr;
         if (idx < range_end) {
             int32_t g = flatten_ids[idx]; // flatten index in [C * N] or [nnz]
-            id_batch[tr] = g;
+            if constexpr (COLOR_DIM > 4) {
+                id_batch[tr] = g;
+            }
             const vec2<S> xy = means2d[g];
             const S opac = opacities[g];
             xy_opacity_batch[tr] = {xy.x, xy.y, opac};
             conic_batch[tr] = conics[g];
+            if constexpr (COLOR_DIM <= 4) {
+                GSPLAT_PRAGMA_UNROLL
+                for (uint32_t k = 0; k < COLOR_DIM; ++k) {
+                    color_batch[tr * COLOR_DIM + k] = colors[g * COLOR_DIM + k];
+                }
+            }
         }
 
         // wait for other threads to collect the gaussians in batch
@@ -153,9 +165,13 @@ __global__ void rasterize_to_pixels_fwd_kernel(
                 break;
             }
 
-            int32_t g = id_batch[t];
             const S vis = alpha * T;
-            const S *c_ptr = colors + g * COLOR_DIM;
+            const S *c_ptr;
+            if constexpr (COLOR_DIM <= 4) {
+                c_ptr = color_batch + t * COLOR_DIM;
+            } else {
+                c_ptr = colors + id_batch[t] * COLOR_DIM;
+            }
             GSPLAT_PRAGMA_UNROLL
             for (uint32_t k = 0; k < COLOR_DIM; ++k) {
                 pix_out[k] += c_ptr[k] * vis;
@@ -243,7 +259,9 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> call_kernel_with_dim(
     at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
     const uint32_t shared_mem =
         tile_size * tile_size *
-        (sizeof(int32_t) + sizeof(vec3<float>) + sizeof(vec3<float>));
+        ((CDIM <= 4 ? 0 : sizeof(int32_t)) + sizeof(vec3<float>) +
+         sizeof(vec3<float>) +
+         (CDIM <= 4 ? CDIM * sizeof(float) : 0));
 
     // TODO: an optimization can be done by passing the actual number of
     // channels into the kernel functions and avoid necessary global memory
