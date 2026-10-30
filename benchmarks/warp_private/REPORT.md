@@ -22,6 +22,28 @@ The candidate keeps the original recurrence, alpha/clamp/nonfinite guards,
 warp reductions, and global gradient atomics. The baseline and candidate were
 freshly built from the same worktree and CUDA/PyTorch environment.
 
+## Code changes in this PR
+
+- `gsplat/cuda/csrc/rasterize_to_pixels_bwd.cu`: add a compile-time
+  `WARP_PRIVATE` kernel specialization. Full physical-warp blocks allocate
+  eight independent 32-entry staging slices, compute a per-warp absolute
+  `last_ids` endpoint, and use `__syncwarp()` around each slice's load/reuse.
+  The existing path remains selected for partial physical warps and for
+  `COLOR_DIM > 8`; the launch dispatch selects the private path only when
+  `tile_size * tile_size` is divisible by 32. Global gradient atomics remain
+  unchanged because different warps can still update the same Gaussian.
+- `benchmarks/blog_eval/gsplat_raster_regression.py`: append deterministic
+  imbalance, staging-boundary, logical-7/physical-8, ordinary, and partial-warp
+  fixtures without changing PR9 fixture order or seeds.
+- `benchmarks/warp_private/benchmark_seven_channel.py`: add a standalone,
+  content-addressed COLMAP/PLY raster harness for RGB + camera-Z depth +
+  camera-space Gaussian local +Z normal. Timing excludes projection, SH and
+  feature construction; references and all five gradient outputs use the PR9
+  gates.
+- `tests/test_warp_private_benchmark.py` and
+  `tests/test_warp_private_layout.py`: validate the harness, normal convention,
+  reference identity and fixture coverage.
+
 ## Real workload
 
 The primary workload is the requested **RGB + depth + normal** path:
@@ -87,12 +109,14 @@ savings do not consistently win.
 
 ## Decision
 
-The first implementation is **not retained or pushed**. It is useful evidence
+The first implementation is **not a general speedup claim**. This PR records
 that warp-private staging can be made race-free and numerically compatible, but
 the measured gain is workload-dependent and the 4K aggregate regresses. A
 second iteration could reduce the 64-register cost or add a separately measured
 contribution mask, but that would be a new experiment rather than evidence for
-this candidate.
+this candidate. This PR intentionally publishes the experiment and its
+negative/mixed result for review; it does not claim that the candidate should
+replace the default path.
 
-Reproduction artifacts are local under `build/warp-private/`; the candidate is
-not part of PR11 and no binary is committed.
+Reproduction artifacts are local under `build/warp-private/`; no binary is
+committed. This is a new experiment PR, separate from PR11.
