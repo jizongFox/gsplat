@@ -130,6 +130,52 @@ private `COLOR_DIM=8` kernel allocates 64 registers per thread versus 56 for
 the baseline; that resource increase is a likely reason the synchronization
 savings do not consistently win.
 
+## Why the speedup is not broad
+
+The experiment changes one synchronization mechanism, but it does not remove
+the main backward work. Every surviving Gaussian still requires the same
+recurrence through transmittance and the color buffer, the same warp reduction,
+and the same global gradient atomics. A warp-private slice removes cross-warp
+waiting only when warp workloads are sufficiently imbalanced; it does not make
+those arithmetic, reduction, or atomic operations cheaper.
+
+There is also a resource trade-off. On the actual 8-channel path, the private
+kernel increases allocation from **56 to 64 registers/thread**. The extra live
+slice pointers and private traversal state can reduce resident-warps/SM and
+therefore reduce the latency hiding available for global loads and atomics.
+This can cancel the barrier saving. The measured 4K result (0.989× combined)
+is consistent with that trade-off; it is evidence, not a profiler-counter
+claim of exact occupancy.
+
+The result is workload-dependent because the useful barrier work is workload-
+dependent. View1247 reaches **1.169×** native combined, while view623 reaches
+**0.959×**. At 4K, the three-view geometric mean is **0.989×**. A blog result
+that attributes 14.9% of cycles to barriers on another GPU/kernel mapping
+cannot be transferred directly to this Ada/gsplat mapping.
+
+The cmask follow-up makes the same trade-off visible. It can skip a warp only
+when a conservative alpha-visible ellipse test proves that the warp rectangle
+cannot contribute. Many Gaussians remain possible contributors, so the test
+cost is paid without a skip. The first implementation also adds live state:
+the 8-channel private kernel rises from **64 to 72 registers/thread**. In the
+PGSR-style production layout its measured ratios were **0.959× native
+combined** and **0.943× 4K combined**, before considering its correctness
+failure on four guard-focused stress cases. Thus the cmask code is not included
+in the implementation. The failures involved overflow/nonfinite guard cases
+and color/opacity gradients, showing that “skip if the ellipse misses” must be
+integrated with the existing identity-transmittance and nonfinite semantics,
+not added as an unqualified branch.
+
+In short:
+
+```text
+less block waiting
+  - extra registers / lower latency hiding
+  - unchanged recurrence, reductions and atomics
+  - cmask test/branch overhead and conservative false positives
+  = no broad net speedup on this workload
+```
+
 ## Correctness
 
 - Baseline and candidate each pass **193 differential raster fixtures**.
