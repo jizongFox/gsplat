@@ -305,7 +305,7 @@ __global__ void rasterize_to_pixels_bwd_kernel(
                     gpuAtomicAdd(v_opacities + g, v_opacity_local);
                 }
             };
-            if constexpr (COLOR_DIM <= 4) {
+            if constexpr (COLOR_DIM <= 8) {
                 // Scatter requires all 32 lanes, including upper component
                 // owners. Use the baseline path for any partial-warp block.
                 if (block_size % 32 != 0) {
