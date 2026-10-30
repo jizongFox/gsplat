@@ -1,0 +1,283 @@
+{
+  "protocol_version": 3,
+  "ply_sha256": "41fcb0462acc6fd172ca42970ba3923c7de8bbf7c0180755e43001462154da18",
+  "cameras_sha256": "ba00beb95a68763634199c7e2bf64344b729f6c50abcfe55bd0d2518d59f5d4b",
+  "camera_index": 0,
+  "max_points": 0,
+  "seed": 2026,
+  "raster_only": false,
+  "packed": false,
+  "render_mode": "RGB",
+  "absgrad": false,
+  "tile_size": 16,
+  "compact_box": true,
+  "compact_box_impl": "sweep",
+  "upstream": "seeded_cuda_randn_image_and_alpha_v1",
+  "quaternion_input": "normalized_like_product_wrapper",
+  "points_used": 1932132,
+  "points_total": 1932132,
+  "resolution": [
+    1280,
+    720
+  ],
+  "degree": 1,
+  "provenance": {
+    "ply": "/mnt/data/dConstructData/2026-10-10-water2/outputs/56ee2948/point_cloud/iteration_020000/point_cloud.ply",
+    "cameras": "/tmp/opencode/gsplat-pr10/build/pr10/colmap-cameras.json"
+  },
+  "forward_only": false,
+  "atol": 1e-05,
+  "rtol": 0.001,
+  "gradient_rel_l2": 0.0001,
+  "forward_max_abs": 2e-05,
+  "warmup": 10,
+  "repeats": 20,
+  "timing_only": false,
+  "checks": {
+    "finite": {
+      "image": true,
+      "alpha": true,
+      "grad.means": true,
+      "grad.quats": true,
+      "grad.log_scales": true,
+      "grad.opacity_logits": true,
+      "grad.sh_coefficients": true
+    },
+    "baseline_noise": {
+      "image": {
+        "finite": true,
+        "max_abs": 0.0,
+        "rms": 0.0,
+        "max_relative": 0.0,
+        "allclose": true,
+        "rel_l2": 0.0
+      },
+      "alpha": {
+        "finite": true,
+        "max_abs": 0.0,
+        "rms": 0.0,
+        "max_relative": 0.0,
+        "allclose": true,
+        "rel_l2": 0.0
+      },
+      "grad.means": {
+        "finite": true,
+        "max_abs": 0.00018310546875,
+        "rms": 3.9980230377131663e-07,
+        "max_relative": 0.007729340370701486,
+        "allclose": true,
+        "rel_l2": 1.1239062865327816e-07
+      },
+      "grad.quats": {
+        "finite": true,
+        "max_abs": 0.00017750263214111328,
+        "rms": 1.0415954117316657e-07,
+        "max_relative": 0.08422981553032088,
+        "allclose": true,
+        "rel_l2": 1.6911511347765517e-06
+      },
+      "grad.log_scales": {
+        "finite": true,
+        "max_abs": 7.353723049163818e-06,
+        "rms": 1.6341630228224874e-08,
+        "max_relative": 0.09284568711292232,
+        "allclose": true,
+        "rel_l2": 2.7245872357945483e-07
+      },
+      "grad.opacity_logits": {
+        "finite": true,
+        "max_abs": 2.384185791015625e-06,
+        "rms": 4.234631712029881e-09,
+        "max_relative": 0.003282623514231625,
+        "allclose": true,
+        "rel_l2": 2.0774020845182793e-07
+      },
+      "grad.sh_coefficients": {
+        "finite": true,
+        "max_abs": 6.67572021484375e-06,
+        "rms": 1.4235790861941627e-08,
+        "max_relative": 0.02029942104298915,
+        "allclose": true,
+        "rel_l2": 1.853294505880705e-07
+      }
+    },
+    "reference_baseline_noise": {
+      "image": {
+        "finite": true,
+        "max_abs": 0.0,
+        "rms": 0.0,
+        "max_relative": 0.0,
+        "allclose": true,
+        "rel_l2": 0.0
+      },
+      "alpha": {
+        "finite": true,
+        "max_abs": 0.0,
+        "rms": 0.0,
+        "max_relative": 0.0,
+        "allclose": true,
+        "rel_l2": 0.0
+      },
+      "grad.means": {
+        "finite": true,
+        "max_abs": 0.0001678466796875,
+        "rms": 3.967820820017396e-07,
+        "max_relative": 0.006217303595689093,
+        "allclose": true,
+        "rel_l2": 1.115415971676941e-07
+      },
+      "grad.quats": {
+        "finite": true,
+        "max_abs": 0.00011146068572998047,
+        "rms": 7.731869123210766e-08,
+        "max_relative": 0.09683727939250754,
+        "allclose": true,
+        "rel_l2": 1.2553587049715248e-06
+      },
+      "grad.log_scales": {
+        "finite": true,
+        "max_abs": 9.059906005859375e-06,
+        "rms": 1.763091405069498e-08,
+        "max_relative": 0.18908530839179546,
+        "allclose": true,
+        "rel_l2": 2.93954535482395e-07
+      },
+      "grad.opacity_logits": {
+        "finite": true,
+        "max_abs": 3.814697265625e-06,
+        "rms": 3.982665938159704e-09,
+        "max_relative": 0.0024143917379854515,
+        "allclose": true,
+        "rel_l2": 1.9537941421967263e-07
+      },
+      "grad.sh_coefficients": {
+        "finite": true,
+        "max_abs": 7.152557373046875e-06,
+        "rms": 1.4052237386850227e-08,
+        "max_relative": 0.011106812675617177,
+        "allclose": true,
+        "rel_l2": 1.829398485638165e-07
+      }
+    },
+    "reference": {
+      "image": {
+        "finite": true,
+        "max_abs": 0.0,
+        "rms": 0.0,
+        "max_relative": 0.0,
+        "allclose": true,
+        "rel_l2": 0.0,
+        "alignment_passed": true
+      },
+      "alpha": {
+        "finite": true,
+        "max_abs": 0.0,
+        "rms": 0.0,
+        "max_relative": 0.0,
+        "allclose": true,
+        "rel_l2": 0.0,
+        "alignment_passed": true
+      },
+      "grad.means": {
+        "finite": true,
+        "max_abs": 0.000244140625,
+        "rms": 3.869215431907605e-07,
+        "max_relative": 0.004596932427292538,
+        "allclose": true,
+        "rel_l2": 1.0876964677527236e-07,
+        "alignment_passed": true
+      },
+      "grad.quats": {
+        "finite": true,
+        "max_abs": 0.00012946128845214844,
+        "rms": 8.908734546100675e-08,
+        "max_relative": 0.06877482712709432,
+        "allclose": true,
+        "rel_l2": 1.4464364676265827e-06,
+        "alignment_passed": true
+      },
+      "grad.log_scales": {
+        "finite": true,
+        "max_abs": 1.3088807463645935e-05,
+        "rms": 1.808239793002408e-08,
+        "max_relative": 0.060388452287739876,
+        "allclose": true,
+        "rel_l2": 3.0148198038084857e-07,
+        "alignment_passed": true
+      },
+      "grad.opacity_logits": {
+        "finite": true,
+        "max_abs": 2.86102294921875e-06,
+        "rms": 3.715106349139004e-09,
+        "max_relative": 0.0020776227887621484,
+        "allclose": true,
+        "rel_l2": 1.8225362446390986e-07,
+        "alignment_passed": true
+      },
+      "grad.sh_coefficients": {
+        "finite": true,
+        "max_abs": 6.67572021484375e-06,
+        "rms": 1.4169666923872873e-08,
+        "max_relative": 0.023362810644534607,
+        "allclose": true,
+        "rel_l2": 1.8446861164462995e-07,
+        "alignment_passed": true
+      }
+    },
+    "timed_final_finite": {
+      "image": true,
+      "alpha": true,
+      "grad.means": true,
+      "grad.quats": true,
+      "grad.log_scales": true,
+      "grad.opacity_logits": true,
+      "grad.sh_coefficients": true
+    }
+  },
+  "passed": true,
+  "profile": null,
+  "environment": {
+    "gpu": "NVIDIA GeForce RTX 4090",
+    "compute_capability": [
+      8,
+      9
+    ],
+    "python": "3.12.13",
+    "torch": "2.10.0+cu128",
+    "cuda": "12.8",
+    "gsplat_version": "1.4.0",
+    "gsplat_path": "/tmp/opencode/gsplat-pr10/gsplat/__init__.py",
+    "wrapper_path": "/tmp/opencode/gsplat-pr10/gsplat/cuda/_wrapper.py",
+    "backend_path": "/tmp/opencode/gsplat-pr10/build/pr10/delivery/gsplat/csrc.so",
+    "backend_sha256": "5a0f78bb160523ba1eb0eee4a6150b0fbcf68f4b34e54bcc6b3cc385dfc71615"
+  },
+  "median_ms": 3.8266879320144653,
+  "mean_ms": 4.740380835533142,
+  "samples_ms": [
+    3.64572811126709,
+    6.1921281814575195,
+    7.2336320877075195,
+    3.813375949859619,
+    3.634783983230591,
+    3.6413440704345703,
+    3.9147520065307617,
+    3.680255889892578,
+    3.6382720470428467,
+    4.954880237579346,
+    7.186431884765625,
+    4.739071846008301,
+    3.680255889892578,
+    3.6771841049194336,
+    3.658751964569092,
+    3.8399999141693115,
+    3.6729280948638916,
+    4.807680130004883,
+    7.65337610244751,
+    7.542784214019775
+  ],
+  "peak_memory_gib": 0.6333427429199219,
+  "image_mean": 0.5022101998329163,
+  "alpha_mean": 0.9973846077919006,
+  "isects": 1026770,
+  "max_flatten_id": 1932110
+}

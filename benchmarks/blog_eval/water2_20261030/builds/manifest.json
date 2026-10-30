@@ -1,0 +1,61 @@
+{
+  "baseline_revision": "a7050c6970033d724fcab8ff917ac364aece5450",
+  "binaries": {
+    "baseline": {
+      "path": "/tmp/opencode/gsplat-pr10/build/pr10/baseline.so",
+      "sha256": "c61a8253f35ebe5883ea6e67dd7f6e8de4cd2bd86b21eb931aad050b69efec06"
+    },
+    "color-staging": {
+      "path": "/tmp/opencode/gsplat-pr10/build/pr10/color-staging.so",
+      "sha256": "e6e07c58e8e41938acbbff9bba7c4649c7fb300bddf342d5357da3ff76b0a203"
+    },
+    "tail-reduction": {
+      "path": "/tmp/opencode/gsplat-pr10/build/pr10/tail-reduction.so",
+      "sha256": "d2912b0239655b7bad1e77a9fbf3897c78cb9285f974fe3ae8c83b06ebe37dbf"
+    },
+    "combined": {
+      "path": "/tmp/opencode/gsplat-pr10/build/pr10/combined.so",
+      "sha256": "b9b4f7017cd5ce16976816929bab4ba4a9d4164d5fb3671a474b1094d0ec5a27"
+    },
+    "tail-publish": {
+      "path": "/tmp/opencode/gsplat-pr10/build/pr10/tail-publish.so",
+      "sha256": "8dd6de201344ec04f95f953455e12472f2874db86da278a73bf6cb04b31b6086"
+    },
+    "clean-combined-publish": {
+      "path": "/tmp/opencode/gsplat-pr10/build/pr10/final/gsplat/csrc.so",
+      "sha256": "bab8d06c99659ad4f0a975b8dc3190c1cb1d0a4baa09d5dc7c7e65d711186e7d"
+    },
+    "color-idless": {
+      "path": "/tmp/opencode/gsplat-pr10/build/pr10/color-idless.so",
+      "sha256": "6cd8a811380b9c6532e45013ca9c7099cb6da7cb2bf67d6b43e0b099dd41a58e"
+    },
+    "delivery": {
+      "path": "/tmp/opencode/gsplat-pr10/build/pr10/delivery/gsplat/csrc.so",
+      "sha256": "5a0f78bb160523ba1eb0eee4a6150b0fbcf68f4b34e54bcc6b3cc385dfc71615"
+    }
+  },
+  "clean_candidate_patch_sha256": "263b3dbc1527106d975777457ba9c7c53fb9b0f4f40830c578174829db6cbc0c",
+  "clean_build_environment": {
+    "CUDA_HOME": "/usr/local/cuda-12.8",
+    "TORCH_CUDA_ARCH_LIST": "8.9",
+    "MAX_JOBS": "6"
+  },
+  "nvcc": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2025 NVIDIA Corporation\nBuilt on Fri_Feb_21_20:23:50_PST_2025\nCuda compilation tools, release 12.8, V12.8.93\nBuild cuda_12.8.r12.8/compiler.35583870_0\n",
+  "candidate_build_command": "python setup.py build_ext --build-lib build/pr10/final --build-temp build/pr10/final-objects",
+  "sources": {
+    "gsplat/cuda/csrc/rasterize_to_pixels_fwd.cu": "9ca36cb2736163d5f105f67d7a3ac8fc705f91846c59bb9f69c4bd974039b52d",
+    "gsplat/cuda/csrc/rasterize_to_pixels_bwd.cu": "1c1a07e0ce9a570485c95209ae771ede8710466d2b7fd9c1a3e5a45cf8924da8",
+    "gsplat/cuda/_wrapper.py": "b7cb558df5c85acb95d97eb60912803d68a7164dac6567cfe5a96bcb81919c18",
+    "benchmarks/blog_eval/benchmark_megapixels.py": "0753510fb2d1b14137e8147ca26bed415353c533c27cfe10cf33c171c62faf42",
+    "benchmarks/blog_eval/colmap_cameras.py": "015535054df740b3962f117f1ef118f5c9457c3def8e432568d37f71f99611a1"
+  },
+  "retained_variant": "delivery",
+  "delivery": {
+    "source_patch_sha256": "d2f478554f4d53e9666c9f7e4d7e1e64dabbd19b05d845b6ac32f00ce27225ee",
+    "source_file_sha256": "8e7a2a24728712d47437ca99763a527749ff2f62070ded3ad6bb1a36fa499bd5",
+    "backward_unchanged": true,
+    "build_command": "CUDA_HOME=/usr/local/cuda-12.8 TORCH_CUDA_ARCH_LIST=8.9 MAX_JOBS=4 python setup.py build_ext --build-lib build/pr10/delivery --build-temp build/pr10/final-objects",
+    "build_note": "Standard setuptools incremental rebuild of both raster translation units after rejecting backward experiment; other objects from the earlier full worktree build. All 19 backward SASS instruction hashes match baseline."
+  },
+  "patch_format_note": "Delivery and first color-staging patches published with zero context to avoid blank context-line whitespace; represented source changes are unmodified."
+}

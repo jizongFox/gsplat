@@ -1,0 +1,14 @@
+{
+  "binary_sha256": {
+    "base": "c61a8253f35ebe5883ea6e67dd7f6e8de4cd2bd86b21eb931aad050b69efec06",
+    "pr": "bab8d06c99659ad4f0a975b8dc3190c1cb1d0a4baa09d5dc7c7e65d711186e7d"
+  },
+  "timing_rows": 252,
+  "quality_cases": 42,
+  "forward_passes": 42,
+  "gradient_case_passes": 42,
+  "gradient_comparisons": 231,
+  "gradient_comparison_passes": 231,
+  "gradient_failures": [],
+  "skipped_cases": []
+}

@@ -1,0 +1,415 @@
+{
+  "protocol": "megapixels_lossless_rows_v2_unclamped_sh",
+  "label": "",
+  "revision_label": "",
+  "extension": {
+    "path": "/tmp/opencode/gsplat-pr10/build/pr10/baseline.so",
+    "sha256": "c61a8253f35ebe5883ea6e67dd7f6e8de4cd2bd86b21eb931aad050b69efec06"
+  },
+  "inputs": {
+    "ply_sha256": "41fcb0462acc6fd172ca42970ba3923c7de8bbf7c0180755e43001462154da18",
+    "cameras_sha256": "ba00beb95a68763634199c7e2bf64344b729f6c50abcfe55bd0d2518d59f5d4b",
+    "points_total": 1932132,
+    "points_used": 1932132,
+    "ply": "/mnt/data/dConstructData/2026-10-10-water2/outputs/56ee2948/point_cloud/iteration_020000/point_cloud.ply",
+    "cameras": "/tmp/opencode/gsplat-pr10/build/pr10/colmap-cameras.json"
+  },
+  "config": {
+    "packed": false,
+    "render_mode": "RGB+ED",
+    "absgrad": true,
+    "tile_size": 16,
+    "compact_box": true,
+    "compact_box_impl": "sweep",
+    "camera_indices": [
+      623
+    ],
+    "resolutions": [
+      [
+        3840,
+        2160
+      ]
+    ],
+    "scope": "full",
+    "warmup": 5,
+    "repeats": 5,
+    "seed": 2026,
+    "max_points": 0,
+    "degree": 1,
+    "skip_validation": false,
+    "forward_max_abs": 2e-05,
+    "gradient_rel_l2": 0.0001
+  },
+  "environment": {
+    "python": "3.12.13",
+    "torch": "2.10.0+cu128",
+    "cuda": "12.8",
+    "gpu": "NVIDIA GeForce RTX 4090",
+    "compute_capability": [
+      8,
+      9
+    ],
+    "gpu_total_memory": 25313280000,
+    "gsplat_path": "/tmp/opencode/gsplat-pr10/gsplat/__init__.py",
+    "wrapper_path": "/tmp/opencode/gsplat-pr10/gsplat/cuda/_wrapper.py",
+    "wrapper_sha256": "b7cb558df5c85acb95d97eb60912803d68a7164dac6567cfe5a96bcb81919c18",
+    "backend_path": "/tmp/opencode/gsplat-pr10/build/pr10/baseline.so",
+    "script_sha256": "0753510fb2d1b14137e8147ca26bed415353c533c27cfe10cf33c171c62faf42",
+    "repository_revision": "a7050c6970033d724fcab8ff917ac364aece5450",
+    "gsplat_revision": "a7050c6970033d724fcab8ff917ac364aece5450"
+  },
+  "records": [
+    {
+      "camera_index": 623,
+      "resolution": [
+        3840,
+        2160
+      ],
+      "megapixels": 8.2944,
+      "scope": "full",
+      "status": "ok",
+      "seed": 626880615,
+      "reference_file": "cam623-3840x2160-full-RGB+ED-seed626880615.pt",
+      "scaled_K": [
+        [
+          1686.0771484375,
+          0.0,
+          1923.7532958984375
+        ],
+        [
+          0.0,
+          1688.721923828125,
+          1085.9210205078125
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "viewmat": [
+        [
+          0.4939383566379547,
+          -0.14601263403892517,
+          0.8571494221687317,
+          2.3217074871063232
+        ],
+        [
+          0.060690946877002716,
+          0.9891846179962158,
+          0.13353081047534943,
+          0.07343077659606934
+        ],
+        [
+          -0.8673762083053589,
+          -0.013934778980910778,
+          0.4974578320980072,
+          4.4030327796936035
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "camera_identifier": {
+        "id": 632,
+        "img_name": "DECXIN2023012348/00000739.jpeg\n",
+        "width": 1280,
+        "height": 720,
+        "fx": 562.0256958007812,
+        "fy": 562.9072875976562,
+        "cx": 641.2510986328125,
+        "cy": 361.9736633300781,
+        "rotation": [
+          [
+            0.49393835355545096,
+            0.060690944966541906,
+            -0.8673762229194425
+          ],
+          [
+            -0.14601263657296976,
+            0.9891845793099039,
+            -0.013934777231743849
+          ],
+          [
+            0.8571494693738894,
+            0.1335308101321813,
+            0.4974578473574452
+          ]
+        ],
+        "position": [
+          2.66784916890758,
+          0.3277173123107111,
+          -4.190178942567519
+        ]
+      },
+      "timing": {
+        "forward_only": {
+          "samples_ms": [
+            5.083136081695557,
+            4.739071846008301,
+            4.818175792694092,
+            5.082111835479736,
+            4.753056049346924
+          ],
+          "mean_ms": 4.895110321044922,
+          "median_ms": 4.818175792694092
+        },
+        "training_forward": {
+          "samples_ms": [
+            4.701183795928955,
+            4.844543933868408,
+            8.218624114990234,
+            4.559872150421143,
+            4.591296195983887
+          ],
+          "mean_ms": 5.383104038238526,
+          "median_ms": 4.701183795928955
+        },
+        "backward": {
+          "samples_ms": [
+            7.723008155822754,
+            8.926207542419434,
+            9.026559829711914,
+            8.00870418548584,
+            12.852224349975586
+          ],
+          "mean_ms": 9.307340812683105,
+          "median_ms": 8.926207542419434
+        },
+        "combined": {
+          "samples_ms": [
+            12.424192428588867,
+            13.770751953125,
+            17.24518394470215,
+            12.568575859069824,
+            17.443519592285156
+          ],
+          "mean_ms": 14.6904447555542,
+          "median_ms": 13.770751953125
+        }
+      },
+      "peak_memory_gib": 1.1377711296081543,
+      "parity": {
+        "image": {
+          "finite": true,
+          "max_abs": 0.0,
+          "mse": 0.0,
+          "psnr": null,
+          "exact_equal": true,
+          "alignment_passed": true,
+          "psnr_channels": "RGB",
+          "rgb_max_abs": 0.0,
+          "depth_max_abs": 0.0,
+          "data_range": 1.0
+        },
+        "alpha": {
+          "finite": true,
+          "max_abs": 0.0,
+          "mse": 0.0,
+          "psnr": null,
+          "exact_equal": true,
+          "alignment_passed": true
+        },
+        "grad.means": {
+          "finite": true,
+          "max_abs": 0.0078582763671875,
+          "rel_l2": 3.693718996900103e-07,
+          "exact_equal": false,
+          "alignment_passed": true
+        },
+        "grad.quats": {
+          "finite": true,
+          "max_abs": 0.01693248748779297,
+          "rel_l2": 3.0310926839063247e-05,
+          "exact_equal": false,
+          "alignment_passed": true
+        },
+        "grad.log_scales": {
+          "finite": true,
+          "max_abs": 0.0007050037384033203,
+          "rel_l2": 2.1670380085211654e-06,
+          "exact_equal": false,
+          "alignment_passed": true
+        },
+        "grad.opacity_logits": {
+          "finite": true,
+          "max_abs": 8.344650268554688e-06,
+          "rel_l2": 2.5791916880152597e-07,
+          "exact_equal": false,
+          "alignment_passed": true
+        },
+        "grad.sh_coefficients": {
+          "finite": true,
+          "max_abs": 1.9073486328125e-05,
+          "rel_l2": 2.589225100738164e-07,
+          "exact_equal": false,
+          "alignment_passed": true
+        },
+        "grad.means2d_abs": {
+          "finite": true,
+          "max_abs": 2.288818359375e-05,
+          "rel_l2": 1.2889968792625694e-07,
+          "exact_equal": false,
+          "alignment_passed": true
+        }
+      },
+      "finite_checks": {
+        "forward_only": {
+          "image": true,
+          "alpha": true
+        },
+        "training": {
+          "image": true,
+          "alpha": true,
+          "grad.means": true,
+          "grad.quats": true,
+          "grad.log_scales": true,
+          "grad.opacity_logits": true,
+          "grad.sh_coefficients": true,
+          "grad.means2d_abs": true
+        }
+      },
+      "alignment_passed": true,
+      "repeat_noise": {
+        "image": {
+          "finite": true,
+          "max_abs": 0.0,
+          "mse": 0.0,
+          "psnr": null,
+          "exact_equal": true,
+          "alignment_passed": true,
+          "psnr_channels": "RGB",
+          "rgb_max_abs": 0.0,
+          "depth_max_abs": 0.0,
+          "data_range": 1.0
+        },
+        "alpha": {
+          "finite": true,
+          "max_abs": 0.0,
+          "mse": 0.0,
+          "psnr": null,
+          "exact_equal": true,
+          "alignment_passed": true
+        },
+        "grad.means": {
+          "finite": true,
+          "max_abs": 0.0559234619140625,
+          "rel_l2": 1.769733423492021e-06,
+          "exact_equal": false,
+          "alignment_passed": true
+        },
+        "grad.quats": {
+          "finite": true,
+          "max_abs": 0.09248495101928711,
+          "rel_l2": 0.00014305384927723337,
+          "exact_equal": false,
+          "alignment_passed": false
+        },
+        "grad.log_scales": {
+          "finite": true,
+          "max_abs": 0.0010726451873779297,
+          "rel_l2": 2.7396724687078797e-06,
+          "exact_equal": false,
+          "alignment_passed": true
+        },
+        "grad.opacity_logits": {
+          "finite": true,
+          "max_abs": 1.1444091796875e-05,
+          "rel_l2": 2.6015342903313885e-07,
+          "exact_equal": false,
+          "alignment_passed": true
+        },
+        "grad.sh_coefficients": {
+          "finite": true,
+          "max_abs": 3.62396240234375e-05,
+          "rel_l2": 2.6371409791353844e-07,
+          "exact_equal": false,
+          "alignment_passed": true
+        },
+        "grad.means2d_abs": {
+          "finite": true,
+          "max_abs": 2.288818359375e-05,
+          "rel_l2": 1.3202349823567424e-07,
+          "exact_equal": false,
+          "alignment_passed": true
+        }
+      },
+      "baseline_repeat_noise": {
+        "image": {
+          "finite": true,
+          "max_abs": 0.0,
+          "mse": 0.0,
+          "psnr": null,
+          "exact_equal": true,
+          "alignment_passed": true,
+          "psnr_channels": "RGB",
+          "rgb_max_abs": 0.0,
+          "depth_max_abs": 0.0,
+          "data_range": 1.0
+        },
+        "alpha": {
+          "finite": true,
+          "max_abs": 0.0,
+          "mse": 0.0,
+          "psnr": null,
+          "exact_equal": true,
+          "alignment_passed": true
+        },
+        "grad.means": {
+          "finite": true,
+          "max_abs": 0.040740966796875,
+          "rel_l2": 1.2236805965362014e-06,
+          "exact_equal": false,
+          "alignment_passed": true
+        },
+        "grad.quats": {
+          "finite": true,
+          "max_abs": 0.06252670288085938,
+          "rel_l2": 8.79681277485714e-05,
+          "exact_equal": false,
+          "alignment_passed": true
+        },
+        "grad.log_scales": {
+          "finite": true,
+          "max_abs": 0.0005121529102325439,
+          "rel_l2": 1.8091248425711923e-06,
+          "exact_equal": false,
+          "alignment_passed": true
+        },
+        "grad.opacity_logits": {
+          "finite": true,
+          "max_abs": 1.1444091796875e-05,
+          "rel_l2": 2.6829041781380083e-07,
+          "exact_equal": false,
+          "alignment_passed": true
+        },
+        "grad.sh_coefficients": {
+          "finite": true,
+          "max_abs": 3.24249267578125e-05,
+          "rel_l2": 2.6076919337792695e-07,
+          "exact_equal": false,
+          "alignment_passed": true
+        },
+        "grad.means2d_abs": {
+          "finite": true,
+          "max_abs": 3.0517578125e-05,
+          "rel_l2": 1.3148450669027422e-07,
+          "exact_equal": false,
+          "alignment_passed": true
+        }
+      },
+      "baseline_provenance": {
+        "extension_path": "/tmp/opencode/gsplat-pr10/build/pr10/baseline.so",
+        "extension_sha256": "c61a8253f35ebe5883ea6e67dd7f6e8de4cd2bd86b21eb931aad050b69efec06",
+        "label": "",
+        "revision": ""
+      },
+      "cross_scope_forward": null,
+      "isects": 6152342,
+      "max_flatten_id": 1932110
+    }
+  ]
+}

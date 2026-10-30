@@ -1,0 +1,7 @@
+scope,width,height,camera_index,rgb_psnr_db,rgb_exact,image_max_abs,alpha_max_abs,depth_max_abs,grad_max_rel_l2,baseline_noise_max_rel_l2,gradient_passed,forward_passed
+full,1280,720,0,,True,0.0,0.0,0.0,2.8021908551062336e-06,2.0007064392602305e-06,True,True
+raster,1280,720,0,,True,0.0,0.0,0.0,2.695602003368646e-07,2.6584608319522605e-07,True,True
+full,1280,720,623,,True,0.0,0.0,0.0,1.938856137568409e-06,2.3396231978346288e-06,True,True
+raster,1280,720,623,,True,0.0,0.0,0.0,2.72093339574382e-07,4.026678631884068e-07,True,True
+full,1280,720,1247,,True,0.0,0.0,0.0,2.854067304467788e-06,2.5749486579712193e-06,True,True
+raster,1280,720,1247,,True,0.0,0.0,0.0,1.792518364756506e-07,1.8488985367789561e-07,True,True

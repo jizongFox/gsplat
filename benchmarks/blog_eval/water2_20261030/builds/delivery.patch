@@ -1,0 +1,46 @@
+diff --git a/gsplat/cuda/csrc/rasterize_to_pixels_fwd.cu b/gsplat/cuda/csrc/rasterize_to_pixels_fwd.cu
+index d1c3234..bda2edf 100644
+--- a/gsplat/cuda/csrc/rasterize_to_pixels_fwd.cu
++++ b/gsplat/cuda/csrc/rasterize_to_pixels_fwd.cu
+@@ -91 +91,4 @@ __global__ void rasterize_to_pixels_fwd_kernel(
+-    int32_t *id_batch = (int32_t *)s; // [block_size]
++    // Narrow colors are staged directly, so those specializations need no
++    // shared Gaussian IDs. In particular, tile16 RGBA uses 10 rather than
++    // 11 KiB, avoiding an unnecessary shared-memory residency constraint.
++    int32_t *id_batch = (int32_t *)s; // [block_size] for wide channels only
+@@ -93 +96 @@ __global__ void rasterize_to_pixels_fwd_kernel(
+-        reinterpret_cast<vec3<float> *>(&id_batch[block_size]); // [block_size]
++        reinterpret_cast<vec3<float> *>(&id_batch[COLOR_DIM <= 4 ? 0 : block_size]);
+@@ -96,0 +100 @@ __global__ void rasterize_to_pixels_fwd_kernel(
++    S *color_batch = reinterpret_cast<S *>(&conic_batch[block_size]);
+@@ -125 +129,3 @@ __global__ void rasterize_to_pixels_fwd_kernel(
+-            id_batch[tr] = g;
++            if constexpr (COLOR_DIM > 4) {
++                id_batch[tr] = g;
++            }
+@@ -129,0 +136,6 @@ __global__ void rasterize_to_pixels_fwd_kernel(
++            if constexpr (COLOR_DIM <= 4) {
++                GSPLAT_PRAGMA_UNROLL
++                for (uint32_t k = 0; k < COLOR_DIM; ++k) {
++                    color_batch[tr * COLOR_DIM + k] = colors[g * COLOR_DIM + k];
++                }
++            }
+@@ -156 +167,0 @@ __global__ void rasterize_to_pixels_fwd_kernel(
+-            int32_t g = id_batch[t];
+@@ -158 +169,6 @@ __global__ void rasterize_to_pixels_fwd_kernel(
+-            const S *c_ptr = colors + g * COLOR_DIM;
++            const S *c_ptr;
++            if constexpr (COLOR_DIM <= 4) {
++                c_ptr = color_batch + t * COLOR_DIM;
++            } else {
++                c_ptr = colors + id_batch[t] * COLOR_DIM;
++            }
+@@ -246 +262,3 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> call_kernel_with_dim(
+-        (sizeof(int32_t) + sizeof(vec3<float>) + sizeof(vec3<float>));
++        ((CDIM <= 4 ? 0 : sizeof(int32_t)) + sizeof(vec3<float>) +
++         sizeof(vec3<float>) +
++         (CDIM <= 4 ? CDIM * sizeof(float) : 0));
+@@ -354 +372 @@ rasterize_to_pixels_fwd_tensor(
+-} // namespace gsplat
+\ No newline at end of file
++} // namespace gsplat

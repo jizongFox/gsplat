@@ -1,0 +1,160 @@
+{
+  "protocol_version": 3,
+  "ply_sha256": "41fcb0462acc6fd172ca42970ba3923c7de8bbf7c0180755e43001462154da18",
+  "cameras_sha256": "ba00beb95a68763634199c7e2bf64344b729f6c50abcfe55bd0d2518d59f5d4b",
+  "camera_index": 0,
+  "max_points": 0,
+  "seed": 2026,
+  "raster_only": false,
+  "packed": false,
+  "render_mode": "RGB",
+  "absgrad": false,
+  "tile_size": 16,
+  "compact_box": true,
+  "compact_box_impl": "sweep",
+  "upstream": "seeded_cuda_randn_image_and_alpha_v1",
+  "quaternion_input": "normalized_like_product_wrapper",
+  "points_used": 1932132,
+  "points_total": 1932132,
+  "resolution": [
+    1280,
+    720
+  ],
+  "degree": 1,
+  "provenance": {
+    "ply": "/mnt/data/dConstructData/2026-10-10-water2/outputs/56ee2948/point_cloud/iteration_020000/point_cloud.ply",
+    "cameras": "/tmp/opencode/gsplat-pr10/build/pr10/colmap-cameras.json"
+  },
+  "forward_only": false,
+  "atol": 1e-05,
+  "rtol": 0.001,
+  "gradient_rel_l2": 0.0001,
+  "forward_max_abs": 2e-05,
+  "warmup": 10,
+  "repeats": 20,
+  "timing_only": false,
+  "checks": {
+    "finite": {
+      "image": true,
+      "alpha": true,
+      "grad.means": true,
+      "grad.quats": true,
+      "grad.log_scales": true,
+      "grad.opacity_logits": true,
+      "grad.sh_coefficients": true
+    },
+    "baseline_noise": {
+      "image": {
+        "finite": true,
+        "max_abs": 0.0,
+        "rms": 0.0,
+        "max_relative": 0.0,
+        "allclose": true,
+        "rel_l2": 0.0
+      },
+      "alpha": {
+        "finite": true,
+        "max_abs": 0.0,
+        "rms": 0.0,
+        "max_relative": 0.0,
+        "allclose": true,
+        "rel_l2": 0.0
+      },
+      "grad.means": {
+        "finite": true,
+        "max_abs": 0.0001678466796875,
+        "rms": 3.967820820017396e-07,
+        "max_relative": 0.006217303595689093,
+        "allclose": true,
+        "rel_l2": 1.115415971676941e-07
+      },
+      "grad.quats": {
+        "finite": true,
+        "max_abs": 0.00011146068572998047,
+        "rms": 7.731869123210766e-08,
+        "max_relative": 0.09683727939250754,
+        "allclose": true,
+        "rel_l2": 1.2553587049715248e-06
+      },
+      "grad.log_scales": {
+        "finite": true,
+        "max_abs": 9.059906005859375e-06,
+        "rms": 1.763091405069498e-08,
+        "max_relative": 0.18908530839179546,
+        "allclose": true,
+        "rel_l2": 2.93954535482395e-07
+      },
+      "grad.opacity_logits": {
+        "finite": true,
+        "max_abs": 3.814697265625e-06,
+        "rms": 3.982665938159704e-09,
+        "max_relative": 0.0024143917379854515,
+        "allclose": true,
+        "rel_l2": 1.9537941421967263e-07
+      },
+      "grad.sh_coefficients": {
+        "finite": true,
+        "max_abs": 7.152557373046875e-06,
+        "rms": 1.4052237386850227e-08,
+        "max_relative": 0.011106812675617177,
+        "allclose": true,
+        "rel_l2": 1.829398485638165e-07
+      }
+    },
+    "timed_final_finite": {
+      "image": true,
+      "alpha": true,
+      "grad.means": true,
+      "grad.quats": true,
+      "grad.log_scales": true,
+      "grad.opacity_logits": true,
+      "grad.sh_coefficients": true
+    }
+  },
+  "passed": true,
+  "profile": null,
+  "environment": {
+    "gpu": "NVIDIA GeForce RTX 4090",
+    "compute_capability": [
+      8,
+      9
+    ],
+    "python": "3.12.13",
+    "torch": "2.10.0+cu128",
+    "cuda": "12.8",
+    "gsplat_version": "1.4.0",
+    "gsplat_path": "/tmp/opencode/gsplat-pr10/gsplat/__init__.py",
+    "wrapper_path": "/tmp/opencode/gsplat-pr10/gsplat/cuda/_wrapper.py",
+    "backend_path": "/tmp/opencode/gsplat-pr10/build/pr10/baseline.so",
+    "backend_sha256": "c61a8253f35ebe5883ea6e67dd7f6e8de4cd2bd86b21eb931aad050b69efec06"
+  },
+  "median_ms": 3.7068800926208496,
+  "mean_ms": 4.470423996448517,
+  "samples_ms": [
+    7.230751991271973,
+    3.9772160053253174,
+    3.7068800926208496,
+    3.699712038040161,
+    3.703808069229126,
+    3.67411208152771,
+    3.689728021621704,
+    4.9049601554870605,
+    7.358463764190674,
+    4.465663909912109,
+    3.660799980163574,
+    3.6795520782470703,
+    3.7068800926208496,
+    4.067039966583252,
+    3.660799980163574,
+    3.6660799980163574,
+    7.343103885650635,
+    5.617919921875,
+    3.9096319675445557,
+    3.685375928878784
+  ],
+  "peak_memory_gib": 0.6333427429199219,
+  "image_mean": 0.5022101998329163,
+  "alpha_mean": 0.9973846077919006,
+  "isects": 1026770,
+  "max_flatten_id": 1932110
+}

@@ -1,0 +1,1029 @@
+{
+  "aggregation": "median of job means",
+  "jobs_per_variant": 3,
+  "records": [
+    {
+      "camera_index": 0,
+      "resolution": [
+        1280,
+        720
+      ],
+      "scope": "full",
+      "timing": {
+        "forward_only": {
+          "job_means_ms": {
+            "baseline": [
+              1.6283590376377106,
+              1.5879091238975525,
+              1.5430742406845093
+            ],
+            "candidate": [
+              1.6700108814239503,
+              1.6685571229457856,
+              1.7131584072113037
+            ]
+          },
+          "median_of_job_means_ms": {
+            "baseline": 1.5879091238975525,
+            "candidate": 1.6700108814239503
+          },
+          "speedup": 0.9508375912758167,
+          "paired_speedups": [
+            0.9750589386874384,
+            0.9516660245315116,
+            0.9007189493914581
+          ]
+        },
+        "training_forward": {
+          "job_means_ms": {
+            "baseline": [
+              1.8400966358184814,
+              2.020313276052475,
+              1.7523567962646485
+            ],
+            "candidate": [
+              1.8638316798210144,
+              1.7518880093097686,
+              1.7578329563140869
+            ]
+          },
+          "median_of_job_means_ms": {
+            "baseline": 1.8400966358184814,
+            "candidate": 1.7578329563140869
+          },
+          "speedup": 1.046798348619478,
+          "paired_speedups": [
+            0.9872654573588897,
+            1.1532205627963992,
+            0.9968847096478831
+          ]
+        },
+        "backward": {
+          "job_means_ms": {
+            "baseline": [
+              2.8268399953842165,
+              2.9327583956718444,
+              2.8372134256362913
+            ],
+            "candidate": [
+              2.825912959575653,
+              2.8610515189170838,
+              2.86741215467453
+            ]
+          },
+          "median_of_job_means_ms": {
+            "baseline": 2.8372134256362913,
+            "candidate": 2.8610515189170838
+          },
+          "speedup": 0.9916680657013072,
+          "paired_speedups": [
+            1.000328048252662,
+            1.0250631197238635,
+            0.9894682984484781
+          ]
+        },
+        "combined": {
+          "job_means_ms": {
+            "baseline": [
+              4.666936645507812,
+              4.9530716681480405,
+              4.589570229053497
+            ],
+            "candidate": [
+              4.6897446322441105,
+              4.612939541339874,
+              4.625245110988617
+            ]
+          },
+          "median_of_job_means_ms": {
+            "baseline": 4.666936645507812,
+            "candidate": 4.625245110988617
+          },
+          "speedup": 1.0090139081321647,
+          "paired_speedups": [
+            0.9951366250137623,
+            1.0737343560998356,
+            0.9922869207838599
+          ]
+        }
+      },
+      "parity": [
+        {
+          "image": {
+            "finite": true,
+            "max_abs": 0.0,
+            "mse": 0.0,
+            "psnr": null,
+            "exact_equal": true,
+            "alignment_passed": true,
+            "psnr_channels": "RGB",
+            "rgb_max_abs": 0.0,
+            "depth_max_abs": 0.0,
+            "data_range": 1.0
+          },
+          "alpha": {
+            "finite": true,
+            "max_abs": 0.0,
+            "mse": 0.0,
+            "psnr": null,
+            "exact_equal": true,
+            "alignment_passed": true
+          },
+          "grad.means": {
+            "finite": true,
+            "max_abs": 0.0003662109375,
+            "rel_l2": 1.2794928525725572e-07,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.quats": {
+            "finite": true,
+            "max_abs": 0.0006582736968994141,
+            "rel_l2": 2.8021908551062336e-06,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.log_scales": {
+            "finite": true,
+            "max_abs": 2.956390380859375e-05,
+            "rel_l2": 4.0734582618187497e-07,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.opacity_logits": {
+            "finite": true,
+            "max_abs": 1.9073486328125e-06,
+            "rel_l2": 1.8395638920543044e-07,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.sh_coefficients": {
+            "finite": true,
+            "max_abs": 6.198883056640625e-06,
+            "rel_l2": 1.8152587934963568e-07,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.means2d_abs": {
+            "finite": true,
+            "max_abs": 1.52587890625e-05,
+            "rel_l2": 1.0226192044896556e-07,
+            "exact_equal": false,
+            "alignment_passed": true
+          }
+        }
+      ],
+      "alignment_passed": true,
+      "validation_present": true
+    },
+    {
+      "camera_index": 0,
+      "resolution": [
+        1280,
+        720
+      ],
+      "scope": "raster",
+      "timing": {
+        "forward_only": {
+          "job_means_ms": {
+            "baseline": [
+              0.38438240021467207,
+              0.38778400033712385,
+              0.38616960018873214
+            ],
+            "candidate": [
+              0.38063136041164397,
+              0.38338528007268907,
+              0.385553919672966
+            ]
+          },
+          "median_of_job_means_ms": {
+            "baseline": 0.38616960018873214,
+            "candidate": 0.38338528007268907
+          },
+          "speedup": 1.0072624596215984,
+          "paired_speedups": [
+            1.0098547839015983,
+            1.0114733676358174,
+            1.0015968726664441
+          ]
+        },
+        "training_forward": {
+          "job_means_ms": {
+            "baseline": [
+              0.394654720723629,
+              0.4008399996161461,
+              0.3980886399745941
+            ],
+            "candidate": [
+              0.39491487950086596,
+              0.3978217586874962,
+              0.401086719930172
+            ]
+          },
+          "median_of_job_means_ms": {
+            "baseline": 0.3980886399745941,
+            "candidate": 0.3978217586874962
+          },
+          "speedup": 1.0006708564357525,
+          "paired_speedups": [
+            0.9993412282222291,
+            1.0075869176653578,
+            0.9925251078966169
+          ]
+        },
+        "backward": {
+          "job_means_ms": {
+            "baseline": [
+              0.8694918429851533,
+              0.8757615977525711,
+              0.8743379205465317
+            ],
+            "candidate": [
+              0.8702288013696671,
+              0.8759491217136383,
+              0.8734140771627427
+            ]
+          },
+          "median_of_job_means_ms": {
+            "baseline": 0.8743379205465317,
+            "candidate": 0.8734140771627427
+          },
+          "speedup": 1.0010577381427033,
+          "paired_speedups": [
+            0.9991531441118084,
+            0.9997859191174251,
+            1.0010577381427033
+          ]
+        },
+        "combined": {
+          "job_means_ms": {
+            "baseline": [
+              1.2641465592384338,
+              1.2766016030311584,
+              1.2724265587329864
+            ],
+            "candidate": [
+              1.265143679380417,
+              1.273770878314972,
+              1.27450080037117
+            ]
+          },
+          "median_of_job_means_ms": {
+            "baseline": 1.2724265587329864,
+            "candidate": 1.273770878314972
+          },
+          "speedup": 0.9989446142906298,
+          "paired_speedups": [
+            0.9992118522518553,
+            1.0022223186009176,
+            0.9983725066021304
+          ]
+        }
+      },
+      "parity": [
+        {
+          "image": {
+            "finite": true,
+            "max_abs": 0.0,
+            "mse": 0.0,
+            "psnr": null,
+            "exact_equal": true,
+            "alignment_passed": true,
+            "psnr_channels": "RGB",
+            "rgb_max_abs": 0.0,
+            "depth_max_abs": 0.0,
+            "data_range": 1.0
+          },
+          "alpha": {
+            "finite": true,
+            "max_abs": 0.0,
+            "mse": 0.0,
+            "psnr": null,
+            "exact_equal": true,
+            "alignment_passed": true
+          },
+          "grad.means2d": {
+            "finite": true,
+            "max_abs": 1.430511474609375e-06,
+            "rel_l2": 9.027092529794321e-08,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.conics": {
+            "finite": true,
+            "max_abs": 0.00152587890625,
+            "rel_l2": 2.695602003368646e-07,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.colors": {
+            "finite": true,
+            "max_abs": 1.9073486328125e-05,
+            "rel_l2": 1.7559858683448708e-07,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.opacities": {
+            "finite": true,
+            "max_abs": 6.103515625e-05,
+            "rel_l2": 2.3148089529454797e-07,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.means2d_abs": {
+            "finite": true,
+            "max_abs": 1.52587890625e-05,
+            "rel_l2": 1.1458194399836052e-07,
+            "exact_equal": false,
+            "alignment_passed": true
+          }
+        }
+      ],
+      "alignment_passed": true,
+      "validation_present": true
+    },
+    {
+      "camera_index": 623,
+      "resolution": [
+        1280,
+        720
+      ],
+      "scope": "full",
+      "timing": {
+        "forward_only": {
+          "job_means_ms": {
+            "baseline": [
+              1.9175039994716645,
+              1.9595395195484162,
+              1.8781964886188507
+            ],
+            "candidate": [
+              1.9272272074222565,
+              1.9609884691238404,
+              1.9265785658359527
+            ]
+          },
+          "median_of_job_means_ms": {
+            "baseline": 1.9175039994716645,
+            "candidate": 1.9272272074222565
+          },
+          "speedup": 0.9949548201098732,
+          "paired_speedups": [
+            0.9949548201098732,
+            0.9992611126489328,
+            0.9748870468741518
+          ]
+        },
+        "training_forward": {
+          "job_means_ms": {
+            "baseline": [
+              2.177791032791138,
+              2.1353459322452544,
+              2.141147837638855
+            ],
+            "candidate": [
+              2.1841875207424164,
+              2.197947198152542,
+              2.1799654388427734
+            ]
+          },
+          "median_of_job_means_ms": {
+            "baseline": 2.141147837638855,
+            "candidate": 2.1841875207424164
+          },
+          "speedup": 0.9802948772965555,
+          "paired_speedups": [
+            0.9970714565986054,
+            0.9715183030966775,
+            0.9821934786156404
+          ]
+        },
+        "backward": {
+          "job_means_ms": {
+            "baseline": [
+              3.4262473583221436,
+              3.3954950284957888,
+              3.4075241541862487
+            ],
+            "candidate": [
+              3.392135672569275,
+              3.425650236606598,
+              3.4730643320083616
+            ]
+          },
+          "median_of_job_means_ms": {
+            "baseline": 3.4075241541862487,
+            "candidate": 3.425650236606598
+          },
+          "speedup": 0.994708717712435,
+          "paired_speedups": [
+            1.0100561089076463,
+            0.9911972308823097,
+            0.9811290055245786
+          ]
+        },
+        "combined": {
+          "job_means_ms": {
+            "baseline": [
+              5.604038410186767,
+              5.530840940475464,
+              5.548671989440918
+            ],
+            "candidate": [
+              5.576323194503784,
+              5.62359742641449,
+              5.653029770851135
+            ]
+          },
+          "median_of_job_means_ms": {
+            "baseline": 5.548671989440918,
+            "candidate": 5.62359742641449
+          },
+          "speedup": 0.9866766001738245,
+          "paired_speedups": [
+            1.0049701594969065,
+            0.9835058452969374,
+            0.9815394955200273
+          ]
+        }
+      },
+      "parity": [
+        {
+          "image": {
+            "finite": true,
+            "max_abs": 0.0,
+            "mse": 0.0,
+            "psnr": null,
+            "exact_equal": true,
+            "alignment_passed": true,
+            "psnr_channels": "RGB",
+            "rgb_max_abs": 0.0,
+            "depth_max_abs": 0.0,
+            "data_range": 1.0
+          },
+          "alpha": {
+            "finite": true,
+            "max_abs": 0.0,
+            "mse": 0.0,
+            "psnr": null,
+            "exact_equal": true,
+            "alignment_passed": true
+          },
+          "grad.means": {
+            "finite": true,
+            "max_abs": 0.000213623046875,
+            "rel_l2": 9.632977496944172e-08,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.quats": {
+            "finite": true,
+            "max_abs": 0.00022912025451660156,
+            "rel_l2": 1.938856137568409e-06,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.log_scales": {
+            "finite": true,
+            "max_abs": 3.390014171600342e-05,
+            "rel_l2": 4.936100507843192e-07,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.opacity_logits": {
+            "finite": true,
+            "max_abs": 4.76837158203125e-06,
+            "rel_l2": 1.7151947618763227e-07,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.sh_coefficients": {
+            "finite": true,
+            "max_abs": 3.337860107421875e-06,
+            "rel_l2": 1.2160774989178178e-07,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.means2d_abs": {
+            "finite": true,
+            "max_abs": 5.7220458984375e-06,
+            "rel_l2": 7.714213419562342e-08,
+            "exact_equal": false,
+            "alignment_passed": true
+          }
+        }
+      ],
+      "alignment_passed": true,
+      "validation_present": true
+    },
+    {
+      "camera_index": 623,
+      "resolution": [
+        1280,
+        720
+      ],
+      "scope": "raster",
+      "timing": {
+        "forward_only": {
+          "job_means_ms": {
+            "baseline": [
+              0.5607385575771332,
+              0.5660268777608871,
+              0.5728764820098877
+            ],
+            "candidate": [
+              0.5762630379199982,
+              0.6102848011255264,
+              0.5806361621618271
+            ]
+          },
+          "median_of_job_means_ms": {
+            "baseline": 0.5660268777608871,
+            "candidate": 0.5806361621618271
+          },
+          "speedup": 0.9748391757989261,
+          "paired_speedups": [
+            0.9730600796488699,
+            0.9274798859761606,
+            0.9866358992814906
+          ]
+        },
+        "training_forward": {
+          "job_means_ms": {
+            "baseline": [
+              0.5845820760726929,
+              0.598070398569107,
+              0.5876416003704071
+            ],
+            "candidate": [
+              0.5901350426673889,
+              0.5900134402513504,
+              0.6009072017669678
+            ]
+          },
+          "median_of_job_means_ms": {
+            "baseline": 0.5876416003704071,
+            "candidate": 0.5901350426673889
+          },
+          "speedup": 0.9957747937053331,
+          "paired_speedups": [
+            0.9905903459492985,
+            1.0136555504808913,
+            0.977924043250683
+          ]
+        },
+        "backward": {
+          "job_means_ms": {
+            "baseline": [
+              1.26202911734581,
+              1.2644492781162262,
+              1.2656851148605346
+            ],
+            "candidate": [
+              1.2608329641819,
+              1.2602249550819398,
+              1.2596147191524505
+            ]
+          },
+          "median_of_job_means_ms": {
+            "baseline": 1.2644492781162262,
+            "candidate": 1.2602249550819398
+          },
+          "speedup": 1.0033520388699269,
+          "paired_speedups": [
+            1.0009487007382347,
+            1.0033520388699269,
+            1.004819247993679
+          ]
+        },
+        "combined": {
+          "job_means_ms": {
+            "baseline": [
+              1.8466112065315246,
+              1.8625196743011474,
+              1.853326722383499
+            ],
+            "candidate": [
+              1.8509680032730103,
+              1.8502383983135224,
+              1.8605219221115112
+            ]
+          },
+          "median_of_job_means_ms": {
+            "baseline": 1.853326722383499,
+            "candidate": 1.8509680032730103
+          },
+          "speedup": 1.0012743165232019,
+          "paired_speedups": [
+            0.9976462063451222,
+            1.0066376722041976,
+            0.9961326982270403
+          ]
+        }
+      },
+      "parity": [
+        {
+          "image": {
+            "finite": true,
+            "max_abs": 0.0,
+            "mse": 0.0,
+            "psnr": null,
+            "exact_equal": true,
+            "alignment_passed": true,
+            "psnr_channels": "RGB",
+            "rgb_max_abs": 0.0,
+            "depth_max_abs": 0.0,
+            "data_range": 1.0
+          },
+          "alpha": {
+            "finite": true,
+            "max_abs": 0.0,
+            "mse": 0.0,
+            "psnr": null,
+            "exact_equal": true,
+            "alignment_passed": true
+          },
+          "grad.means2d": {
+            "finite": true,
+            "max_abs": 1.0728836059570312e-06,
+            "rel_l2": 5.5517505243680816e-08,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.conics": {
+            "finite": true,
+            "max_abs": 0.0029296875,
+            "rel_l2": 2.72093339574382e-07,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.colors": {
+            "finite": true,
+            "max_abs": 9.5367431640625e-06,
+            "rel_l2": 1.1826190962667535e-07,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.opacities": {
+            "finite": true,
+            "max_abs": 5.340576171875e-05,
+            "rel_l2": 1.7917456800007915e-07,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.means2d_abs": {
+            "finite": true,
+            "max_abs": 7.62939453125e-06,
+            "rel_l2": 7.684380422308586e-08,
+            "exact_equal": false,
+            "alignment_passed": true
+          }
+        }
+      ],
+      "alignment_passed": true,
+      "validation_present": true
+    },
+    {
+      "camera_index": 1247,
+      "resolution": [
+        1280,
+        720
+      ],
+      "scope": "full",
+      "timing": {
+        "forward_only": {
+          "job_means_ms": {
+            "baseline": [
+              3.955669445991516,
+              3.949575035572052,
+              3.9660345768928527
+            ],
+            "candidate": [
+              3.210559687614441,
+              3.2391264128684996,
+              3.1779193687438965
+            ]
+          },
+          "median_of_job_means_ms": {
+            "baseline": 3.955669445991516,
+            "candidate": 3.210559687614441
+          },
+          "speedup": 1.2320809549972012,
+          "paired_speedups": [
+            1.2320809549972012,
+            1.2193334041799235,
+            1.2479972323717157
+          ]
+        },
+        "training_forward": {
+          "job_means_ms": {
+            "baseline": [
+              4.387829427719116,
+              4.346346237659454,
+              4.395584635734558
+            ],
+            "candidate": [
+              3.4801884698867798,
+              3.4817891049385072,
+              3.404984323978424
+            ]
+          },
+          "median_of_job_means_ms": {
+            "baseline": 4.387829427719116,
+            "candidate": 3.4801884698867798
+          },
+          "speedup": 1.2608022426618362,
+          "paired_speedups": [
+            1.2608022426618362,
+            1.2483082997458619,
+            1.2909265410651596
+          ]
+        },
+        "backward": {
+          "job_means_ms": {
+            "baseline": [
+              5.859910731315613,
+              5.8770153522491455,
+              5.812121276855469
+            ],
+            "candidate": [
+              6.39566559791565,
+              6.097665929794312,
+              6.219741096496582
+            ]
+          },
+          "median_of_job_means_ms": {
+            "baseline": 5.859910731315613,
+            "candidate": 6.219741096496582
+          },
+          "speedup": 0.9421470508822863,
+          "paired_speedups": [
+            0.9162315698971755,
+            0.9638139281348578,
+            0.9344635390256493
+          ]
+        },
+        "combined": {
+          "job_means_ms": {
+            "baseline": [
+              10.247740173339844,
+              10.2233616065979,
+              10.207705945968629
+            ],
+            "candidate": [
+              9.875854105949402,
+              9.579455065727235,
+              9.624725484848023
+            ]
+          },
+          "median_of_job_means_ms": {
+            "baseline": 10.2233616065979,
+            "candidate": 9.624725484848023
+          },
+          "speedup": 1.0621977346462812,
+          "paired_speedups": [
+            1.037656091655547,
+            1.0672174498917368,
+            1.0605711261103892
+          ]
+        }
+      },
+      "parity": [
+        {
+          "image": {
+            "finite": true,
+            "max_abs": 0.0,
+            "mse": 0.0,
+            "psnr": null,
+            "exact_equal": true,
+            "alignment_passed": true,
+            "psnr_channels": "RGB",
+            "rgb_max_abs": 0.0,
+            "depth_max_abs": 0.0,
+            "data_range": 1.0
+          },
+          "alpha": {
+            "finite": true,
+            "max_abs": 0.0,
+            "mse": 0.0,
+            "psnr": null,
+            "exact_equal": true,
+            "alignment_passed": true
+          },
+          "grad.means": {
+            "finite": true,
+            "max_abs": 0.0002155303955078125,
+            "rel_l2": 7.283091446158246e-08,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.quats": {
+            "finite": true,
+            "max_abs": 0.00029480457305908203,
+            "rel_l2": 2.854067304467788e-06,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.log_scales": {
+            "finite": true,
+            "max_abs": 4.699826240539551e-05,
+            "rel_l2": 7.143644399314601e-07,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.opacity_logits": {
+            "finite": true,
+            "max_abs": 2.384185791015625e-06,
+            "rel_l2": 1.6805936349893666e-07,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.sh_coefficients": {
+            "finite": true,
+            "max_abs": 3.814697265625e-06,
+            "rel_l2": 1.3073157189231683e-07,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.means2d_abs": {
+            "finite": true,
+            "max_abs": 2.86102294921875e-06,
+            "rel_l2": 6.767471292868531e-08,
+            "exact_equal": false,
+            "alignment_passed": true
+          }
+        }
+      ],
+      "alignment_passed": true,
+      "validation_present": true
+    },
+    {
+      "camera_index": 1247,
+      "resolution": [
+        1280,
+        720
+      ],
+      "scope": "raster",
+      "timing": {
+        "forward_only": {
+          "job_means_ms": {
+            "baseline": [
+              1.9693567979335784,
+              1.991008642911911,
+              1.982231684923172
+            ],
+            "candidate": [
+              1.4661884784698487,
+              1.4766236793994905,
+              1.4699843227863312
+            ]
+          },
+          "median_of_job_means_ms": {
+            "baseline": 1.982231684923172,
+            "candidate": 1.4699843227863312
+          },
+          "speedup": 1.3484713096571563,
+          "paired_speedups": [
+            1.3431811986333768,
+            1.3483521026302445,
+            1.3484713096571563
+          ]
+        },
+        "training_forward": {
+          "job_means_ms": {
+            "baseline": [
+              1.9834569573402405,
+              1.9745670330524445,
+              1.9801331222057343
+            ],
+            "candidate": [
+              1.4753484857082366,
+              1.5027183949947358,
+              1.502455041408539
+            ]
+          },
+          "median_of_job_means_ms": {
+            "baseline": 1.9801331222057343,
+            "candidate": 1.502455041408539
+          },
+          "speedup": 1.317931696877516,
+          "paired_speedups": [
+            1.3443989515386177,
+            1.3139967139747175,
+            1.317931696877516
+          ]
+        },
+        "backward": {
+          "job_means_ms": {
+            "baseline": [
+              4.068355526924133,
+              4.078499851226806,
+              3.961480634212494
+            ],
+            "candidate": [
+              3.915306553840637,
+              4.030122232437134,
+              3.901415696144104
+            ]
+          },
+          "median_of_job_means_ms": {
+            "baseline": 4.068355526924133,
+            "candidate": 3.915306553840637
+          },
+          "speedup": 1.0390899080260692,
+          "paired_speedups": [
+            1.0390899080260692,
+            1.012004007818993,
+            1.015395677555651
+          ]
+        },
+        "combined": {
+          "job_means_ms": {
+            "baseline": [
+              6.05181245803833,
+              6.053066878318787,
+              5.9416137790679935
+            ],
+            "candidate": [
+              5.390655031204224,
+              5.53284065246582,
+              5.403870706558227
+            ]
+          },
+          "median_of_job_means_ms": {
+            "baseline": 6.05181245803833,
+            "candidate": 5.403870706558227
+          },
+          "speedup": 1.119903266873826,
+          "paired_speedups": [
+            1.1226488103963146,
+            1.0940251596837725,
+            1.099510721427356
+          ]
+        }
+      },
+      "parity": [
+        {
+          "image": {
+            "finite": true,
+            "max_abs": 0.0,
+            "mse": 0.0,
+            "psnr": null,
+            "exact_equal": true,
+            "alignment_passed": true,
+            "psnr_channels": "RGB",
+            "rgb_max_abs": 0.0,
+            "depth_max_abs": 0.0,
+            "data_range": 1.0
+          },
+          "alpha": {
+            "finite": true,
+            "max_abs": 0.0,
+            "mse": 0.0,
+            "psnr": null,
+            "exact_equal": true,
+            "alignment_passed": true
+          },
+          "grad.means2d": {
+            "finite": true,
+            "max_abs": 4.76837158203125e-07,
+            "rel_l2": 4.467045109290016e-08,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.conics": {
+            "finite": true,
+            "max_abs": 0.000732421875,
+            "rel_l2": 1.792518364756506e-07,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.colors": {
+            "finite": true,
+            "max_abs": 1.52587890625e-05,
+            "rel_l2": 1.300049903628905e-07,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.opacities": {
+            "finite": true,
+            "max_abs": 1.52587890625e-05,
+            "rel_l2": 1.0545578895485925e-07,
+            "exact_equal": false,
+            "alignment_passed": true
+          },
+          "grad.means2d_abs": {
+            "finite": true,
+            "max_abs": 4.76837158203125e-06,
+            "rel_l2": 7.333763786700547e-08,
+            "exact_equal": false,
+            "alignment_passed": true
+          }
+        }
+      ],
+      "alignment_passed": true,
+      "validation_present": true
+    }
+  ]
+}

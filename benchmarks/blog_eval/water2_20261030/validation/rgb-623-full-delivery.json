@@ -1,0 +1,283 @@
+{
+  "protocol_version": 3,
+  "ply_sha256": "41fcb0462acc6fd172ca42970ba3923c7de8bbf7c0180755e43001462154da18",
+  "cameras_sha256": "ba00beb95a68763634199c7e2bf64344b729f6c50abcfe55bd0d2518d59f5d4b",
+  "camera_index": 623,
+  "max_points": 0,
+  "seed": 2026,
+  "raster_only": false,
+  "packed": false,
+  "render_mode": "RGB",
+  "absgrad": false,
+  "tile_size": 16,
+  "compact_box": true,
+  "compact_box_impl": "sweep",
+  "upstream": "seeded_cuda_randn_image_and_alpha_v1",
+  "quaternion_input": "normalized_like_product_wrapper",
+  "points_used": 1932132,
+  "points_total": 1932132,
+  "resolution": [
+    1280,
+    720
+  ],
+  "degree": 1,
+  "provenance": {
+    "ply": "/mnt/data/dConstructData/2026-10-10-water2/outputs/56ee2948/point_cloud/iteration_020000/point_cloud.ply",
+    "cameras": "/tmp/opencode/gsplat-pr10/build/pr10/colmap-cameras.json"
+  },
+  "forward_only": false,
+  "atol": 1e-05,
+  "rtol": 0.001,
+  "gradient_rel_l2": 0.0001,
+  "forward_max_abs": 2e-05,
+  "warmup": 10,
+  "repeats": 20,
+  "timing_only": false,
+  "checks": {
+    "finite": {
+      "image": true,
+      "alpha": true,
+      "grad.means": true,
+      "grad.quats": true,
+      "grad.log_scales": true,
+      "grad.opacity_logits": true,
+      "grad.sh_coefficients": true
+    },
+    "baseline_noise": {
+      "image": {
+        "finite": true,
+        "max_abs": 0.0,
+        "rms": 0.0,
+        "max_relative": 0.0,
+        "allclose": true,
+        "rel_l2": 0.0
+      },
+      "alpha": {
+        "finite": true,
+        "max_abs": 0.0,
+        "rms": 0.0,
+        "max_relative": 0.0,
+        "allclose": true,
+        "rel_l2": 0.0
+      },
+      "grad.means": {
+        "finite": true,
+        "max_abs": 0.000244140625,
+        "rms": 3.9965816747594214e-07,
+        "max_relative": 0.033919413245669716,
+        "allclose": true,
+        "rel_l2": 1.0044725669137523e-07
+      },
+      "grad.quats": {
+        "finite": true,
+        "max_abs": 0.00021734833717346191,
+        "rms": 2.2860763258408694e-07,
+        "max_relative": 0.14878546178149843,
+        "allclose": false,
+        "rel_l2": 3.5706588294635456e-06
+      },
+      "grad.log_scales": {
+        "finite": true,
+        "max_abs": 4.494190216064453e-05,
+        "rms": 4.0322860431493894e-08,
+        "max_relative": 0.14056830587826505,
+        "allclose": true,
+        "rel_l2": 6.235765883041758e-07
+      },
+      "grad.opacity_logits": {
+        "finite": true,
+        "max_abs": 3.814697265625e-06,
+        "rms": 4.053935396727382e-09,
+        "max_relative": 0.003738360818012332,
+        "allclose": true,
+        "rel_l2": 1.7956804301007144e-07
+      },
+      "grad.sh_coefficients": {
+        "finite": true,
+        "max_abs": 6.67572021484375e-06,
+        "rms": 9.19394186152908e-09,
+        "max_relative": 0.017064878550021617,
+        "allclose": true,
+        "rel_l2": 1.23284223730982e-07
+      }
+    },
+    "reference_baseline_noise": {
+      "image": {
+        "finite": true,
+        "max_abs": 0.0,
+        "rms": 0.0,
+        "max_relative": 0.0,
+        "allclose": true,
+        "rel_l2": 0.0
+      },
+      "alpha": {
+        "finite": true,
+        "max_abs": 0.0,
+        "rms": 0.0,
+        "max_relative": 0.0,
+        "allclose": true,
+        "rel_l2": 0.0
+      },
+      "grad.means": {
+        "finite": true,
+        "max_abs": 0.000579833984375,
+        "rms": 5.106182181979095e-07,
+        "max_relative": 0.035626546842944064,
+        "allclose": true,
+        "rel_l2": 1.2833517058127104e-07
+      },
+      "grad.quats": {
+        "finite": true,
+        "max_abs": 0.000946044921875,
+        "rms": 5.116519358304659e-07,
+        "max_relative": 0.129515446296445,
+        "allclose": false,
+        "rel_l2": 7.991573190284608e-06
+      },
+      "grad.log_scales": {
+        "finite": true,
+        "max_abs": 0.0001329183578491211,
+        "rms": 6.514594084175526e-08,
+        "max_relative": 0.05941488505526988,
+        "allclose": false,
+        "rel_l2": 1.0074554011089968e-06
+      },
+      "grad.opacity_logits": {
+        "finite": true,
+        "max_abs": 2.384185791015625e-06,
+        "rms": 4.1839482033511176e-09,
+        "max_relative": 0.0009980157820696446,
+        "allclose": true,
+        "rel_l2": 1.8532692745924234e-07
+      },
+      "grad.sh_coefficients": {
+        "finite": true,
+        "max_abs": 4.291534423828125e-06,
+        "rms": 8.984202690266235e-09,
+        "max_relative": 0.02777783977637651,
+        "allclose": true,
+        "rel_l2": 1.2047177059486508e-07
+      }
+    },
+    "reference": {
+      "image": {
+        "finite": true,
+        "max_abs": 0.0,
+        "rms": 0.0,
+        "max_relative": 0.0,
+        "allclose": true,
+        "rel_l2": 0.0,
+        "alignment_passed": true
+      },
+      "alpha": {
+        "finite": true,
+        "max_abs": 0.0,
+        "rms": 0.0,
+        "max_relative": 0.0,
+        "allclose": true,
+        "rel_l2": 0.0,
+        "alignment_passed": true
+      },
+      "grad.means": {
+        "finite": true,
+        "max_abs": 0.000244140625,
+        "rms": 3.902903307257724e-07,
+        "max_relative": 0.053187472884280676,
+        "allclose": true,
+        "rel_l2": 9.80928106064935e-08,
+        "alignment_passed": true
+      },
+      "grad.quats": {
+        "finite": true,
+        "max_abs": 0.00033915042877197266,
+        "rms": 2.5956776093788e-07,
+        "max_relative": 0.129515446296445,
+        "allclose": false,
+        "rel_l2": 4.0542302571502866e-06,
+        "alignment_passed": true
+      },
+      "grad.log_scales": {
+        "finite": true,
+        "max_abs": 7.863342761993408e-05,
+        "rms": 4.525308095132924e-08,
+        "max_relative": 0.15557432494115864,
+        "allclose": true,
+        "rel_l2": 6.998204375002041e-07,
+        "alignment_passed": true
+      },
+      "grad.opacity_logits": {
+        "finite": true,
+        "max_abs": 4.5299530029296875e-06,
+        "rms": 4.868472088113042e-09,
+        "max_relative": 0.0013722717003457614,
+        "allclose": true,
+        "rel_l2": 2.156477398043341e-07,
+        "alignment_passed": true
+      },
+      "grad.sh_coefficients": {
+        "finite": true,
+        "max_abs": 2.950429916381836e-06,
+        "rms": 9.09675675980014e-09,
+        "max_relative": 0.01736114437018827,
+        "allclose": true,
+        "rel_l2": 1.219810406449607e-07,
+        "alignment_passed": true
+      }
+    },
+    "timed_final_finite": {
+      "image": true,
+      "alpha": true,
+      "grad.means": true,
+      "grad.quats": true,
+      "grad.log_scales": true,
+      "grad.opacity_logits": true,
+      "grad.sh_coefficients": true
+    }
+  },
+  "passed": true,
+  "profile": null,
+  "environment": {
+    "gpu": "NVIDIA GeForce RTX 4090",
+    "compute_capability": [
+      8,
+      9
+    ],
+    "python": "3.12.13",
+    "torch": "2.10.0+cu128",
+    "cuda": "12.8",
+    "gsplat_version": "1.4.0",
+    "gsplat_path": "/tmp/opencode/gsplat-pr10/gsplat/__init__.py",
+    "wrapper_path": "/tmp/opencode/gsplat-pr10/gsplat/cuda/_wrapper.py",
+    "backend_path": "/tmp/opencode/gsplat-pr10/build/pr10/delivery/gsplat/csrc.so",
+    "backend_sha256": "5a0f78bb160523ba1eb0eee4a6150b0fbcf68f4b34e54bcc6b3cc385dfc71615"
+  },
+  "median_ms": 4.776448011398315,
+  "mean_ms": 5.321955156326294,
+  "samples_ms": [
+    4.447231769561768,
+    4.45849609375,
+    4.777984142303467,
+    5.738495826721191,
+    8.166399955749512,
+    5.202943801879883,
+    4.593567848205566,
+    4.474880218505859,
+    4.426080226898193,
+    4.8351359367370605,
+    5.710847854614258,
+    8.127488136291504,
+    5.213183879852295,
+    4.774911880493164,
+    4.433599948883057,
+    4.50764799118042,
+    4.601535797119141,
+    5.563392162322998,
+    7.961599826812744,
+    4.423679828643799
+  ],
+  "peak_memory_gib": 0.6417903900146484,
+  "image_mean": 0.49253544211387634,
+  "alpha_mean": 0.9986532926559448,
+  "isects": 1745380,
+  "max_flatten_id": 1932110
+}

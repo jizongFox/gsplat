@@ -1,0 +1,44 @@
+diff --git a/gsplat/cuda/csrc/rasterize_to_pixels_bwd.cu b/gsplat/cuda/csrc/rasterize_to_pixels_bwd.cu
+index 9617d61..079ca7c 100644
+--- a/gsplat/cuda/csrc/rasterize_to_pixels_bwd.cu
++++ b/gsplat/cuda/csrc/rasterize_to_pixels_bwd.cu
+@@ -131,14 +131,32 @@ __global__ void rasterize_to_pixels_bwd_kernel(
+     // occluded suffix before staging backwards, not only inside each warp's
+     // pixel loop. Keep the original positions/IDs and do not mutate binning
+     // buffers, which may be reused by other channel chunks.
+-    if (tr == 0) {
+-        id_batch[0] = range_start;
+-    }
+-    block.sync();
+-    if (warp.thread_rank() == 0) {
+-        atomicMax(id_batch, warp_bin_final);
++    if (block_size % 32 == 0) {
++        // Each warp owns a separate shared slot. Reduce the tiny warp list
++        // after publication instead of serializing shared atomics behind an
++        // extra initialization barrier. The next staging barrier protects reuse.
++        if (warp.thread_rank() == 0) {
++            id_batch[tr / 32] = warp_bin_final;
++        }
++        block.sync();
++        if (tr == 0) {
++            int32_t tile_final = range_start;
++            for (uint32_t w = 0; w < block_size / 32; ++w) {
++                tile_final = max(tile_final, id_batch[w]);
++            }
++            id_batch[0] = tile_final;
++        }
++        block.sync();
++    } else {
++        if (tr == 0) {
++            id_batch[0] = range_start;
++        }
++        block.sync();
++        if (warp.thread_rank() == 0) {
++            atomicMax(id_batch, warp_bin_final);
++        }
++        block.sync();
+     }
+-    block.sync();
+     const int64_t exclusive_end = static_cast<int64_t>(id_batch[0]) + 1;
+     range_end = static_cast<int32_t>(
+         exclusive_end < range_end ? exclusive_end : range_end
