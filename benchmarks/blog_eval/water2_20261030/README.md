@@ -35,6 +35,46 @@ reduction experiment regressed and was reverted; no backward-kernel speedup is
 claimed. The four PR9/backward source files were unchanged; all 19 backward
 kernel SASS instruction hashes match the baseline.
 
+## Follow-up: actual RGB + depth + normal workload
+
+The application workload has **7 logical channels**: RGB (3), depth (1), and
+normal (3). The public wrapper pads 7 to the existing CUDA `COLOR_DIM=8`
+specialization. I measured an experimental extension of the staging condition
+from `<=4` to `<=8` against the **retained PR11 delivery binary**, using the
+actual feature layout: RGB, camera-Z depth, and camera-space Gaussian local +Z
+normal. This extension is **not in the implementation** and was not pushed.
+
+The experiment used the full 1,932,132-point water2 scene and detached raster
+only, with three alternating jobs and median-of-job-means aggregation. Native
+1280×720 used views 0, 623, 1247 plus extra views 156, 468, 936; 4K used views
+0, 623, 1247. Initial native and 4K cases used 30 warmups and 80 timed samples;
+extra native views used 40/100. In each run the serial order alternated
+base/candidate, candidate/base, base/candidate. The candidate passed the
+unchanged image/alpha/gradient gates in all nine view/resolution cases (45
+gradient comparisons, maximum relative-L2 7.98e-7); images and alpha were exact.
+
+| Workload | Forward | Backward | Forward + backward |
+|---|---:|---:|---:|
+| Native, six-view geometric mean | **1.10×** | 0.991× | **1.016×** |
+| 4K, three-view geometric mean | 1.001× | 0.975× | 0.979× |
+
+The native result is not a general win: the heaviest view reaches 1.55×
+forward but only 0.91× backward, while two extra views regress in combined
+time. At 4K the combined result is about 2.1% slower. Therefore the `<=8`
+extension is rejected rather than presented as a retained optimization. The
+expanded 184-case matrix passes, including eight 7-channel/padded-8 fixtures;
+memcheck and synccheck report zero errors. Compact results and hashes are in
+[`seven_channel_followup.json`](seven_channel_followup.json). This result does
+not measure depth-derived surface normals; it measures Gaussian-orientation
+normals matching the stated workload model. Normals are accumulated attributes,
+not normalized output normals; expected depth divides the depth channel by
+alpha. No gradients through attribute construction or full-renderer performance
+are claimed. Per-job means are retained in
+[`seven_channel_timings.csv`](seven_channel_timings.csv); the temporary harness
+mode and experimental CUDA implementation were both reverted. Pairwise
+combined timings can change direction between jobs, so small aggregate gains
+are not treated as a stable broad optimization.
+
 ## Workload and method
 
 - GPU: NVIDIA RTX 4090, SM89; PyTorch 2.10.0+cu128, CUDA toolkit 12.8.

@@ -14,5 +14,6 @@
     "exploratory_and_baseline_control_quaternion_gate": "See validation/quaternion_gate_disclosures.json; no gate relaxed; fresh delivery parity passes"
   },
   "protected_repositories": {"parent_gaussian_splatting_status_unchanged": true, "original_gsplat_tracked_source_diff_empty": true, "original_gsplat_head": "a7050c6970033d724fcab8ff917ac364aece5450"},
-  "evidence_files": ["README.md", "delivery/manifest.json", "delivery/timings.csv", "delivery/quality.csv", "delivery/gradients.csv", "delivery/parity_summary.json", "delivery/overview.csv", "delivery/plots/raster_megapixels.png", "validation/cpu-tests.log", "validation/memcheck.log", "validation/synccheck.log", "validation/inherited_renderer_failures.json", "validation/quaternion_gate_disclosures.json", "validation/supplementary_rgb_parity.json"]
+  "seven_channel_followup": {"report": "seven_channel_followup.json", "candidate_retained": false, "native_combined_geomean": 1.016, "four_k_combined_geomean": 0.979, "expanded_cases": 184, "memcheck_errors": 0, "synccheck_errors": 0},
+  "evidence_files": ["README.md", "seven_channel_followup.json", "seven_channel_timings.csv", "delivery/manifest.json", "delivery/timings.csv", "delivery/quality.csv", "delivery/gradients.csv", "delivery/parity_summary.json", "delivery/overview.csv", "delivery/plots/raster_megapixels.png", "validation/cpu-tests.log", "validation/memcheck.log", "validation/synccheck.log", "validation/inherited_renderer_failures.json", "validation/quaternion_gate_disclosures.json", "validation/supplementary_rgb_parity.json"]
 }

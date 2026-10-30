@@ -1,0 +1,145 @@
+{
+  "purpose": "Measure the user's RGB + depth + normal workload against the retained PR11 <=4-channel implementation; this experiment is report-only and is not retained.",
+  "baseline": {
+    "meaning": "PR11 delivery binary with <=4-channel staging; logical 7 channels follow the existing wrapper padding path",
+    "binary_sha256": "5a0f78bb160523ba1eb0eee4a6150b0fbcf68f4b34e54bcc6b3cc385dfc71615"
+  },
+  "candidate": {
+    "meaning": "Experimental COLOR_DIM<=8 staging; not committed",
+    "binary_sha256": "8e0774169891339f23e2538cd271ee3a45e8c12f5fa9cefec89e744b4400203b"
+  },
+  "feature_definition": "RGB + camera-Z depth + camera-space Gaussian local +Z normal; 7 logical channels padded to CUDA COLOR_DIM=8 by the public wrapper",
+  "hardware": "NVIDIA GeForce RTX 4090 SM89",
+  "scene": {
+    "points": 1932132,
+    "camera_indices_native": [
+      0,
+      623,
+      1247
+    ],
+    "camera_indices_extra": [
+      156,
+      468,
+      936
+    ],
+    "native_resolution": [
+      1280,
+      720
+    ],
+    "four_k_resolution": [
+      3840,
+      2160
+    ]
+  },
+  "method": {
+    "scope": "detached raster only",
+    "native_jobs": 3,
+    "native_warmup": 30,
+    "native_repeats": 80,
+    "extra_view_warmup": 40,
+    "extra_view_repeats": 100,
+    "four_k_jobs": 3,
+    "four_k_warmup": 30,
+    "four_k_repeats": 80,
+    "aggregation": "median of per-job means",
+    "speedup_definition": "baseline_ms / candidate_ms",
+    "note": "Native initial and 4K cases come from one clean serial run; extra native cases come from a separate run with 40 warmups and100 repeats. Job order base/candidate, candidate/base, base/candidate. No full-renderer timings or gradients through normal construction are claimed.",
+    "settings": {
+      "absgrad": true,
+      "tile_size": 16,
+      "packed": false,
+      "compact_box": true,
+      "compact_box_impl": "sweep",
+      "dtype": "float32",
+      "depth_postprocessing": "Expected depth divides channel3 by clamped alpha; normals are accumulated attributes, not normalized output normals."
+    }
+  },
+  "native_selected_view_results": [
+    {
+      "camera": 0,
+      "forward_speedup": 1.0337,
+      "backward_speedup": 1.0334,
+      "combined_speedup": 1.032
+    },
+    {
+      "camera": 623,
+      "forward_speedup": 1.0432,
+      "backward_speedup": 1.0341,
+      "combined_speedup": 1.0368
+    },
+    {
+      "camera": 1247,
+      "forward_speedup": 1.5505,
+      "backward_speedup": 0.9068,
+      "combined_speedup": 1.0362
+    },
+    {
+      "camera": 156,
+      "forward_speedup": 1.0063,
+      "backward_speedup": 0.9826,
+      "combined_speedup": 0.9867
+    },
+    {
+      "camera": 468,
+      "forward_speedup": 1.0222,
+      "backward_speedup": 0.9806,
+      "combined_speedup": 0.9871
+    },
+    {
+      "camera": 936,
+      "forward_speedup": 1.0309,
+      "backward_speedup": 1.0151,
+      "combined_speedup": 1.0163
+    }
+  ],
+  "native_six_view_geometric_mean": {
+    "forward_speedup": 1.1001587799747843,
+    "backward_speedup": 0.9911184693631182,
+    "combined_speedup": 1.0156103875664289
+  },
+  "four_k_selected_view_results": [
+    {
+      "camera": 0,
+      "forward_speedup": 0.9821,
+      "backward_speedup": 0.9882,
+      "combined_speedup": 0.9914
+    },
+    {
+      "camera": 623,
+      "forward_speedup": 1.01,
+      "backward_speedup": 0.9316,
+      "combined_speedup": 0.9392
+    },
+    {
+      "camera": 1247,
+      "forward_speedup": 1.01,
+      "backward_speedup": 1.0076,
+      "combined_speedup": 1.0082
+    }
+  ],
+  "four_k_three_view_geometric_mean": {
+    "forward_speedup": 1.001,
+    "backward_speedup": 0.975,
+    "combined_speedup": 0.979
+  },
+  "parity": {
+    "expanded_raster_cases": 184,
+    "candidate_passed": true,
+    "new_logical_7_channel_cases": 8,
+    "max_gradient_relative_l2": 7.972704650306552e-07,
+    "images_depth_normals_alpha_exact": true,
+    "memcheck_errors": 0,
+    "synccheck_errors": 0,
+    "scene_cases": 9,
+    "gradient_comparisons": 45,
+    "fixture_scope": "Default stream; 184 differential raster cases. No new nondefault-stream run is claimed for this experiment.",
+    "cpu_experimental_tests_passed": 108
+  },
+  "decision": "Do not retain or push the <=8 extension: native combined gain is small and view-dependent, backward is not consistently faster, and 4K combined regresses about 2.1 percent.",
+  "limitations": [
+    "Selected views, not all 1248 cameras",
+    "Normal is Gaussian orientation local +Z, not depth-derived surface normal",
+    "Experimental candidate source and binaries are not part of the PR"
+  ],
+  "timing_evidence": "seven_channel_timings.csv"
+}
