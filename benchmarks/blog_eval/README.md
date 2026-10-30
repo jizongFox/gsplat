@@ -1,5 +1,13 @@
 # CUDA optimization blog evaluation artifacts
 
+The independent **post-PR9** water2 follow-up compares against `a7050c6`, not
+PR9's older baseline. See [`water2_20261030/`](water2_20261030/README.md) for
+retained/rejected experiments, raw timings and unchanged numerical gates.
+`colmap_cameras.py` adapts PINHOLE COLMAP **text** models to this harness;
+`run_followup.py` runs alternating serial jobs and records parity failures
+without suppressing later timing jobs (it exits unsuccessfully if any remain).
+The original summarizer/plotter consumes its `base-job*.json` / `pr-job*.json`.
+
 This evaluation belongs to the gsplat repository; it does not require a parent
 Gaussian-splatting checkout. The large scene PLY and `cameras.json` are external
 inputs and are intentionally not committed. Supply them explicitly to the
@@ -56,6 +64,9 @@ old references. Cross-setting ablations need their own matching baselines.
 The raster fixture suite also appends channel-2 cases without changing the order
 or index-derived seeds of the existing named fixtures; the saved suite config
 still rejects references made with an earlier suite version.
+The water2 follow-up appends eight tile32 staging-boundary cases, preserving
+all 166 PR9 cases and their index-derived seeds. Regenerate both baseline and
+candidate snapshots with the same updated suite (174 cases total).
 
 The protocol and argument guards have CPU-only regression tests:
 

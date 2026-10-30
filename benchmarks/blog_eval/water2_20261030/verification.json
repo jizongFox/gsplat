@@ -1,0 +1,19 @@
+{
+  "baseline_revision": "a7050c6970033d724fcab8ff917ac364aece5450",
+  "candidate_binary_sha256": "5a0f78bb160523ba1eb0eee4a6150b0fbcf68f4b34e54bcc6b3cc385dfc71615",
+  "gates": {"image_alpha_max_abs": 2e-5, "gradient_relative_l2": 1e-4},
+  "passed": {
+    "delivery_scene_parity": {"cases": 42, "gradient_comparisons": 231, "passed_comparisons": 231, "images_alpha_bit_identical": true, "max_rel_l2_raster": 7.716212248002247e-7, "max_rel_l2_full": 7.310582009257627e-5},
+    "differential_raster": {"cases": 174, "default_stream": true, "nondefault_stream": true, "original_pr9_cases_and_seeds_preserved": 166, "new_tile32_cases": 8},
+    "compute_sanitizer": {"memcheck_errors": 0, "synccheck_errors": 0, "scope": "174-case raster matrix"},
+    "cpu_tests": {"passed": 106, "command": "python -m pytest -q tests/test_blog*.py tests/test_defaults.py"},
+    "supplementary_rgb_parity": "6/6 native-resolution view/scope comparisons passed; see validation/supplementary_rgb_parity.json"
+  },
+  "known_failures_disclosed": {
+    "renderer_test_reference_mismatches": "4 failures / 20 passes on both baseline and candidate; validation/inherited_renderer_failures.json",
+    "exploratory_and_baseline_control_quaternion_gate": "See validation/quaternion_gate_disclosures.json; no gate relaxed; fresh delivery parity passes"
+  },
+  "protected_repositories": {"parent_gaussian_splatting_status_unchanged": true, "original_gsplat_tracked_source_diff_empty": true, "original_gsplat_head": "a7050c6970033d724fcab8ff917ac364aece5450"},
+  "seven_channel_followup": {"report": "seven_channel_followup.json", "candidate_retained": false, "native_combined_geomean": 1.016, "four_k_combined_geomean": 0.979, "expanded_cases": 184, "memcheck_errors": 0, "synccheck_errors": 0},
+  "evidence_files": ["README.md", "seven_channel_followup.json", "seven_channel_timings.csv", "delivery/manifest.json", "delivery/timings.csv", "delivery/quality.csv", "delivery/gradients.csv", "delivery/parity_summary.json", "delivery/overview.csv", "delivery/plots/raster_megapixels.png", "validation/cpu-tests.log", "validation/memcheck.log", "validation/synccheck.log", "validation/inherited_renderer_failures.json", "validation/quaternion_gate_disclosures.json", "validation/supplementary_rgb_parity.json"]
+}

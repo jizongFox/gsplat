@@ -1,0 +1,8 @@
+{
+  "protocol": "PR9 single-pass reference v3",
+  "workload": "native 1280x720, views 0/623/1247, RGB, full and raster scopes, no absgrad",
+  "result": "6/6 comparisons pass",
+  "max_gradient_relative_l2": {"full": 1.2938200817819251e-05, "raster": 4.33695302829294e-07},
+  "timing_claim": false,
+  "note": "Single-job supplemental correctness only; no RGB timing speedup claim."
+}

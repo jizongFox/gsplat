@@ -1,0 +1,13 @@
+{
+  "baseline_revision": "a7050c6970033d724fcab8ff917ac364aece5450",
+  "baseline_binary_sha256": "c61a8253f35ebe5883ea6e67dd7f6e8de4cd2bd86b21eb931aad050b69efec06",
+  "candidate_binary_sha256": "5a0f78bb160523ba1eb0eee4a6150b0fbcf68f4b34e54bcc6b3cc385dfc71615",
+  "gpu": "NVIDIA GeForce RTX 4090 (SM89)",
+  "software": {"python": "3.12", "pytorch": "2.10.0+cu128", "cuda_toolkit": "12.8"},
+  "scene": {"points": 1932132, "sh_degree": 1, "camera_indices": [0, 623, 1247], "resolutions": [[640,360],[960,540],[1280,720],[1920,1080],[2560,1440],[3200,1800],[3840,2160]]},
+  "settings": {"render_mode":"RGB+ED", "absgrad":true, "tile_size":16, "compact_box":true, "compact_box_impl":"sweep", "packed":false, "dtype":"float32", "warmup":30, "repeats":80, "jobs_per_binary":3, "job_order":["base/pr","pr/base","base/pr"]},
+  "gates": {"image_alpha_max_abs": 2e-5, "gradient_relative_l2": 1e-4},
+  "build": {"command":"CUDA_HOME=/usr/local/cuda-12.8 TORCH_CUDA_ARCH_LIST=8.9 MAX_JOBS=4 python setup.py build_ext --build-lib build/delivery --build-temp build/objects", "candidate_source":"gsplat/cuda/csrc/rasterize_to_pixels_fwd.cu"},
+  "backward": {"source_unchanged_from_baseline": true, "backward_kernel_sass_hashes_compared": 19, "all_hashes_match": true},
+  "summary_files": ["timings.csv", "quality.csv", "gradients.csv", "parity_summary.json", "overview.csv"]
+}

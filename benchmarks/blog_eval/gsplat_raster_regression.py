@@ -2,9 +2,9 @@
 
 Example (use the same Python/PYTHONPATH for both commands)::
 
-    python benchmarks/gsplat_raster_regression.py \
+    python benchmarks/blog_eval/gsplat_raster_regression.py \
         --extension /tmp/opencode/gsplat-blog-variants/baseline.so --save baseline.pt
-    python benchmarks/gsplat_raster_regression.py \
+    python benchmarks/blog_eval/gsplat_raster_regression.py \
         --extension /path/to/candidate.so --compare baseline.pt --output report.json
 
 The parent never imports gsplat. Each invocation starts a fresh worker because
@@ -110,6 +110,25 @@ def cases() -> t.List[t.Dict[str, t.Any]]:
         for config in tuple(result)
         if config["channels"] == 1
     )
+    # Append without changing any PR9 case/index-derived seed. Exercise the
+    # narrow forward shared-memory layout at the largest supported block,
+    # including both sides of its 1024-splat staging boundary.
+    for channels in (1, 2, 3, 4):
+        for absgrad in (False, True):
+            result.append(
+                dict(
+                    name=f"target_staging_t32_c{channels}_abs{int(absgrad)}",
+                    channels=channels,
+                    absgrad=absgrad,
+                    tile_size=32,
+                    scenario="staging_boundary",
+                    cameras=1,
+                    background=True,
+                    width=49,
+                    height=37,
+                    count=1300,
+                )
+            )
     return result
 
 
@@ -207,6 +226,13 @@ def raster_case(config: t.Dict[str, t.Any], seed: int, wrapper: t.Any) -> t.Dict
         # batch), with 600 depth-sorted splats available. Small spatial decay
         # keeps every pixel close to this boundary, not just the center.
         termination = 255 if not config["absgrad"] else 257
+        opacities[:] = 1.0 - math.exp(math.log(1e-4) / (termination - 0.5))
+    elif scenario == "staging_boundary":
+        means[:] = torch.tensor([0.5, 0.5])
+        conics[:] = torch.tensor([1e-8, 0.0, 1e-8])
+        # Exclusive termination: allow several actual color contributions
+        # from batch two, rather than merely loading then rejecting its head.
+        termination = 1023 if not config["absgrad"] else 1033
         opacities[:] = 1.0 - math.exp(math.log(1e-4) / (termination - 0.5))
     elif scenario in ("finite_overflow", "rejected_nonfinite_upstream"):
         means[:] = torch.tensor([0.5, 0.5])
@@ -320,6 +346,10 @@ def raster_case(config: t.Dict[str, t.Any], seed: int, wrapper: t.Any) -> t.Dict
                 value.fill_(float("nan"))
                 value[:, 0, 0, :] = 1.0
         torch.autograd.backward((image, alpha), upstream)
+        if scenario == "staging_boundary":
+            used_second_batch = bool((inputs["colors"].grad[:, 1024:] != 0).any())
+            if used_second_batch != config["absgrad"]:
+                raise AssertionError("Staging fixture did not reach its intended batch")
         prefix = f"chunk{chunk}/" if packed else ""
         tensors.update({prefix + "image": image, prefix + "alpha": alpha})
         for name, value in inputs.items():

@@ -1,0 +1,13 @@
+{
+  "command": "python -m pytest -q tests/test_rasterization.py",
+  "baseline": {"passed": 20, "failed": 4},
+  "candidate": {"passed": 20, "failed": 4},
+  "same_failures_on_both": true,
+  "failures": [
+    "test_rasterization[True-RGB-3-True]",
+    "test_rasterization[True-RGB+D-3-True]",
+    "test_rasterization[False-RGB-3-True]",
+    "test_rasterization[False-RGB+D-3-True]"
+  ],
+  "cause": "Existing degree-3 per-view-SH reference mismatches; not fixed or represented as passing by this change."
+}
