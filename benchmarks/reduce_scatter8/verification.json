@@ -1,0 +1,46 @@
+{
+  "baseline_commit": "a7050c6970033d724fcab8ff917ac364aece5450",
+  "baseline_binary_sha256": "edc0d74c483451979d6b35f8fc2a49f9ae39349a7705a3499f9607834a1cd8d0",
+  "candidate_binary_sha256": "0c7d5affccb6397db3b9ba26066fcdd8489153067bf470b58d0920360e0e83a0",
+  "question": "Does PR9 S02 reduce-scatter apply to the actual gsplat_renderer_3d_normals logical7/physical8 path?",
+  "feature_layout": "RGB + minor-axis Gaussian normal xyz =6 raster colors; RGB+ED appends depth =7 logical; wrapper pads to COLOR_DIM=8; scatter components=16",
+  "native_renderer_cases": {
+    "camera_0": {
+      "forward": 0.9831595252543005,
+      "backward": 1.1264643930830731,
+      "combined": 1.0871680195440625
+    },
+    "camera_623": {
+      "forward": 1.2063757785074922,
+      "backward": 1.1432042937685745,
+      "combined": 1.1331105269078097
+    },
+    "camera_1247": {
+      "forward": 0.859440463147214,
+      "backward": 1.1111839111741608,
+      "combined": 0.998297915064227
+    }
+  },
+  "gates": {
+    "image_alpha_max_abs": 2e-05,
+    "gradient_relative_l2": 0.0001,
+    "native_cases_passed": 3
+  },
+  "raster_matrix": {
+    "cases": 166,
+    "candidate_passed": true,
+    "memcheck_errors": 0,
+    "synccheck_errors": 0,
+    "racecheck_hazards": 0
+  },
+  "cpu_harness_tests": 10,
+  "native_accuracy": {"views": [0, 623, 1247], "image_ed_max_abs": [0, 0, 0], "alpha_max_abs": [0, 0, 0], "render_normals_max_abs": [0, 0, 0], "surface_normals_max_abs": [0, 0, 0], "max_gradient_relative_l2": [9.537514138397213e-07, 3.96615789327722e-06, 1.8608042852787734e-06], "gate": 0.0001, "all_passed": true},
+  "accuracy_figure": "plots/native_accuracy_speed.png",
+  "accuracy_table": "native_accuracy_speed.csv",
+  "decision": "Support a focused COLOR_DIM<=8 S02 extension PR; do not claim forward speedup or 4K/full-training speedup.",
+  "limitations": [
+    "One native timing job per selected view with 30 CUDA-event repeats; backward improvement is consistent across three views but needs broader follow-up.",
+    "4K comparison was not accepted because the baseline repeat reference failed the strict raw full-parameter noise gate.",
+    "No training convergence or optimizer-step claim."
+  ]
+}
