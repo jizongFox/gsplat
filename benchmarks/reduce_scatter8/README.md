@@ -45,6 +45,12 @@ samples, medians, means, tensor hashes, comparison errors and extension hash.
 Candidate cases also report baseline/candidate median speedups for all three
 timing stages (greater than one is faster). CLI stdout reports those medians.
 
+Native renderer parity is especially strong: image+ED, alpha, rendered normals,
+and depth-derived surface normals are bit-identical for views 0, 623 and 1247;
+maximum gradient relative-L2 is 9.54e-7, 3.97e-6 and 1.86e-6 respectively,
+all below the unchanged PR9 1e-4 gate. See `REPORT.md`,
+`native_accuracy_speed.csv`, and `plots/native_accuracy_speed.png`.
+
 ## Commands
 
 Run from this worktree. Choose a Python environment containing torch, plyfile,

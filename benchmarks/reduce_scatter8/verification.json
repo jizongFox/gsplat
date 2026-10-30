@@ -34,6 +34,9 @@
     "racecheck_hazards": 0
   },
   "cpu_harness_tests": 10,
+  "native_accuracy": {"views": [0, 623, 1247], "image_ed_max_abs": [0, 0, 0], "alpha_max_abs": [0, 0, 0], "render_normals_max_abs": [0, 0, 0], "surface_normals_max_abs": [0, 0, 0], "max_gradient_relative_l2": [9.537514138397213e-07, 3.96615789327722e-06, 1.8608042852787734e-06], "gate": 0.0001, "all_passed": true},
+  "accuracy_figure": "plots/native_accuracy_speed.png",
+  "accuracy_table": "native_accuracy_speed.csv",
   "decision": "Support a focused COLOR_DIM<=8 S02 extension PR; do not claim forward speedup or 4K/full-training speedup.",
   "limitations": [
     "One native timing job per selected view with 30 CUDA-event repeats; backward improvement is consistent across three views but needs broader follow-up.",

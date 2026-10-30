@@ -77,6 +77,36 @@ is made here. A separate 4K performance run would require a fixed-count or
 screen-space reference protocol that does not misclassify baseline atomic
 noise. No training convergence or optimizer-step claim is made.
 
+## Accuracy evidence
+
+The candidate is compared directly with the freshly built default-branch
+`a7050c6` binary using identical PLY bytes, COLMAP-derived cameras, rendering
+settings, CPU-seeded upstream RGB+expected-depth/alpha gradients, and all
+model/projected gradient outputs. The PR9 gates are unchanged:
+
+```text
+image / alpha / rendered attributes max-abs <= 2e-5
+every gradient relative-L2 <= 1e-4
+```
+
+| View | Image+ED max-abs | Alpha max-abs | Render normal max-abs | Surface normal max-abs | Max gradient rel-L2 | Gate |
+|---:|---:|---:|---:|---:|---:|---|
+| 0 | 0 | 0 | 0 | 0 | 9.54e-7 | PASS |
+| 623 | 0 | 0 | 0 | 0 | 3.97e-6 | PASS |
+| 1247 | 0 | 0 | 0 | 0 | 1.86e-6 | PASS |
+
+For these three measured renderer cases, default and candidate produce
+bit-identical RGB+expected-depth, alpha, rendered normals, and depth-derived
+surface normals. The largest model/projected gradient difference is **3.97e-6**,
+about 25x below the unchanged `1e-4` gate. This is high-accuracy evidence for
+the measured views and settings, not an all-view or convergence proof.
+
+![Native speed and accuracy](plots/native_accuracy_speed.png)
+
+The figure data are in [`native_accuracy_speed.csv`](native_accuracy_speed.csv).
+The left panel shows baseline/candidate speed ratios; the right panel shows
+the maximum gradient relative-L2 against the unchanged PR9 threshold.
+
 ## Decision
 
 This result supports a **new focused PR candidate**: extending PR9 S02
