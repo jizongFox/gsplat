@@ -1,0 +1,6 @@
+{
+  "unchanged_gradient_gate": 0.0001,
+  "exploratory_candidate_failures": [0.00011466701794052387, 0.00011528820580007887],
+  "baseline_vs_baseline_controls": [0.000030310926839065, 0.00012400523461732554],
+  "note": "Failures remain failures; no threshold relaxation. Fresh delivery comparisons pass, but universal single-shot full-parameter equivalence is not claimed."
+}
