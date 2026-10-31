@@ -5,6 +5,7 @@
 #include <cooperative_groups.h>
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
+#include <utility>
 
 namespace gsplat {
 
@@ -14,7 +15,7 @@ namespace cg = cooperative_groups;
  * Rasterization to Pixels Backward Pass
  ****************************************************************************/
 
-template <uint32_t COLOR_DIM, typename S>
+template <uint32_t COLOR_DIM, typename S, bool WARP_PRIVATE = false>
 __global__ void rasterize_to_pixels_bwd_kernel(
     const uint32_t C,
     const uint32_t N,
@@ -95,6 +96,10 @@ __global__ void rasterize_to_pixels_bwd_kernel(
         return;
     }
     const uint32_t block_size = block.size();
+    const uint32_t tr = block.thread_rank();
+    cg::thread_block_tile<32> warp = cg::tiled_partition<32>(block);
+    const uint32_t staging_size = WARP_PRIVATE ? 32 : block_size;
+    const uint32_t staging_lane = WARP_PRIVATE ? warp.thread_rank() : tr;
 
     extern __shared__ int s[];
     int32_t *id_batch = (int32_t *)s; // [block_size]
@@ -104,6 +109,15 @@ __global__ void rasterize_to_pixels_bwd_kernel(
         reinterpret_cast<vec3<float> *>(&xy_opacity_batch[block_size]
         );                                         // [block_size]
     S *rgbs_batch = (S *)&conic_batch[block_size]; // [block_size * COLOR_DIM]
+    if constexpr (WARP_PRIVATE) {
+        // Form every array's base before shifting: each full warp owns 32
+        // entries in each SoA array, and can reuse them independently.
+        const uint32_t offset = (tr / 32) * 32;
+        id_batch += offset;
+        xy_opacity_batch += offset;
+        conic_batch += offset;
+        rgbs_batch += offset * COLOR_DIM;
+    }
 
     // this is the T AFTER the last gaussian in this pixel
     S T_final = 1.0f - render_alphas[pix_id];
@@ -123,54 +137,69 @@ __global__ void rasterize_to_pixels_bwd_kernel(
 
     // collect and process batches of gaussians
     // each thread loads one gaussian at a time before rasterizing
-    const uint32_t tr = block.thread_rank();
-    cg::thread_block_tile<32> warp = cg::tiled_partition<32>(block);
     const int32_t warp_bin_final =
         cg::reduce(warp, bin_final, cg::greater<int>());
     // last_ids are absolute intersection positions. Trim the tile's fully
     // occluded suffix before staging backwards, not only inside each warp's
     // pixel loop. Keep the original positions/IDs and do not mutate binning
     // buffers, which may be reused by other channel chunks.
-    if (tr == 0) {
-        id_batch[0] = range_start;
+    int32_t traversal_final;
+    if constexpr (WARP_PRIVATE) {
+        // last_ids are absolute intersection positions. Keep the baseline's
+        // conservative first entry when a warp has no accepted contribution.
+        traversal_final = max(range_start, warp_bin_final);
+    } else {
+        if (tr == 0) {
+            id_batch[0] = range_start;
+        }
+        block.sync();
+        if (warp.thread_rank() == 0) {
+            atomicMax(id_batch, warp_bin_final);
+        }
+        block.sync();
+        traversal_final = id_batch[0];
     }
-    block.sync();
-    if (warp.thread_rank() == 0) {
-        atomicMax(id_batch, warp_bin_final);
-    }
-    block.sync();
-    const int64_t exclusive_end = static_cast<int64_t>(id_batch[0]) + 1;
+    const int64_t exclusive_end = static_cast<int64_t>(traversal_final) + 1;
     range_end = static_cast<int32_t>(
         exclusive_end < range_end ? exclusive_end : range_end
     );
     const uint32_t num_batches =
-        (range_end - range_start + block_size - 1) / block_size;
+        (range_end - range_start + staging_size - 1) / staging_size;
     for (uint32_t b = 0; b < num_batches; ++b) {
         // resync all threads before writing next batch of shared mem
-        block.sync();
+        if constexpr (WARP_PRIVATE) {
+            __syncwarp();
+        } else {
+            block.sync();
+        }
 
         // each thread fetch 1 gaussian from back to front
         // 0 index will be furthest back in batch
         // index of gaussian to load
         // batch end is the index of the last gaussian in the batch
         // These values can be negative so must be int32 instead of uint32
-        const int32_t batch_end = range_end - 1 - block_size * b;
-        const int32_t batch_size = min(block_size, batch_end + 1 - range_start);
-        const int32_t idx = batch_end - tr;
+        const int32_t batch_end = range_end - 1 - staging_size * b;
+        const int32_t batch_size = min(staging_size, batch_end + 1 - range_start);
+        const int32_t idx = batch_end - staging_lane;
         if (idx >= range_start) {
             int32_t g = flatten_ids[idx]; // flatten index in [C * N] or [nnz]
-            id_batch[tr] = g;
+            id_batch[staging_lane] = g;
             const vec2<S> xy = means2d[g];
             const S opac = opacities[g];
-            xy_opacity_batch[tr] = {xy.x, xy.y, opac};
-            conic_batch[tr] = conics[g];
+            xy_opacity_batch[staging_lane] = {xy.x, xy.y, opac};
+            conic_batch[staging_lane] = conics[g];
             GSPLAT_PRAGMA_UNROLL
             for (uint32_t k = 0; k < COLOR_DIM; ++k) {
-                rgbs_batch[tr * COLOR_DIM + k] = colors[g * COLOR_DIM + k];
+                rgbs_batch[staging_lane * COLOR_DIM + k] =
+                    colors[g * COLOR_DIM + k];
             }
         }
         // wait for other threads to collect the gaussians in batch
-        block.sync();
+        if constexpr (WARP_PRIVATE) {
+            __syncwarp();
+        } else {
+            block.sync();
+        }
         // process gaussians in the current batch for this pixel
         // 0 index is the furthest back gaussian in the batch
         for (uint32_t t = max(0, batch_end - warp_bin_final); t < batch_size;
@@ -365,14 +394,14 @@ __global__ void rasterize_to_pixels_bwd_kernel(
     }
 }
 
-template <uint32_t CDIM>
+template <uint32_t CDIM, bool WARP_PRIVATE>
 std::tuple<
     torch::Tensor,
     torch::Tensor,
     torch::Tensor,
     torch::Tensor,
     torch::Tensor>
-call_kernel_with_dim(
+call_kernel_with_dim_impl(
     // Gaussian parameters
     const torch::Tensor &means2d,                   // [C, N, 2] or [nnz, 2]
     const torch::Tensor &conics,                    // [C, N, 3] or [nnz, 3]
@@ -446,7 +475,7 @@ call_kernel_with_dim(
         at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
 
         if (cudaFuncSetAttribute(
-                rasterize_to_pixels_bwd_kernel<CDIM, float>,
+                rasterize_to_pixels_bwd_kernel<CDIM, float, WARP_PRIVATE>,
                 cudaFuncAttributeMaxDynamicSharedMemorySize,
                 shared_mem
             ) != cudaSuccess) {
@@ -456,7 +485,7 @@ call_kernel_with_dim(
                 " bytes), try lowering tile_size."
             );
         }
-        rasterize_to_pixels_bwd_kernel<CDIM, float>
+        rasterize_to_pixels_bwd_kernel<CDIM, float, WARP_PRIVATE>
             <<<blocks, threads, shared_mem, stream>>>(
                 C,
                 N,
@@ -496,6 +525,34 @@ call_kernel_with_dim(
     );
 }
 
+template <uint32_t CDIM, typename... Rest>
+auto dispatch_kernel_with_dim(
+    const torch::Tensor &means2d,
+    const torch::Tensor &conics,
+    const torch::Tensor &colors,
+    const torch::Tensor &opacities,
+    const at::optional<torch::Tensor> &backgrounds,
+    const at::optional<torch::Tensor> &masks,
+    const uint32_t image_width,
+    const uint32_t image_height,
+    const uint32_t tile_size,
+    Rest &&...rest
+) {
+    if constexpr (CDIM <= 8) {
+        if ((tile_size * tile_size) % 32 == 0) {
+            return call_kernel_with_dim_impl<CDIM, true>(
+                means2d, conics, colors, opacities, backgrounds, masks,
+                image_width, image_height, tile_size,
+                std::forward<Rest>(rest)...
+            );
+        }
+    }
+    return call_kernel_with_dim_impl<CDIM, false>(
+        means2d, conics, colors, opacities, backgrounds, masks,
+        image_width, image_height, tile_size, std::forward<Rest>(rest)...
+    );
+}
+
 std::tuple<
     torch::Tensor,
     torch::Tensor,
@@ -532,7 +589,7 @@ rasterize_to_pixels_bwd_tensor(
 
 #define __GS__CALL_(N)                                                         \
     case N:                                                                    \
-        return call_kernel_with_dim<N>(                                        \
+        return dispatch_kernel_with_dim<N>(                                    \
             means2d,                                                           \
             conics,                                                            \
             colors,                                                            \

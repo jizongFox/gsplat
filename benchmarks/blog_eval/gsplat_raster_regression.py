@@ -110,6 +110,43 @@ def cases() -> t.List[t.Dict[str, t.Any]]:
         for config in tuple(result)
         if config["channels"] == 1
     )
+    # Append independent-traversal cases without changing any existing seeds.
+    for channels in (3, 4, 7, 8):
+        for absgrad in (False, True):
+            for scenario, count, width, height in (
+                ("warp_imbalance", 1300, 29, 23),
+                ("warp_staging_boundary", 131, 29, 23),
+                ("ordinary", 24, 3, 1),
+            ):
+                result.append(
+                    dict(
+                        name=f"warp_private_c{channels}_abs{int(absgrad)}_{scenario}",
+                        channels=channels,
+                        absgrad=absgrad,
+                        tile_size=16,
+                        scenario=scenario,
+                        cameras=1,
+                        background=True,
+                        width=width,
+                        height=height,
+                        count=count,
+                    )
+                )
+    for tile_size, channels in ((4, 7), (6, 7), (8, 9)):
+        result.append(
+            dict(
+                name=f"warp_private_fallback_t{tile_size}_c{channels}",
+                channels=channels,
+                absgrad=True,
+                tile_size=tile_size,
+                scenario="occlusion",
+                cameras=1,
+                background=True,
+                width=29,
+                height=23,
+                count=192,
+            )
+        )
     return result
 
 
@@ -198,6 +235,21 @@ def raster_case(config: t.Dict[str, t.Any], seed: int, wrapper: t.Any) -> t.Dict
         )
         conics[:] = torch.tensor([0.008, 0.001, 0.009])
         opacities[:] = 0.85 + 0.14 * rand(cameras, count)
+    elif scenario == "warp_imbalance":
+        # Front splats heavily occlude one region while the opposite warps
+        # retain a long contributor list. All splats remain in the tile bins.
+        means[:, :320] = torch.tensor([4.5, 2.5])
+        conics[:, :320] = torch.tensor([0.2, 0.0, 0.2])
+        opacities[:, :320] = 0.95
+        means[:, 320:] = torch.tensor([20.5, 18.5])
+        conics[:, 320:] = torch.tensor([0.15, 0.0, 0.15])
+        opacities[:, 320:] = 0.02
+    elif scenario == "warp_staging_boundary":
+        means[:] = torch.tensor([0.5, 0.5])
+        conics[:] = torch.tensor([1e-8, 0.0, 1e-8])
+        # Exclusive termination: 41 permits actual contributions from batch2.
+        termination = 41 if config["absgrad"] else 31
+        opacities[:] = 1.0 - math.exp(math.log(1e-4) / (termination - 0.5))
     elif scenario == "empty_intersections":
         means[:] = -1000
     elif scenario == "batch_boundary":
@@ -320,6 +372,10 @@ def raster_case(config: t.Dict[str, t.Any], seed: int, wrapper: t.Any) -> t.Dict
                 value.fill_(float("nan"))
                 value[:, 0, 0, :] = 1.0
         torch.autograd.backward((image, alpha), upstream)
+        if scenario == "warp_staging_boundary":
+            used_batch2 = bool((inputs["colors"].grad[:, 32:] != 0).any())
+            if used_batch2 != config["absgrad"]:
+                raise AssertionError("Expected private staging boundary not exercised")
         prefix = f"chunk{chunk}/" if packed else ""
         tensors.update({prefix + "image": image, prefix + "alpha": alpha})
         for name, value in inputs.items():
