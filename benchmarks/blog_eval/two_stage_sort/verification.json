@@ -1,0 +1,44 @@
+{
+  "status": "experimental_draft_default_off",
+  "baseline_revision": "a7050c6970033d724fcab8ff917ac364aece5450",
+  "baseline_binary_sha256": "c61a8253f35ebe5883ea6e67dd7f6e8de4cd2bd86b21eb931aad050b69efec06",
+  "candidate_binary_sha256": "fa6f970ea3b57a350bdf1bcf89003b55a3a53bf4495b70862d08aa8dbe4986e1",
+  "source_sha256": {
+    "gsplat/cuda/csrc/isect_tiles.cu": "be5ac8605ceadd0197b9dad31964254047a0b9c166539b7d8f53701e8de9b41c",
+    "gsplat/cuda/include/bindings.h": "04e664ab8c1a0f749290c34cee8f9f52f61436ae659f6e35d02fe6fbffe048aa",
+    "gsplat/cuda/csrc/ext.cpp": "93118b1fcc8f02b799fc8dafa271bc8c63ac619ba67625e0ad30632727dd529e",
+    "gsplat/cuda/_wrapper.py": "783f4956da4fee5cc9538b5299c20dc364e4782967aa51a231d6c8e9589b7869",
+    "gsplat/rendering.py": "4f0d055949d71ce2d3b64bc8dbc11a486a68c54c9110c2b0629d670607e7f6bf",
+    "benchmarks/blog_eval/benchmark_two_stage_sort.py": "4f1e0f1fde85d0e450bb183f417065b04b290dfdaa956e9ff49c2a81736c6838",
+    "tests/test_two_stage_sort.py": "f00ae93fadf08600857300c47e098c19cb5c6bb2be3f6995c12916b37f047322"
+  },
+  "checks": {
+    "selected_pytest": {
+      "result": "passed",
+      "tests": 143,
+      "cuda_contract_tests": 47,
+      "existing_cpu_tests": 96,
+      "command": "PYTHONPATH=$PWD python -m pytest -q tests/test_two_stage_sort.py tests/test_blog_benchmark_reference.py tests/test_blog_ensemble_reference.py tests/test_blog_megapixels.py tests/test_blog_megapixels_summary.py tests/test_defaults.py"
+    },
+    "smoke_exact_binning_outputs": true,
+    "smoke_image_alpha_exact": true,
+    "smoke_full_gradient_comparisons_passed": 6,
+    "smoke_max_gradient_relative_l2": 1.3883953890740182e-06,
+    "sanitizers": "not_run",
+    "repeated_multiview_sweep": "not_run"
+  },
+  "measurement": {
+    "camera_index": 1247,
+    "resolution": [
+      1280,
+      720
+    ],
+    "warmup": 10,
+    "samples": 20,
+    "jobs_per_variant": 1,
+    "radix_profile_calls": 5,
+    "baseline_sort_end_bit": 45,
+    "initial_result": "Radix kernels faster; complete binning API and full renderer slower on this smoke workload."
+  },
+  "note": "Only an output metadata field (script_sha256) was added to the benchmark after the smoke run; timing/profiling/parity method was unchanged. Source manifest describes the final committed experiment."
+}

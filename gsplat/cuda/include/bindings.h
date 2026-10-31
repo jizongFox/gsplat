@@ -166,6 +166,29 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
     const bool double_buffer
 );
 
+// Opt-in experiment; identical public signature and outputs to isect_tiles.
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_two_stage_tensor(
+    const torch::Tensor &means2d,
+    const torch::Tensor &radii,
+    const torch::Tensor &depths,
+    const at::optional<torch::Tensor> &conics,
+    const at::optional<torch::Tensor> &ray_transforms,
+    const at::optional<torch::Tensor> &opacities,
+    const at::optional<torch::Tensor> &camera_ids,
+    const at::optional<torch::Tensor> &gaussian_ids,
+    const uint32_t C,
+    const uint32_t tile_size,
+    const uint32_t tile_width,
+    const uint32_t tile_height,
+    const bool compact_box,
+    const float compact_box_mult,
+    const float compact_box_tau2,
+    const bool compact_box_use_global_tau2,
+    const bool compact_box_use_sweep,
+    const bool sort,
+    const bool double_buffer
+);
+
 torch::Tensor isect_offset_encode_tensor(
     const torch::Tensor &isect_ids, // [n_isects]
     const uint32_t C,

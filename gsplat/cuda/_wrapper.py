@@ -371,6 +371,7 @@ def isect_tiles(
     compact_box_tau2: Optional[float] = None,
     compact_box_impl: Literal["rect_min", "sweep"] = "sweep",
     ray_transforms: Optional[Tensor] = None,
+    two_stage_sort: bool = False,
 ) -> Tuple[Tensor, Tensor, Tensor]:
     """Maps projected Gaussians to intersecting tiles.
 
@@ -403,6 +404,10 @@ def isect_tiles(
         compact_box_impl: Compact Box implementation. "rect_min" uses
             per-tile rectangle minimum testing, "sweep" uses a slice-based
             span traversal. Default: "sweep".
+        two_stage_sort: Opt in to visible-Gaussian raw-depth sorting followed by
+            stable uint16 camera/tile sorting. Unsafe inputs use the baseline
+            CUDA sort. Requires a binary with the experimental entry point;
+            the default still works with older binaries. Default: False.
 
     Returns:
         A tuple:
@@ -473,7 +478,9 @@ def isect_tiles(
         compact_box_tau2 = 0.0
         compact_box_mult = 1.0
 
-    isect_tiles_cuda = _make_lazy_cuda_func("isect_tiles")
+    isect_tiles_cuda = _make_lazy_cuda_func(
+        "isect_tiles_two_stage" if two_stage_sort else "isect_tiles"
+    )
     tiles_per_gauss, isect_ids, flatten_ids = isect_tiles_cuda(
         means2d.contiguous(),
         radii.contiguous(),

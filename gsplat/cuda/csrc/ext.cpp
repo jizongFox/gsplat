@@ -33,6 +33,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     );
 
     m.def("isect_tiles", &gsplat::isect_tiles_tensor);
+    m.def("isect_tiles_two_stage", &gsplat::isect_tiles_two_stage_tensor);
     m.def("isect_offset_encode", &gsplat::isect_offset_encode_tensor);
 
     m.def("rasterize_to_pixels_fwd", &gsplat::rasterize_to_pixels_fwd_tensor);

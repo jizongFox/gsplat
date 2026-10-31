@@ -3,6 +3,7 @@
 #include <cooperative_groups.h>
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
+#include <limits>
 
 namespace gsplat {
 
@@ -244,6 +245,24 @@ __device__ inline void cb_intersect_fixed_y(
     has = true;
 }
 
+// Both sort paths share exactly the same traversal. The experimental emitter
+// stores only the upper (camera, tile) key; public IDs are reconstructed later.
+__device__ inline void write_isect(
+    const int64_t offset,
+    const int64_t id,
+    const int32_t flatten_idx,
+    int64_t *isect_ids,
+    int32_t *flatten_ids,
+    uint16_t *tile_ids
+) {
+    if (tile_ids != nullptr) {
+        tile_ids[offset] = static_cast<uint16_t>(id >> 32);
+    } else {
+        isect_ids[offset] = id;
+    }
+    flatten_ids[offset] = flatten_idx;
+}
+
 template <typename T>
 __device__ inline int32_t cb_emit_or_count_sweep(
     const T mean_x,
@@ -266,7 +285,8 @@ __device__ inline int32_t cb_emit_or_count_sweep(
     const int64_t out_start,
     const bool write_out,
     int64_t *__restrict__ isect_ids,
-    int32_t *__restrict__ flatten_ids
+    int32_t *__restrict__ flatten_ids,
+    uint16_t *__restrict__ tile_ids = nullptr
 ) {
     const T tsize = static_cast<T>(tile_size);
 
@@ -394,8 +414,8 @@ __device__ inline int32_t cb_emit_or_count_sweep(
             if (write_out) {
                 for (int32_t ty = ty_min; ty < ty_max; ++ty) {
                     const int64_t tile_id = ty * tile_width + tx;
-                    isect_ids[cur] = cid_enc | (tile_id << 32) | depth_id_enc;
-                    flatten_ids[cur] = flatten_idx;
+                    write_isect(cur, cid_enc | (tile_id << 32) | depth_id_enc,
+                                flatten_idx, isect_ids, flatten_ids, tile_ids);
                     ++cur;
                 }
             }
@@ -482,8 +502,8 @@ __device__ inline int32_t cb_emit_or_count_sweep(
             if (write_out) {
                 for (int32_t tx = tx_min; tx < tx_max; ++tx) {
                     const int64_t tile_id = ty * tile_width + tx;
-                    isect_ids[cur] = cid_enc | (tile_id << 32) | depth_id_enc;
-                    flatten_ids[cur] = flatten_idx;
+                    write_isect(cur, cid_enc | (tile_id << 32) | depth_id_enc,
+                                flatten_idx, isect_ids, flatten_ids, tile_ids);
                     ++cur;
                 }
             }
@@ -493,7 +513,8 @@ __device__ inline int32_t cb_emit_or_count_sweep(
     return n_tiles;
 }
 
-template <typename T>
+// Specialize away permutation/compressed-key branches for baseline launches.
+template <typename T, bool TWO_STAGE = false>
 __global__ void isect_tiles(
     // if the data is [C, N, ...] or [nnz, ...] (packed)
     const bool packed,
@@ -523,20 +544,24 @@ __global__ void isect_tiles(
     const bool compact_box_use_sweep,
     int32_t *__restrict__ tiles_per_gauss, // [C, N] or [nnz]
     int64_t *__restrict__ isect_ids,       // [n_isects]
-    int32_t *__restrict__ flatten_ids      // [n_isects]
+    int32_t *__restrict__ flatten_ids,     // [n_isects]
+    const int32_t *__restrict__ permutation = nullptr, // visible depth order
+    const uint32_t emit_elems = 0,
+    uint16_t *__restrict__ tile_ids = nullptr
 ) {
     // For now we'll upcast float16 and bfloat16 to float32
     using OpT = typename OpType<T>::type;
 
     // parallelize over C * N.
-    uint32_t idx = cg::this_grid().thread_rank();
+    const uint32_t rank = cg::this_grid().thread_rank();
     // two-pass kernel:
     // pass 1: count intersections per Gaussian (cum ptr is null)
     // pass 2: write encoded intersection tuples
     bool first_pass = cum_tiles_per_gauss == nullptr;
-    if (idx >= (packed ? nnz : C * N)) {
+    if (rank >= (TWO_STAGE ? emit_elems : (packed ? nnz : C * N))) {
         return;
     }
+    const uint32_t idx = TWO_STAGE ? permutation[rank] : rank;
 
     const OpT radius = radii[idx];
     if (radius <= 0) {
@@ -691,7 +716,7 @@ __global__ void isect_tiles(
 
     // Reinterpret depth bits and append to low 32 bits for stable depth sorting.
     int64_t depth_id_enc = (int64_t) * (int32_t *)&(depths[idx]);
-    int64_t cur_idx = (idx == 0) ? 0 : cum_tiles_per_gauss[idx - 1];
+    int64_t cur_idx = (rank == 0) ? 0 : cum_tiles_per_gauss[rank - 1];
     if (cb_skip_all) {
         return;
     }
@@ -717,7 +742,8 @@ __global__ void isect_tiles(
             cur_idx,
             true,
             isect_ids,
-            flatten_ids
+            flatten_ids,
+            TWO_STAGE ? tile_ids : nullptr
         );
         return;
     }
@@ -741,15 +767,184 @@ __global__ void isect_tiles(
             int64_t tile_id = i * tile_width + j;
             // e.g. tile_n_bits = 22:
             // camera id (10 bits) | tile id (22 bits) | depth (32 bits)
-            isect_ids[cur_idx] = cid_enc | (tile_id << 32) | depth_id_enc;
-            // the flatten index in [C * N] or [nnz]
-            flatten_ids[cur_idx] = static_cast<int32_t>(idx);
+            write_isect(cur_idx, cid_enc | (tile_id << 32) | depth_id_enc,
+                        static_cast<int32_t>(idx), isect_ids, flatten_ids,
+                        TWO_STAGE ? tile_ids : nullptr);
             ++cur_idx;
         }
     }
 }
 
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
+struct VisibleGaussian {
+    const int32_t *counts;
+    __device__ bool operator()(const int32_t idx) const {
+        return counts[idx] > 0;
+    }
+};
+
+__global__ void validate_live_sort_inputs(
+    const uint32_t size,
+    const int32_t *counts,
+    const float *depths,
+    const int64_t *camera_ids,
+    const uint32_t C,
+    int32_t *invalid
+) {
+    const uint32_t idx = cg::this_grid().thread_rank();
+    if (idx >= size) return;
+    if (counts[idx] < 0) atomicExch(invalid, 1);
+    if (counts[idx] <= 0) return;
+    // Raw bits avoid fast-math finite checks and reject both signed zeros,
+    // negative values, infinities and NaNs. Dead Gaussian depths are irrelevant.
+    const uint32_t bits = __float_as_uint(depths[idx]);
+    if (bits == 0 || bits >= 0x7f800000u ||
+        (camera_ids != nullptr && (camera_ids[idx] < 0 || camera_ids[idx] >= C))) {
+        atomicExch(invalid, 1);
+    }
+}
+
+__global__ void gather_depth_keys(
+    const uint32_t size, const int32_t *indices, const float *depths,
+    uint32_t *keys
+) {
+    const uint32_t idx = cg::this_grid().thread_rank();
+    if (idx < size) keys[idx] = __float_as_uint(depths[indices[idx]]);
+}
+
+__global__ void gather_tile_counts(
+    const uint32_t size, const int32_t *indices, const int32_t *counts,
+    int32_t *sorted_counts
+) {
+    const uint32_t idx = cg::this_grid().thread_rank();
+    if (idx < size) sorted_counts[idx] = counts[indices[idx]];
+}
+
+__global__ void reconstruct_isect_ids(
+    const uint32_t size, const uint16_t *tile_ids, const int32_t *flatten_ids,
+    const float *depths, int64_t *isect_ids
+) {
+    const uint32_t idx = cg::this_grid().thread_rank();
+    if (idx < size) {
+        isect_ids[idx] = (static_cast<int64_t>(tile_ids[idx]) << 32) |
+                        __float_as_uint(depths[flatten_ids[idx]]);
+    }
+}
+
+template <typename KeyT>
+static void stable_sort_pairs(
+    torch::Tensor &keys, torch::Tensor &values, const int64_t size,
+    const int end_bit, const bool double_buffer, const cudaStream_t stream
+) {
+    auto keys_out = torch::empty_like(keys);
+    auto values_out = torch::empty_like(values);
+    auto *keys_ptr = reinterpret_cast<KeyT *>(keys.data_ptr());
+    auto *keys_out_ptr = reinterpret_cast<KeyT *>(keys_out.data_ptr());
+    if (double_buffer) {
+        cub::DoubleBuffer<KeyT> key_buffers(keys_ptr, keys_out_ptr);
+        cub::DoubleBuffer<int32_t> value_buffers(
+            values.data_ptr<int32_t>(), values_out.data_ptr<int32_t>()
+        );
+        GSPLAT_CUB_WRAPPER(cub::DeviceRadixSort::SortPairs, key_buffers,
+                           value_buffers, size, 0, end_bit, stream);
+        if (key_buffers.selector == 1) keys = keys_out;
+        if (value_buffers.selector == 1) values = values_out;
+    } else {
+        GSPLAT_CUB_WRAPPER(cub::DeviceRadixSort::SortPairs, keys_ptr,
+                           keys_out_ptr, values.data_ptr<int32_t>(),
+                           values_out.data_ptr<int32_t>(), size, 0, end_bit, stream);
+        keys = keys_out;
+        values = values_out;
+    }
+}
+
+// Eligibility is structural, never a workload-size/performance threshold.
+// Return false on unsafe live data so the caller uses the unmodified CUB path.
+static bool try_two_stage_sort(
+    const torch::Tensor &means2d, const torch::Tensor &radii,
+    const torch::Tensor &depths, const torch::Tensor &conics,
+    const torch::Tensor &ray_transforms, const torch::Tensor &opacities,
+    const int64_t *camera_ids, const int64_t *gaussian_ids,
+    const bool packed, const uint32_t C, const uint32_t N,
+    const uint32_t total_elems, const uint32_t tile_size,
+    const uint32_t tile_width, const uint32_t tile_height,
+    const uint32_t tile_n_bits, const bool compact_box,
+    const float compact_box_mult, const float compact_box_tau2,
+    const bool compact_box_use_global_tau2, const bool compact_box_use_sweep,
+    const bool double_buffer, const cudaStream_t stream,
+    const torch::Tensor &tiles_per_gauss,
+    torch::Tensor &isect_ids, torch::Tensor &flatten_ids
+) {
+    const auto int_options = depths.options().dtype(torch::kInt32);
+    auto indices = torch::empty({total_elems}, int_options);
+    // DeviceSelect preserves counting-iterator order, including packed inputs
+    // with repeated/unsorted camera IDs. That is the baseline's tie order.
+    auto status = torch::zeros({2}, int_options);
+    validate_live_sort_inputs<<<
+        (total_elems + GSPLAT_N_THREADS - 1) / GSPLAT_N_THREADS,
+        GSPLAT_N_THREADS, 0, stream>>>(
+        total_elems, tiles_per_gauss.data_ptr<int32_t>(), depths.data_ptr<float>(),
+        packed ? camera_ids : nullptr, C, status.data_ptr<int32_t>() + 1
+    );
+    GSPLAT_CUB_WRAPPER(
+        cub::DeviceSelect::If, cub::CountingInputIterator<int32_t>(0),
+        indices.data_ptr<int32_t>(), status.data_ptr<int32_t>(), total_elems,
+        VisibleGaussian{tiles_per_gauss.data_ptr<int32_t>()}, stream
+    );
+    const auto host_status = status.cpu();
+    if (host_status.data_ptr<int32_t>()[1] != 0) return false;
+    const int32_t M = host_status.data_ptr<int32_t>()[0];
+    indices = indices.narrow(0, 0, M);
+    if (M == 0) {
+        isect_ids = torch::empty({0}, depths.options().dtype(torch::kInt64));
+        flatten_ids = torch::empty({0}, int_options);
+        return true;
+    }
+    const uint32_t visible_blocks =
+        (static_cast<uint32_t>(M) + GSPLAT_N_THREADS - 1) / GSPLAT_N_THREADS;
+    auto depth_keys = torch::empty({M}, int_options);
+    gather_depth_keys<<<visible_blocks, GSPLAT_N_THREADS, 0, stream>>>(
+        M, indices.data_ptr<int32_t>(), depths.data_ptr<float>(),
+        reinterpret_cast<uint32_t *>(depth_keys.data_ptr<int32_t>())
+    );
+    // Unsigned raw-bit radix sort, not CUB's floating-point transformation.
+    stable_sort_pairs<uint32_t>(depth_keys, indices, M, 32, double_buffer, stream);
+    auto sorted_counts = torch::empty({M}, int_options);
+    gather_tile_counts<<<visible_blocks, GSPLAT_N_THREADS, 0, stream>>>(
+        M, indices.data_ptr<int32_t>(), tiles_per_gauss.data_ptr<int32_t>(),
+        sorted_counts.data_ptr<int32_t>()
+    );
+    auto offsets = torch::cumsum(sorted_counts, 0);
+    const int64_t I = offsets[-1].item<int64_t>();
+    // Public flatten/offset APIs are int32; larger lists stay on baseline.
+    if (I > std::numeric_limits<int32_t>::max()) return false;
+    auto tile_ids = torch::empty({I}, depths.options().dtype(torch::kInt16));
+    flatten_ids = torch::empty({I}, int_options);
+    isect_tiles<float, true><<<visible_blocks, GSPLAT_N_THREADS, 0, stream>>>(
+        packed, C, N, total_elems, camera_ids, gaussian_ids,
+        means2d.data_ptr<float>(), radii.data_ptr<int32_t>(), depths.data_ptr<float>(),
+        conics.defined() ? conics.data_ptr<float>() : nullptr,
+        ray_transforms.defined() ? ray_transforms.data_ptr<float>() : nullptr,
+        opacities.defined() ? opacities.data_ptr<float>() : nullptr,
+        offsets.data_ptr<int64_t>(), tile_size, tile_width, tile_height,
+        tile_n_bits, compact_box, compact_box_mult, compact_box_tau2,
+        compact_box_use_global_tau2, compact_box_use_sweep, nullptr, nullptr,
+        flatten_ids.data_ptr<int32_t>(), indices.data_ptr<int32_t>(), M,
+        reinterpret_cast<uint16_t *>(tile_ids.data_ptr<int16_t>())
+    );
+    // Stable tile sort preserves depth order, and original flatten order for
+    // exact depth ties. Thus this is identical to stable public64-key sorting.
+    stable_sort_pairs<uint16_t>(tile_ids, flatten_ids, I, 16, double_buffer, stream);
+    isect_ids = torch::empty({I}, depths.options().dtype(torch::kInt64));
+    reconstruct_isect_ids<<<(I + GSPLAT_N_THREADS - 1) / GSPLAT_N_THREADS,
+                            GSPLAT_N_THREADS, 0, stream>>>(
+        I, reinterpret_cast<uint16_t *>(tile_ids.data_ptr<int16_t>()),
+        flatten_ids.data_ptr<int32_t>(), depths.data_ptr<float>(),
+        isect_ids.data_ptr<int64_t>()
+    );
+    return true;
+}
+
+static std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor_impl(
     const torch::Tensor &means2d,                    // [C, N, 2] or [nnz, 2]
     const torch::Tensor &radii,                      // [C, N] or [nnz]
     const torch::Tensor &depths,                     // [C, N] or [nnz]
@@ -768,7 +963,8 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
     const bool compact_box_use_global_tau2,
     const bool compact_box_use_sweep,
     const bool sort,
-    const bool double_buffer
+    const bool double_buffer,
+    const bool two_stage_sort
 ) {
     GSPLAT_DEVICE_GUARD(means2d);
     GSPLAT_CHECK_INPUT(means2d);
@@ -959,6 +1155,45 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
                 );
             }
         );
+        // Camera encoding uses a power-of-two stride, not C * n_tiles.
+        // In particular, power-of-two tile counts consume one extra bit in
+        // the existing public encoding. Check the maximum encoded key itself.
+        const uint64_t encoded_max =
+            (static_cast<uint64_t>(C - 1) << tile_n_bits) + n_tiles - 1;
+        const bool eligible = two_stage_sort && sort && C > 0 && tile_size > 0 &&
+            tile_width > 0 && tile_height > 0 &&
+            static_cast<uint64_t>(tile_width) * tile_height == n_tiles &&
+            encoded_max < 65536 &&
+            total_elems <= std::numeric_limits<int32_t>::max() &&
+            means2d.scalar_type() == torch::kFloat32 &&
+            depths.scalar_type() == torch::kFloat32 &&
+            depths.numel() == total_elems && radii.numel() == total_elems &&
+            depths.device() == means2d.device() && radii.device() == means2d.device() &&
+            (!packed || camera_ids.value().numel() == total_elems) &&
+            (!packed || camera_ids.value().device() == means2d.device()) &&
+            (packed || means2d.size(0) == C) &&
+            (!compact_box || opacities_tensor.device() == means2d.device()) &&
+            (!compact_box || !conics.has_value() ||
+             conics_tensor.device() == means2d.device()) &&
+            (!compact_box || !ray_transforms.has_value() ||
+             ray_transforms_tensor.device() == means2d.device());
+        if (eligible) {
+            torch::Tensor two_stage_ids, two_stage_flatten_ids;
+            if (try_two_stage_sort(
+                    means2d, radii, depths,
+                    compact_box ? conics_tensor : torch::Tensor(),
+                    compact_box ? ray_transforms_tensor : torch::Tensor(),
+                    compact_box ? opacities_tensor : torch::Tensor(),
+                    camera_ids_ptr, gaussian_ids_ptr, packed, C, N, total_elems,
+                    tile_size, tile_width, tile_height, tile_n_bits, compact_box,
+                    compact_box_mult, compact_box_tau2, compact_box_use_global_tau2,
+                    compact_box_use_sweep, double_buffer, stream, tiles_per_gauss,
+                    two_stage_ids, two_stage_flatten_ids)) {
+                return std::make_tuple(
+                    tiles_per_gauss, two_stage_ids, two_stage_flatten_ids
+                );
+            }
+        }
         cum_tiles_per_gauss = torch::cumsum(tiles_per_gauss.view({-1}), 0);
         n_isects = cum_tiles_per_gauss[-1].item<int64_t>();
     } else {
@@ -1087,6 +1322,48 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
     } else {
         return std::make_tuple(tiles_per_gauss, isect_ids, flatten_ids);
     }
+}
+
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
+    const torch::Tensor &means2d, const torch::Tensor &radii,
+    const torch::Tensor &depths, const at::optional<torch::Tensor> &conics,
+    const at::optional<torch::Tensor> &ray_transforms,
+    const at::optional<torch::Tensor> &opacities,
+    const at::optional<torch::Tensor> &camera_ids,
+    const at::optional<torch::Tensor> &gaussian_ids,
+    const uint32_t C, const uint32_t tile_size, const uint32_t tile_width,
+    const uint32_t tile_height, const bool compact_box,
+    const float compact_box_mult, const float compact_box_tau2,
+    const bool compact_box_use_global_tau2, const bool compact_box_use_sweep,
+    const bool sort, const bool double_buffer
+) {
+    return isect_tiles_tensor_impl(
+        means2d, radii, depths, conics, ray_transforms, opacities, camera_ids,
+        gaussian_ids, C, tile_size, tile_width, tile_height, compact_box,
+        compact_box_mult, compact_box_tau2, compact_box_use_global_tau2,
+        compact_box_use_sweep, sort, double_buffer, false
+    );
+}
+
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_two_stage_tensor(
+    const torch::Tensor &means2d, const torch::Tensor &radii,
+    const torch::Tensor &depths, const at::optional<torch::Tensor> &conics,
+    const at::optional<torch::Tensor> &ray_transforms,
+    const at::optional<torch::Tensor> &opacities,
+    const at::optional<torch::Tensor> &camera_ids,
+    const at::optional<torch::Tensor> &gaussian_ids,
+    const uint32_t C, const uint32_t tile_size, const uint32_t tile_width,
+    const uint32_t tile_height, const bool compact_box,
+    const float compact_box_mult, const float compact_box_tau2,
+    const bool compact_box_use_global_tau2, const bool compact_box_use_sweep,
+    const bool sort, const bool double_buffer
+) {
+    return isect_tiles_tensor_impl(
+        means2d, radii, depths, conics, ray_transforms, opacities, camera_ids,
+        gaussian_ids, C, tile_size, tile_width, tile_height, compact_box,
+        compact_box_mult, compact_box_tau2, compact_box_use_global_tau2,
+        compact_box_use_sweep, sort, double_buffer, true
+    );
 }
 
 __global__ void isect_offset_encode(
