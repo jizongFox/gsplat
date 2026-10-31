@@ -141,6 +141,7 @@ __global__ void rasterize_to_pixels_fwd_2dgs_kernel(
     vec3<S> *u_Ms_batch = reinterpret_cast<vec3<float> *>(&xy_opacity_batch[block_size]); // [block_size]
     vec3<S> *v_Ms_batch = reinterpret_cast<vec3<float> *>(&u_Ms_batch[block_size]); // [block_size]
     vec3<S> *w_Ms_batch = reinterpret_cast<vec3<float> *>(&v_Ms_batch[block_size]); // [block_size]
+    S *color_batch = reinterpret_cast<S *>(&w_Ms_batch[block_size]);
 
     // current visibility left to render
     // transmittance is gonna be used in the backward pass which requires a high
@@ -209,6 +210,12 @@ __global__ void rasterize_to_pixels_fwd_2dgs_kernel(
             w_Ms_batch[tr] = {
                 ray_transforms[g * 9 + 6], ray_transforms[g * 9 + 7], ray_transforms[g * 9 + 8]
             };
+            if constexpr (COLOR_DIM <= 4) {
+                GSPLAT_PRAGMA_UNROLL
+                for (uint32_t k = 0; k < COLOR_DIM; ++k) {
+                    color_batch[tr * COLOR_DIM + k] = colors[g * COLOR_DIM + k];
+                }
+            }
         }
 
         // wait for other threads to collect the gaussians in batch
@@ -311,7 +318,12 @@ __global__ void rasterize_to_pixels_fwd_2dgs_kernel(
             // run volumetric rendering..
             int32_t g = id_batch[t];
             const S vis = alpha * T;
-            const S *c_ptr = colors + g * COLOR_DIM;
+            const S *c_ptr;
+            if constexpr (COLOR_DIM <= 4) {
+                c_ptr = color_batch + t * COLOR_DIM;
+            } else {
+                c_ptr = colors + g * COLOR_DIM;
+            }
             GSPLAT_PRAGMA_UNROLL
             for (uint32_t k = 0; k < COLOR_DIM; ++k) {
                 pix_out[k] += c_ptr[k] * vis;
@@ -464,7 +476,8 @@ call_kernel_with_dim(
     const uint32_t shared_mem =
         tile_size * tile_size *
         (sizeof(int32_t) + sizeof(vec3<float>) + sizeof(vec3<float>) +
-         sizeof(vec3<float>) + sizeof(vec3<float>));
+         sizeof(vec3<float>) + sizeof(vec3<float>) +
+         (CDIM <= 4 ? CDIM * sizeof(float) : 0));
 
     // TODO: an optimization can be done by passing the actual number of
     // channels into the kernel functions and avoid necessary global memory
