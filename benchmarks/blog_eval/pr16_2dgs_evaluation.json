@@ -1,0 +1,136 @@
+{
+  "base_commit": "9b331bc0d2f94c415569488d596e1ea4e783d950",
+  "tail_commit": "39f4be60e3283739929e9cf843593a05d10eef70",
+  "head_commit": "3aeedd6ceb4907513237b4a515f53f1c8167866c",
+  "base_binary_sha256": "817d15539201ccafb16989c434aecc32722ab3c97f9d2cc3d5149cdd85d76755",
+  "tail_binary_sha256": "6114e72bc45eb49d2e75c177bd4dcddd4794211ebcf359bb778d5c2639450af0",
+  "head_binary_sha256": "65bcf856302cd50211a74af711283f25b4473877a209023be345aeeb1b1f93c9",
+  "environment": {
+    "gpu": "NVIDIA GeForce RTX 4090",
+    "compute_capability": "8.9",
+    "driver": "615.71.10",
+    "pytorch": "2.10.0+cu128",
+    "cuda_toolkit": "12.8",
+    "points": 1932132,
+    "ply": "water2 outputs/56ee2948/point_cloud/iteration_020000/point_cloud.ply",
+    "camera_source": "COLMAP sparse model converted from text; adjacent cameras.json intentionally not used"
+  },
+  "settings": {
+    "renderer": "gsplat 2DGS rasterization_2dgs called on supplied PLY",
+    "packed": false,
+    "render_mode": "RGB+ED",
+    "absgrad": true,
+    "compact_box": true,
+    "compact_box_impl": "sweep",
+    "distloss": false,
+    "tile_size": 16,
+    "dtype": "float32",
+    "views": [0, 623, 1247],
+    "resolutions": [[1280, 720], [3840, 2160]],
+    "jobs": 3,
+    "order": ["base-tail-head", "head-base-tail", "tail-head-base"],
+    "warmups": 20,
+    "repeats": 40,
+    "ratio_definition": "baseline / candidate of median per-job means; geometric mean over three views"
+  },
+  "gates": {
+    "outputs_max_abs": 2e-5,
+    "gradient_relative_l2": 1e-4,
+    "densify_included": true,
+    "no_failures_waived": true
+  },
+  "measurements": {
+    "tail_full_1280x720": {
+      "forward_only": 0.9976813039006525,
+      "training_forward": 1.0002777291534637,
+      "backward": 1.0027164012213554,
+      "combined": 1.0010741218609516
+    },
+    "tail_full_3840x2160": {
+      "forward_only": 0.9987930306997264,
+      "training_forward": 1.000746092116,
+      "backward": 1.0016900891543399,
+      "combined": 1.0014126390685103
+    },
+    "tail_raster_1280x720": {
+      "forward_only": 0.9976828463498406,
+      "training_forward": 1.0011189816692716,
+      "backward": 1.0063129397447097,
+      "combined": 1.003819081596615
+    },
+    "tail_raster_3840x2160": {
+      "forward_only": 0.9984344625907653,
+      "training_forward": 0.9992920082539536,
+      "backward": 1.0027434860605706,
+      "combined": 1.0013060643861533
+    },
+    "head_full_1280x720": {
+      "forward_only": 0.9989152957702947,
+      "training_forward": 0.996973112344815,
+      "backward": 1.006925837915794,
+      "combined": 1.0033483288093719
+    },
+    "head_full_3840x2160": {
+      "forward_only": 1.0010087624928887,
+      "training_forward": 1.00102526365782,
+      "backward": 1.00253425591718,
+      "combined": 1.0020365503381952
+    },
+    "head_raster_1280x720": {
+      "forward_only": 0.9972017912253804,
+      "training_forward": 1.002111931548453,
+      "backward": 1.025850715063246,
+      "combined": 1.0121248201474364
+    },
+    "head_raster_3840x2160": {
+      "forward_only": 1.0026791651924378,
+      "training_forward": 1.0025880063757293,
+      "backward": 1.0066568899167616,
+      "combined": 1.0048017467862687
+    }
+  },
+  "timing_rows": 432,
+  "accuracy_rows": 3618,
+  "failed_accuracy": {
+    "base": 24,
+    "tail": 36,
+    "head": 36
+  },
+  "gate_failure_tensor": "grad/densify"
+  ,"correctness": {
+    "synthetic_fixture_cases": 52,
+    "base_repeat_fixture_pass": true,
+    "tail_fixture_pass": true,
+    "head_fixture_pass": true,
+    "scene_output_tensors_bit_identical": true,
+    "other_scene_gradients_max_relative_l2": {
+      "base": 1.3110177103030812e-6,
+      "tail": 1.4525671215937863e-6,
+      "head": 1.409128515723e-6
+    },
+    "densify_relative_l2_median_over_36_comparisons": {
+      "base_repeat": 0.0004984145003461395,
+      "tail": 0.001141078744221014,
+      "head": 0.0042194499161818146
+    },
+    "densify_relative_l2_max_over_36_comparisons": {
+      "base_repeat": 0.005807281397387772,
+      "tail": 0.005223379614523629,
+      "head": 0.011712562307280721
+    },
+    "scene_gate_failures": {
+      "base_repeat": 24,
+      "tail": 36,
+      "head": 36,
+      "all_due_to": "grad/densify"
+    }
+  },
+  "sanitizers": {
+    "head_fixture_cases": 52,
+    "memcheck_errors": 0,
+    "synccheck_errors": 0,
+    "racecheck_hazards": 0,
+    "racecheck_errors": 0,
+    "existing_test_2dgs": "17 passed"
+  }
+}
