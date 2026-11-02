@@ -1,5 +1,6 @@
 #include "bindings.h"
 #include "helpers.cuh"
+#include "warp_reduce_scatter.cuh"
 #include "types.cuh"
 #include "2dgs.cuh"
 #include <cooperative_groups.h>
@@ -118,9 +119,10 @@ __global__ void rasterize_to_pixels_bwd_2dgs_kernel(
         (camera_id == C - 1) && (tile_id == tile_width * tile_height - 1)
             ? n_isects
             : tile_offsets[tile_id + 1];
+    if (range_start == range_end) {
+        return;
+    }
     const uint32_t block_size = block.size();
-    // number of batches needed to process all gaussians in this tile
-    const uint32_t num_batches = (range_end - range_start + block_size - 1) / block_size;
 
     /**
     * ==============================
@@ -206,6 +208,26 @@ __global__ void rasterize_to_pixels_bwd_2dgs_kernel(
     // find the maximum final gaussian ids in the thread warp.
     // this gives the last gaussian id that have intersected with any pixels in the warp
     const int32_t warp_bin_final = cg::reduce(warp, bin_final, cg::greater<int>());
+
+    // last_ids are absolute intersection positions. Trim the fully occluded
+    // tile suffix before staging, preserving the original lists and indices.
+    // Keep the baseline traversal for blocks containing a partial warp.
+    if (block_size % 32 == 0) {
+        if (tr == 0) {
+            id_batch[0] = range_start;
+        }
+        block.sync();
+        if (warp.thread_rank() == 0) {
+            atomicMax(id_batch, warp_bin_final);
+        }
+        block.sync();
+        const int64_t exclusive_end = static_cast<int64_t>(id_batch[0]) + 1;
+        range_end = static_cast<int32_t>(
+            exclusive_end < range_end ? exclusive_end : range_end
+        );
+    }
+    const uint32_t num_batches =
+        (range_end - range_start + block_size - 1) / block_size;
 
     /**
      * =======================================================
@@ -542,58 +564,128 @@ __global__ void rasterize_to_pixels_bwd_2dgs_kernel(
              * Warp-level reduction to compute the sum of the gradients for each gaussian
              * ==================================================
              */
-            warpSum<COLOR_DIM, S>(v_rgb_local, warp);
-            warpSum<3, S>(v_normal_local, warp);
-            warpSum<decltype(warp), S>(v_xy_local, warp);
-            warpSum<decltype(warp), S>(v_u_M_local, warp);
-            warpSum<decltype(warp), S>(v_v_M_local, warp);
-            warpSum<decltype(warp), S>(v_w_M_local, warp);
-            if (v_means2d_abs != nullptr) {
-                warpSum<decltype(warp), S>(v_xy_abs_local, warp);
-            }
-            warpSum<decltype(warp), S>(v_opacity_local, warp);
-            int32_t g = id_batch[t]; // flatten index in [C * N] or [nnz]
-
-            /**
-             * ==================================================
-             * Write the gradients to the global memory
-             * ==================================================
-             */
-            if (warp.thread_rank() == 0) {
-                S *v_rgb_ptr = (S *)(v_colors) + COLOR_DIM * g;
-                GSPLAT_PRAGMA_UNROLL
-                for (uint32_t k = 0; k < COLOR_DIM; ++k) {
-                    gpuAtomicAdd(v_rgb_ptr + k, v_rgb_local[k]);
-                }
-
-                S *v_normal_ptr = (S *)(v_normals) + 3 * g;
-                GSPLAT_PRAGMA_UNROLL
-                for (uint32_t k = 0; k < 3; ++k) {
-                    gpuAtomicAdd(v_normal_ptr + k, v_normal_local[k]);
-                }
-
-                S *v_ray_transforms_ptr = (S *)(v_ray_transforms) + 9 * g;
-                gpuAtomicAdd(v_ray_transforms_ptr, v_u_M_local.x);
-                gpuAtomicAdd(v_ray_transforms_ptr + 1, v_u_M_local.y);
-                gpuAtomicAdd(v_ray_transforms_ptr + 2, v_u_M_local.z);
-                gpuAtomicAdd(v_ray_transforms_ptr + 3, v_v_M_local.x);
-                gpuAtomicAdd(v_ray_transforms_ptr + 4, v_v_M_local.y);
-                gpuAtomicAdd(v_ray_transforms_ptr + 5, v_v_M_local.z);
-                gpuAtomicAdd(v_ray_transforms_ptr + 6, v_w_M_local.x);
-                gpuAtomicAdd(v_ray_transforms_ptr + 7, v_w_M_local.y);
-                gpuAtomicAdd(v_ray_transforms_ptr + 8, v_w_M_local.z);
-
-                S *v_xy_ptr = (S *)(v_means2d) + 2 * g;
-                gpuAtomicAdd(v_xy_ptr, v_xy_local.x);
-                gpuAtomicAdd(v_xy_ptr + 1, v_xy_local.y);
-
+            const int32_t g = id_batch[t];
+            auto standard_reduce = [&]() {
+                warpSum<COLOR_DIM, S>(v_rgb_local, warp);
+                warpSum<3, S>(v_normal_local, warp);
+                warpSum<decltype(warp), S>(v_xy_local, warp);
+                warpSum<decltype(warp), S>(v_u_M_local, warp);
+                warpSum<decltype(warp), S>(v_v_M_local, warp);
+                warpSum<decltype(warp), S>(v_w_M_local, warp);
                 if (v_means2d_abs != nullptr) {
-                    S *v_xy_abs_ptr = (S *)(v_means2d_abs) + 2 * g;
-                    gpuAtomicAdd(v_xy_abs_ptr, v_xy_abs_local.x);
-                    gpuAtomicAdd(v_xy_abs_ptr + 1, v_xy_abs_local.y);
+                    warpSum<decltype(warp), S>(v_xy_abs_local, warp);
                 }
+                warpSum<decltype(warp), S>(v_opacity_local, warp);
 
-                gpuAtomicAdd(v_opacities + g, v_opacity_local);
+                /**
+                 * ==================================================
+                 * Write the gradients to the global memory
+                 * ==================================================
+                 */
+                if (warp.thread_rank() == 0) {
+                    S *v_rgb_ptr = (S *)(v_colors) + COLOR_DIM * g;
+                    GSPLAT_PRAGMA_UNROLL
+                    for (uint32_t k = 0; k < COLOR_DIM; ++k) {
+                        gpuAtomicAdd(v_rgb_ptr + k, v_rgb_local[k]);
+                    }
+
+                    S *v_normal_ptr = (S *)(v_normals) + 3 * g;
+                    GSPLAT_PRAGMA_UNROLL
+                    for (uint32_t k = 0; k < 3; ++k) {
+                        gpuAtomicAdd(v_normal_ptr + k, v_normal_local[k]);
+                    }
+
+                    S *v_ray_transforms_ptr = (S *)(v_ray_transforms) + 9 * g;
+                    gpuAtomicAdd(v_ray_transforms_ptr, v_u_M_local.x);
+                    gpuAtomicAdd(v_ray_transforms_ptr + 1, v_u_M_local.y);
+                    gpuAtomicAdd(v_ray_transforms_ptr + 2, v_u_M_local.z);
+                    gpuAtomicAdd(v_ray_transforms_ptr + 3, v_v_M_local.x);
+                    gpuAtomicAdd(v_ray_transforms_ptr + 4, v_v_M_local.y);
+                    gpuAtomicAdd(v_ray_transforms_ptr + 5, v_v_M_local.z);
+                    gpuAtomicAdd(v_ray_transforms_ptr + 6, v_w_M_local.x);
+                    gpuAtomicAdd(v_ray_transforms_ptr + 7, v_w_M_local.y);
+                    gpuAtomicAdd(v_ray_transforms_ptr + 8, v_w_M_local.z);
+
+                    S *v_xy_ptr = (S *)(v_means2d) + 2 * g;
+                    gpuAtomicAdd(v_xy_ptr, v_xy_local.x);
+                    gpuAtomicAdd(v_xy_ptr + 1, v_xy_local.y);
+
+                    if (v_means2d_abs != nullptr) {
+                        S *v_xy_abs_ptr = (S *)(v_means2d_abs) + 2 * g;
+                        gpuAtomicAdd(v_xy_abs_ptr, v_xy_abs_local.x);
+                        gpuAtomicAdd(v_xy_abs_ptr + 1, v_xy_abs_local.y);
+                    }
+
+                    gpuAtomicAdd(v_opacities + g, v_opacity_local);
+                }
+            };
+
+            if constexpr (COLOR_DIM <= 4) {
+                if (block_size % 32 == 0) {
+                    // Split the 2DGS vector into two independent groups, each
+                    // within the existing helper's 16-component contract:
+                    // colors/normal/mean/opacity/absgrad, then 9 ray entries.
+                    constexpr int normal_begin = COLOR_DIM;
+                    constexpr int mean_begin = normal_begin + 3;
+                    constexpr int opacity_index = mean_begin + 2;
+                    constexpr int abs_mean_begin = opacity_index + 1;
+                    constexpr int gradient_count = abs_mean_begin + 2;
+                    S values[gradient_count];
+                    GSPLAT_PRAGMA_UNROLL
+                    for (uint32_t k = 0; k < COLOR_DIM; ++k) {
+                        values[k] = v_rgb_local[k];
+                    }
+                    values[normal_begin] = v_normal_local[0];
+                    values[normal_begin + 1] = v_normal_local[1];
+                    values[normal_begin + 2] = v_normal_local[2];
+                    values[mean_begin] = v_xy_local.x;
+                    values[mean_begin + 1] = v_xy_local.y;
+                    values[opacity_index] = v_opacity_local;
+                    values[abs_mean_begin] = v_xy_abs_local.x;
+                    values[abs_mean_begin + 1] = v_xy_abs_local.y;
+                    const auto reduced = warp_reduce_scatter(values, warp);
+                    if (reduced.owner) {
+                        const int component = reduced.component;
+                        S *destination = nullptr;
+                        if (component < normal_begin) {
+                            destination = v_colors + COLOR_DIM * g + component;
+                        } else if (component < mean_begin) {
+                            destination =
+                                v_normals + 3 * g + component - normal_begin;
+                        } else if (component < opacity_index) {
+                            destination =
+                                (S *)v_means2d + 2 * g + component - mean_begin;
+                        } else if (component == opacity_index) {
+                            destination = v_opacities + g;
+                        } else if (v_means2d_abs != nullptr) {
+                            destination = (S *)v_means2d_abs + 2 * g +
+                                          component - abs_mean_begin;
+                        }
+                        if (destination != nullptr) {
+                            gpuAtomicAdd(destination, reduced.value);
+                        }
+                    }
+
+                    const S ray_values[9] = {
+                        v_u_M_local.x, v_u_M_local.y, v_u_M_local.z,
+                        v_v_M_local.x, v_v_M_local.y, v_v_M_local.z,
+                        v_w_M_local.x, v_w_M_local.y, v_w_M_local.z
+                    };
+                    const auto ray_reduced = warp_reduce_scatter(ray_values, warp);
+                    if (ray_reduced.owner) {
+                        gpuAtomicAdd(
+                            v_ray_transforms + 9 * g + ray_reduced.component,
+                            ray_reduced.value
+                        );
+                    }
+                    // The existing densification proxy below reads the ray
+                    // gradient buffer. Wait for this warp's distributed writes.
+                    warp.sync();
+                } else {
+                    standard_reduce();
+                }
+            } else {
+                standard_reduce();
             }
 
             if (valid) {
