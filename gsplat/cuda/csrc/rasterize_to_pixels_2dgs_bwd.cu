@@ -273,10 +273,10 @@ __global__ void rasterize_to_pixels_bwd_2dgs_kernel(
          */
         for (uint32_t t = max(0, batch_end - warp_bin_final); t < batch_size; ++t) {
 
-            bool valid = inside;
-            if (batch_end - t > bin_final) {
-                valid = 0;
-            }
+            // Combine the per-pixel bounds and contribution limits into one
+            // predicate. This avoids a lane-divergent branch before the
+            // forward-equivalent evaluation below.
+            bool valid = inside && (batch_end - t <= bin_final);
 
             /**
              * ==================================================
