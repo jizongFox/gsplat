@@ -118,9 +118,10 @@ __global__ void rasterize_to_pixels_bwd_2dgs_kernel(
         (camera_id == C - 1) && (tile_id == tile_width * tile_height - 1)
             ? n_isects
             : tile_offsets[tile_id + 1];
+    if (range_start == range_end) {
+        return;
+    }
     const uint32_t block_size = block.size();
-    // number of batches needed to process all gaussians in this tile
-    const uint32_t num_batches = (range_end - range_start + block_size - 1) / block_size;
 
     /**
     * ==============================
@@ -206,6 +207,26 @@ __global__ void rasterize_to_pixels_bwd_2dgs_kernel(
     // find the maximum final gaussian ids in the thread warp.
     // this gives the last gaussian id that have intersected with any pixels in the warp
     const int32_t warp_bin_final = cg::reduce(warp, bin_final, cg::greater<int>());
+
+    // last_ids are absolute intersection positions. Trim the fully occluded
+    // tile suffix before staging, preserving the original lists and indices.
+    // Keep the baseline traversal for blocks containing a partial warp.
+    if (block_size % 32 == 0) {
+        if (tr == 0) {
+            id_batch[0] = range_start;
+        }
+        block.sync();
+        if (warp.thread_rank() == 0) {
+            atomicMax(id_batch, warp_bin_final);
+        }
+        block.sync();
+        const int64_t exclusive_end = static_cast<int64_t>(id_batch[0]) + 1;
+        range_end = static_cast<int32_t>(
+            exclusive_end < range_end ? exclusive_end : range_end
+        );
+    }
+    const uint32_t num_batches =
+        (range_end - range_start + block_size - 1) / block_size;
 
     /**
      * =======================================================
