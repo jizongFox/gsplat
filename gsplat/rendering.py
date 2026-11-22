@@ -55,6 +55,7 @@ def rasterization(
     distributed: bool = False,
     camera_model: Literal["pinhole", "ortho", "fisheye"] = "pinhole",
     covars: Optional[Tensor] = None,
+    blending_stats: bool = False,
 ) -> Tuple[Tensor, Tensor, Dict]:
     """Rasterize a set of 3D Gaussians (N) to a batch of image planes (C).
 
@@ -193,6 +194,10 @@ def rasterization(
         channel_chunk: The number of channels to render in one go. Default is 32.
             If the required rendering channels are larger than this value, the rendering
             will be done looply in chunks.
+        blending_stats: If True, `meta["blending_stats"]` contains per-Gaussian
+            sums of blending weights and contributing-pixel counts. The statistics
+            are accumulated during backward and require the first channel chunk to
+            participate in the loss when channel chunking is active.
         distributed: Whether to use distributed rendering. Default is False. If True,
             The input Gaussians are expected to be a subset of scene in each rank, and
             the function will collaboratively render the images for all ranks.
@@ -550,6 +555,13 @@ def rasterization(
     )
 
     # print("rank", world_rank, "Before rasterize_to_pixels")
+    stats = (
+        torch.zeros(
+            (*means2d.shape[:-1], 2), device=means2d.device, dtype=torch.float32
+        )
+        if blending_stats
+        else None
+    )
     if colors.shape[-1] > channel_chunk:
         # slice into chunks
         n_chunks = (colors.shape[-1] + channel_chunk - 1) // channel_chunk
@@ -574,6 +586,7 @@ def rasterization(
                 backgrounds=backgrounds_chunk,
                 packed=packed,
                 absgrad=absgrad,
+                blending_stats=stats if i == 0 else None,
             )
             render_colors.append(render_colors_)
             render_alphas.append(render_alphas_)
@@ -593,6 +606,7 @@ def rasterization(
             backgrounds=backgrounds,
             packed=packed,
             absgrad=absgrad,
+            blending_stats=stats,
         )
     if render_mode in ["ED", "RGB+ED"]:
         # normalize the accumulated depth to get the expected depth
@@ -603,6 +617,9 @@ def rasterization(
             ],
             dim=-1,
         )
+
+    if stats is not None:
+        meta["blending_stats"] = stats
 
     return render_colors, render_alphas, meta
 
@@ -1056,6 +1073,7 @@ def rasterization_2dgs(
     distloss: bool = False,
     depth_mode: Literal["expected", "median"] = "expected",
     normals_coordinate: Literal["world", "camera"] = "world",
+    blending_stats: bool = False,
 ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Dict]:
     """Rasterize a set of 2D Gaussians (N) to a batch of image planes (C).
 
@@ -1119,6 +1137,9 @@ def rasterization_2dgs(
         distloss: If true, use distortion regularization to get better geometry detail.
         depth_mode: render depth mode. Choose from expected depth and median depth.
         normals_coordinate: the coordinate system of the normals.
+        blending_stats: If True, `meta["blending_stats"]` contains per-Gaussian
+            sums of blending weights and contributing-pixel counts, accumulated
+            during backward.
 
     Returns:
         A tuple:
@@ -1299,6 +1320,13 @@ def rasterization_2dgs(
     if backgrounds is not None:
         assert backgrounds.shape == (C, colors.shape[-1]), backgrounds.shape
 
+    stats = (
+        torch.zeros(
+            (*means2d.shape[:-1], 2), device=means2d.device, dtype=torch.float32
+        )
+        if blending_stats
+        else None
+    )
     (
         render_colors,
         render_alphas,
@@ -1321,6 +1349,7 @@ def rasterization_2dgs(
         packed=packed,
         absgrad=absgrad,
         distloss=distloss,
+        blending_stats=stats,
     )
     render_normals_from_depth = None
     if render_mode in ["ED", "RGB+ED"]:
@@ -1377,6 +1406,8 @@ def rasterization_2dgs(
         "render_distort": render_distort,
         "gradient_2dgs": densify,  # This holds the gradient used for densification for 2dgs
     }
+    if stats is not None:
+        meta["blending_stats"] = stats
     if normals_coordinate == "world":
         render_normals = torch.einsum(
             "...ij,...hwj->...hwi",
