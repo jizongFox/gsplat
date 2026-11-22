@@ -532,6 +532,7 @@ def rasterize_to_pixels(
     masks: Optional[Tensor] = None,  # [C, tile_height, tile_width]
     packed: bool = False,
     absgrad: bool = False,
+    blending_stats: Optional[Tensor] = None,
 ) -> Tuple[Tensor, Tensor]:
     """Rasterizes Gaussians to pixels.
 
@@ -549,6 +550,7 @@ def rasterize_to_pixels(
         masks: Optional tile mask to skip rendering GS to masked tiles. [C, tile_height, tile_width]. Default: None.
         packed: If True, the input tensors are expected to be packed with shape [nnz, ...]. Default: False.
         absgrad: If True, the backward pass will compute a `.absgrad` attribute for `means2d`. Default: False.
+        blending_stats: Optional float32 buffer for per-Gaussian `[sum(alpha*T), pixel_count]` statistics. The backward pass accumulates into this zero-initialized buffer.
 
     Returns:
         A tuple:
@@ -571,6 +573,12 @@ def rasterize_to_pixels(
         assert conics.shape == (C, N, 3), conics.shape
         assert colors.shape[:2] == (C, N), colors.shape
         assert opacities.shape == (C, N), opacities.shape
+    if blending_stats is not None:
+        expected_shape = (means2d.shape[0], 2) if packed else (C, means2d.shape[1], 2)
+        assert blending_stats.shape == expected_shape, blending_stats.shape
+        assert blending_stats.dtype == torch.float32
+        assert blending_stats.device == device
+        assert blending_stats.is_contiguous()
     if backgrounds is not None:
         assert backgrounds.shape == (C, colors.shape[-1]), backgrounds.shape
         backgrounds = backgrounds.contiguous()
@@ -646,6 +654,7 @@ def rasterize_to_pixels(
         isect_offsets.contiguous(),
         flatten_ids.contiguous(),
         absgrad,
+        blending_stats,
     )
 
     if padded_channels > 0:
@@ -1200,6 +1209,7 @@ class _RasterizeToPixels(torch.autograd.Function):
         isect_offsets: Tensor,  # [C, tile_height, tile_width]
         flatten_ids: Tensor,  # [n_isects]
         absgrad: bool,
+        blending_stats: Optional[Tensor],
     ) -> Tuple[Tensor, Tensor]:
         render_colors, render_alphas, last_ids = _make_lazy_cuda_func(
             "rasterize_to_pixels_fwd"
@@ -1233,6 +1243,7 @@ class _RasterizeToPixels(torch.autograd.Function):
         ctx.height = height
         ctx.tile_size = tile_size
         ctx.absgrad = absgrad
+        ctx.blending_stats = blending_stats
 
         # double to float
         render_alphas = render_alphas.float()
@@ -1260,6 +1271,7 @@ class _RasterizeToPixels(torch.autograd.Function):
         height = ctx.height
         tile_size = ctx.tile_size
         absgrad = ctx.absgrad
+        blending_stats = ctx.blending_stats
 
         (
             v_means2d_abs,
@@ -1284,6 +1296,7 @@ class _RasterizeToPixels(torch.autograd.Function):
             v_render_colors.contiguous(),
             v_render_alphas.contiguous(),
             absgrad,
+            blending_stats,
         )
 
         if absgrad:
@@ -1302,6 +1315,7 @@ class _RasterizeToPixels(torch.autograd.Function):
             v_colors,
             v_opacities,
             v_backgrounds,
+            None,
             None,
             None,
             None,
@@ -2231,6 +2245,7 @@ def rasterize_to_pixels_2dgs(
     packed: bool = False,
     absgrad: bool = False,
     distloss: bool = False,
+    blending_stats: Optional[Tensor] = None,
 ) -> Tuple[Tensor, Tensor]:
     """Rasterize Gaussians to pixels.
 
@@ -2248,6 +2263,7 @@ def rasterize_to_pixels_2dgs(
         masks: Optional tile mask to skip rendering GS to masked tiles. [C, tile_height, tile_width]. Default: None.
         packed: If True, the input tensors are expected to be packed with shape [nnz, ...]. Default: False.
         absgrad: If True, the backward pass will compute a `.absgrad` attribute for `means2d`. Default: False.
+        blending_stats: Optional float32 buffer for per-Gaussian `[sum(alpha*T), pixel_count]` statistics. The backward pass accumulates into this zero-initialized buffer.
 
     Returns:
         A tuple:
@@ -2274,6 +2290,12 @@ def rasterize_to_pixels_2dgs(
         assert ray_transforms.shape == (C, N, 3, 3), ray_transforms.shape
         assert colors.shape[:2] == (C, N), colors.shape
         assert opacities.shape == (C, N), opacities.shape
+    if blending_stats is not None:
+        expected_shape = (means2d.shape[0], 2) if packed else (C, means2d.shape[1], 2)
+        assert blending_stats.shape == expected_shape, blending_stats.shape
+        assert blending_stats.dtype == torch.float32
+        assert blending_stats.device == device
+        assert blending_stats.is_contiguous()
     if backgrounds is not None:
         # assert backgrounds.shape == (C, colors.shape[-1]), backgrounds.shape
         backgrounds = backgrounds.contiguous()
@@ -2331,6 +2353,7 @@ def rasterize_to_pixels_2dgs(
         flatten_ids.contiguous(),
         absgrad,
         distloss,
+        blending_stats,
     )
 
     if padded_channels > 0:
@@ -2437,6 +2460,7 @@ class _RasterizeToPixels2DGS(torch.autograd.Function):
         flatten_ids: Tensor,
         absgrad: bool,
         distloss: bool,
+        blending_stats: Optional[Tensor],
     ) -> Tuple[Tensor, Tensor]:
         (
             render_colors,
@@ -2482,6 +2506,7 @@ class _RasterizeToPixels2DGS(torch.autograd.Function):
         ctx.tile_size = tile_size
         ctx.absgrad = absgrad
         ctx.distloss = distloss
+        ctx.blending_stats = blending_stats
 
         # doubel to float
         render_alphas = render_alphas.float()
@@ -2522,6 +2547,7 @@ class _RasterizeToPixels2DGS(torch.autograd.Function):
         height = ctx.height
         tile_size = ctx.tile_size
         absgrad = ctx.absgrad
+        blending_stats = ctx.blending_stats
 
         (
             v_means2d_abs,
@@ -2555,6 +2581,7 @@ class _RasterizeToPixels2DGS(torch.autograd.Function):
             v_render_distort.contiguous(),
             v_render_median.contiguous(),
             absgrad,
+            blending_stats,
         )
         if absgrad:
             means2d.absgrad = v_means2d_abs
@@ -2574,6 +2601,7 @@ class _RasterizeToPixels2DGS(torch.autograd.Function):
             v_normals,
             v_densify,
             v_backgrounds,
+            None,
             None,
             None,
             None,

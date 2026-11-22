@@ -785,6 +785,35 @@ def test_isect_compact_box_invalid_conic_skip(test_data):
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
+def test_rasterize_to_pixels_blending_stats_exact():
+    from gsplat.cuda._wrapper import rasterize_to_pixels
+
+    means2d = torch.tensor([[[0.5, 0.5]]], device=device, requires_grad=True)
+    conics = torch.tensor([[[1.0, 0.0, 1.0]]], device=device)
+    colors = torch.ones((1, 1, 3), device=device)
+    opacities = torch.tensor([[0.5]], device=device)
+    offsets = torch.zeros((1, 1, 1), dtype=torch.int32, device=device)
+    flatten_ids = torch.tensor([0], dtype=torch.int32, device=device)
+    stats = torch.zeros((1, 1, 2), dtype=torch.float32, device=device)
+
+    rendered, alpha = rasterize_to_pixels(
+        means2d,
+        conics,
+        colors,
+        opacities,
+        1,
+        1,
+        16,
+        offsets,
+        flatten_ids,
+        blending_stats=stats,
+    )
+    (rendered.sum() + alpha.sum()).backward()
+
+    torch.testing.assert_close(stats, torch.tensor([[[0.5, 1.0]]], device=device))
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
 @pytest.mark.parametrize("channels", [3, 32, 128])
 def test_rasterize_to_pixels(test_data, channels: int):
     from gsplat.cuda._torch_impl import _rasterize_to_pixels
@@ -832,6 +861,9 @@ def test_rasterize_to_pixels(test_data, channels: int):
     colors.requires_grad = True
     opacities.requires_grad = True
     backgrounds.requires_grad = True
+    blending_stats = torch.zeros(
+        (*means2d.shape[:-1], 2), device=means2d.device, dtype=torch.float32
+    )
 
     # forward
     render_colors, render_alphas = rasterize_to_pixels(
@@ -845,6 +877,7 @@ def test_rasterize_to_pixels(test_data, channels: int):
         isect_offsets,
         flatten_ids,
         backgrounds=backgrounds,
+        blending_stats=blending_stats,
     )
     _render_colors, _render_alphas = _rasterize_to_pixels(
         means2d,
@@ -886,6 +919,10 @@ def test_rasterize_to_pixels(test_data, channels: int):
     torch.testing.assert_close(v_colors, _v_colors, rtol=1e-3, atol=1e-3)
     torch.testing.assert_close(v_opacities, _v_opacities, rtol=2e-3, atol=2e-3)
     torch.testing.assert_close(v_backgrounds, _v_backgrounds, rtol=1e-3, atol=1e-3)
+    assert blending_stats.shape == (C, len(means), 2)
+    assert torch.all(blending_stats >= 0)
+    assert torch.any(blending_stats[..., 0] > 0)
+    assert torch.any(blending_stats[..., 1] > 0)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")

@@ -591,6 +591,9 @@ def test_rasterize_to_pixels_2dgs(test_data):
     backgrounds.requires_grad = True
     normals.requires_grad = True
     densify.requires_grad = True
+    blending_stats = torch.zeros(
+        (*means2d.shape[:-1], 2), device=means2d.device, dtype=torch.float32
+    )
 
     (
         render_colors,
@@ -612,6 +615,7 @@ def test_rasterize_to_pixels_2dgs(test_data):
         flatten_ids,
         backgrounds=backgrounds,
         distloss=True,
+        blending_stats=blending_stats,
     )
 
     # ray_transforms_torch = ray_transforms.transpose(-1, -2).clone()
@@ -700,6 +704,90 @@ def test_rasterize_to_pixels_2dgs(test_data):
     torch.testing.assert_close(v_opacities, _v_opacities, rtol=1e-3, atol=1e-3)
     torch.testing.assert_close(v_backgrounds, _v_backgrounds, rtol=1e-5, atol=1e-5)
     torch.testing.assert_close(v_normals, _v_normals, rtol=1e-3, atol=1e-3)
+    assert blending_stats.shape == (C, N, 2)
+    assert torch.all(blending_stats >= 0)
+    assert torch.any(blending_stats[..., 0] > 0)
+    assert torch.any(blending_stats[..., 1] > 0)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
+@pytest.mark.parametrize("packed", [True, False])
+def test_rasterization_2dgs_blending_stats(test_data, packed: bool):
+    from gsplat.rendering import rasterization_2dgs
+
+    means = test_data["means"].detach().requires_grad_()
+    output = rasterization_2dgs(
+        means,
+        test_data["quats"],
+        test_data["scales"],
+        test_data["opacities"][0],
+        test_data["colors"][0],
+        test_data["viewmats"],
+        test_data["Ks"],
+        test_data["width"],
+        test_data["height"],
+        packed=packed,
+        blending_stats=True,
+    )
+    stats = output[-1]["blending_stats"]
+    (output[0].sum() + output[1].sum()).backward()
+
+    assert stats.shape[-1] == 2
+    assert torch.all(stats >= 0)
+    assert torch.all(stats[..., 0] <= stats[..., 1])
+    assert torch.any(stats[..., 1] > 0)
+
+    disabled = rasterization_2dgs(
+        means.detach(),
+        test_data["quats"],
+        test_data["scales"],
+        test_data["opacities"][0],
+        test_data["colors"][0],
+        test_data["viewmats"],
+        test_data["Ks"],
+        test_data["width"],
+        test_data["height"],
+        packed=packed,
+    )
+    assert "blending_stats" not in disabled[-1]
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
+@pytest.mark.parametrize("packed", [True, False])
+def test_rasterization_2dgs_blending_stats_exact(packed: bool):
+    from gsplat.rendering import rasterization_2dgs
+
+    means = torch.tensor([[0.0, 0.0, 3.0]], device=device, requires_grad=True)
+    quats = torch.tensor([[1.0, 0.0, 0.0, 0.0]], device=device)
+    scales = torch.tensor([[0.1, 0.1, 1.0]], device=device)
+    opacities = torch.tensor([0.5], device=device)
+    colors = torch.ones((1, 3), device=device)
+    viewmats = torch.eye(4, device=device).expand(2, -1, -1).contiguous()
+    Ks = torch.tensor(
+        [[[1.0, 0.0, 0.5], [0.0, 1.0, 0.5], [0.0, 0.0, 1.0]]],
+        device=device,
+    )
+    Ks = Ks.expand(2, -1, -1).contiguous()
+
+    output = rasterization_2dgs(
+        means,
+        quats,
+        scales,
+        opacities,
+        colors,
+        viewmats,
+        Ks,
+        1,
+        1,
+        packed=packed,
+        blending_stats=True,
+    )
+    (output[0].sum() + output[1].sum()).backward()
+
+    expected = torch.tensor([[0.5, 1.0], [0.5, 1.0]], device=device)
+    if not packed:
+        expected = expected[:, None, :]
+    torch.testing.assert_close(output[-1]["blending_stats"], expected)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")

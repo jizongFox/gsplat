@@ -47,7 +47,8 @@ __global__ void rasterize_to_pixels_bwd_kernel(
     vec2<S> *__restrict__ v_means2d,     // [C, N, 2] or [nnz, 2]
     vec3<S> *__restrict__ v_conics,      // [C, N, 3] or [nnz, 3]
     S *__restrict__ v_colors,   // [C, N, COLOR_DIM] or [nnz, COLOR_DIM]
-    S *__restrict__ v_opacities // [C, N] or [nnz]
+    S *__restrict__ v_opacities, // [C, N] or [nnz]
+    S *__restrict__ blending_stats // [C, N, 2] or [nnz, 2], optional
 ) {
     auto block = cg::this_thread_block();
     uint32_t camera_id = block.group_index().x;
@@ -213,6 +214,8 @@ __global__ void rasterize_to_pixels_bwd_kernel(
             vec2<S> delta;
             vec3<S> conic;
             S vis;
+            S blending_weight_local = 0.f;
+            S blending_count_local = 0.f;
 
             if (valid || COLOR_DIM <= 4) {
                 conic = conic_batch[t];
@@ -250,6 +253,8 @@ __global__ void rasterize_to_pixels_bwd_kernel(
                 T *= ra;
                 // update v_rgb for this gaussian
                 const S fac = alpha * T;
+                blending_weight_local = valid ? fac : 0.f;
+                blending_count_local = valid ? 1.f : 0.f;
                 GSPLAT_PRAGMA_UNROLL
                 for (uint32_t k = 0; k < COLOR_DIM; ++k) {
                     v_rgb_local[k] = valid ? fac * v_render_c[k] : 0.f;
@@ -334,6 +339,17 @@ __global__ void rasterize_to_pixels_bwd_kernel(
                     gpuAtomicAdd(v_opacities + g, v_opacity_local);
                 }
             };
+            if (blending_stats != nullptr) {
+                S blending_weight = blending_weight_local;
+                S blending_count = blending_count_local;
+                warpSum<decltype(warp), S>(blending_weight, warp);
+                warpSum<decltype(warp), S>(blending_count, warp);
+                if (warp.thread_rank() == 0) {
+                    const int32_t g = id_batch[t];
+                    gpuAtomicAdd(blending_stats + 2 * g, blending_weight);
+                    gpuAtomicAdd(blending_stats + 2 * g + 1, blending_count);
+                }
+            }
             if constexpr (COLOR_DIM <= 8) {
                 // Scatter requires all 32 lanes, including upper component
                 // owners. Use the baseline path for any partial-warp block.
@@ -423,11 +439,13 @@ call_kernel_with_dim_impl(
     const torch::Tensor &v_render_colors, // [C, image_height, image_width, 3]
     const torch::Tensor &v_render_alphas, // [C, image_height, image_width, 1]
     // options
-    bool absgrad
+    bool absgrad,
+    const at::optional<torch::Tensor> &blending_stats
 ) {
 
     GSPLAT_DEVICE_GUARD(means2d);
     GSPLAT_CHECK_INPUT(means2d);
+    bool packed = means2d.dim() == 2;
     GSPLAT_CHECK_INPUT(conics);
     GSPLAT_CHECK_INPUT(colors);
     GSPLAT_CHECK_INPUT(opacities);
@@ -437,14 +455,22 @@ call_kernel_with_dim_impl(
     GSPLAT_CHECK_INPUT(last_ids);
     GSPLAT_CHECK_INPUT(v_render_colors);
     GSPLAT_CHECK_INPUT(v_render_alphas);
+    if (blending_stats.has_value()) {
+        GSPLAT_CHECK_INPUT(blending_stats.value());
+        TORCH_CHECK(blending_stats.value().size(-1) == 2);
+        TORCH_CHECK(blending_stats.value().dim() == means2d.dim());
+        TORCH_CHECK(blending_stats.value().size(0) == means2d.size(0));
+        if (!packed) {
+            TORCH_CHECK(blending_stats.value().size(1) == means2d.size(1));
+        }
+        TORCH_CHECK(blending_stats.value().scalar_type() == torch::kFloat32);
+    }
     if (backgrounds.has_value()) {
         GSPLAT_CHECK_INPUT(backgrounds.value());
     }
     if (masks.has_value()) {
         GSPLAT_CHECK_INPUT(masks.value());
     }
-
-    bool packed = means2d.dim() == 2;
 
     uint32_t C = tile_offsets.size(0);         // number of cameras
     uint32_t N = packed ? 0 : means2d.size(1); // number of gaussians
@@ -516,7 +542,10 @@ call_kernel_with_dim_impl(
                 reinterpret_cast<vec2<float> *>(v_means2d.data_ptr<float>()),
                 reinterpret_cast<vec3<float> *>(v_conics.data_ptr<float>()),
                 v_colors.data_ptr<float>(),
-                v_opacities.data_ptr<float>()
+                v_opacities.data_ptr<float>(),
+                blending_stats.has_value()
+                    ? blending_stats.value().data_ptr<float>()
+                    : nullptr
             );
     }
 
@@ -581,7 +610,8 @@ rasterize_to_pixels_bwd_tensor(
     const torch::Tensor &v_render_colors, // [C, image_height, image_width, 3]
     const torch::Tensor &v_render_alphas, // [C, image_height, image_width, 1]
     // options
-    bool absgrad
+    bool absgrad,
+    const at::optional<torch::Tensor> &blending_stats
 ) {
 
     GSPLAT_CHECK_INPUT(colors);
@@ -605,7 +635,8 @@ rasterize_to_pixels_bwd_tensor(
             last_ids,                                                          \
             v_render_colors,                                                   \
             v_render_alphas,                                                   \
-            absgrad                                                            \
+            absgrad,                                                           \
+            blending_stats                                                    \
         );
 
     switch (COLOR_DIM) {
