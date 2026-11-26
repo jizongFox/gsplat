@@ -24,7 +24,7 @@ _spec = importlib.util.spec_from_file_location(
 )
 rb = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(rb)
-VARIANTS = {"default": False, "subtile": True}
+VARIANTS = {"default": "pixel", "subtile": "subtile"}  # rasterize_to_pixels(forward=)
 
 
 def rel_l2(value, ref):
@@ -92,7 +92,7 @@ def raster_case(inputs, viewmat, K, width, height):
                 offsets,
                 flatten_ids,
                 backgrounds=background,
-                subtile_masks=VARIANTS[variant],
+                forward=VARIANTS[variant],
             )
             end.record()
         torch.cuda.synchronize()
@@ -109,9 +109,7 @@ def render_case(inputs, viewmat, K, width, height, generator):
 
     def run(variant):
         nonlocal upstream
-        raster = functools.partial(
-            rasterization, rasterize_subtile_masks=VARIANTS[variant]
-        )
+        raster = functools.partial(rasterization, rasterize_forward=VARIANTS[variant])
         for leaf in leaves.values():
             leaf.grad = None
         torch.cuda.synchronize()

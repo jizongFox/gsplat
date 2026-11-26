@@ -1,18 +1,15 @@
 """PennyGS (arXiv 2611.27525) Sec. 3.4: colour staging in the subtile forward.
 
-Arms, all in one process on one build, alternating inside each repeat:
+Arms, in one process on one build, alternating inside each repeat:
 
-- ``default``: the default forward kernel;
-- ``subtile``: subtile masks, colours read from global memory per hit (#25);
-- ``stage_all``: subtile masks, every batch entry's colours staged in shared
-  memory;
-- ``stage_hit``: subtile masks, only entries some warp hits are staged.
+- ``default``: the default forward kernel (``forward="pixel"``);
+- ``subtile``: the subtile forward (``forward="subtile"``), which stages 1-4
+  channel colours in shared memory and reads wider colours per hit.
 
-The staging mode is chosen by the experiment variable
-``GSPLAT_SUBTILE_COLOR_STAGE`` (0/1/2), read on every call. Only commit
-``a622588`` reads it: from the next commit on, the subtile kernel stages 1-4
-channels and reads wider colours per hit, whatever the variable says, so the
-three subtile arms measure the same kernel. Reproduce the sweep at ``a622588``.
+The staging sweep in ``subtile_staging.md`` was measured at commit ``a622588``,
+where this script also had ``stage_all`` and ``stage_hit`` arms that switched
+the staging mode through a temporary environment variable. Check out that
+commit to reproduce it.
 
 Colours model the parent application's ``override_color``: depth (1), RGB (3),
 RGB + depth (4), RGB + camera normal + depth (7, padded to 8: the training
@@ -50,12 +47,7 @@ rb = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(rb)
 
 # name -> (subtile masks, staging mode)
-ARMS = {
-    "default": (False, 0),
-    "subtile": (True, 0),
-    "stage_all": (True, 1),
-    "stage_hit": (True, 2),
-}
+ARMS = {"default": "pixel", "subtile": "subtile"}  # rasterize_to_pixels(forward=)
 CHANNELS = (1, 3, 4, 8, 16, 32)
 
 
@@ -100,12 +92,6 @@ def guarded_measure(run, warmup, repeats, retries=20):
             return times, check, {"attempts": attempt, "contended": False}
         print(f"contended by {sorted(guard.seen)}; measuring again", flush=True)
     return times, check, {"attempts": retries, "contended": True}
-
-
-def set_arm(arm):
-    subtile, stage = ARMS[arm]
-    os.environ["GSPLAT_SUBTILE_COLOR_STAGE"] = str(stage)
-    return subtile
 
 
 def rel_l2(value, ref):
@@ -185,7 +171,6 @@ def raster_cases(inputs, viewmat, K, width, height, channels, generator):
         background = torch.zeros((1, colors.shape[-1]), device="cuda")
 
         def run(arm):
-            subtile = set_arm(arm)
             start, end = (torch.cuda.Event(enable_timing=True) for _ in range(2))
             with torch.no_grad():
                 start.record()
@@ -200,7 +185,7 @@ def raster_cases(inputs, viewmat, K, width, height, channels, generator):
                     offsets,
                     flatten_ids,
                     backgrounds=background,
-                    subtile_masks=subtile,
+                    forward=ARMS[arm],
                 )
                 end.record()
             torch.cuda.synchronize()
@@ -219,8 +204,7 @@ def render_case(inputs, viewmat, K, width, height, generator):
 
     def run(arm):
         nonlocal upstream
-        subtile = set_arm(arm)
-        raster = functools.partial(rasterization, rasterize_subtile_masks=subtile)
+        raster = functools.partial(rasterization, rasterize_forward=ARMS[arm])
         for leaf in leaves.values():
             leaf.grad = None
         torch.cuda.synchronize()
@@ -340,7 +324,6 @@ def main():
                 print(json.dumps(case), flush=True)
             del cases
             torch.cuda.empty_cache()
-    os.environ.pop("GSPLAT_SUBTILE_COLOR_STAGE", None)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=1) + "\n")
 

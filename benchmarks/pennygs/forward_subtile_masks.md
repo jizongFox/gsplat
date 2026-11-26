@@ -12,8 +12,22 @@ absgrad, compact-box sweep, tile 16).
 
 ## Change
 
-`rasterize_to_pixels(..., subtile_masks=True)` /
-`rasterization(..., rasterize_subtile_masks=True)`, tile size 16:
+`rasterize_to_pixels(..., forward="subtile")` /
+`rasterization(..., rasterize_forward="subtile")` (default `"pixel"`), tile size 16.
+The first version of this PR spelled it `subtile_masks=True` /
+`rasterize_subtile_masks=True`.
+
+Code layout:
+
+- `gsplat/cuda/include/raster_alpha.cuh`: the per-pixel step shared by both
+  forward kernels (`gaussian_alpha`, `MAX_ALPHA`, `ALPHA_THRESHOLD`,
+  `TRANSMITTANCE_THRESHOLD`); the backward repeats it.
+- `gsplat/cuda/csrc/rasterize_to_pixels_fwd_subtile.cuh` (included by
+  `rasterize_to_pixels_fwd.cu`, same translation unit): the subtile layout,
+  `subtile_mask`, colour staging, the kernel and its launch. It only decides
+  which entries each warp visits.
+
+The subtile forward:
 
 - the 16x16 tile is split into eight 8x4 subtiles, one per warp (the default maps
   a warp to two 16-pixel rows);

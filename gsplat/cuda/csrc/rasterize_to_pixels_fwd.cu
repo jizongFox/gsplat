@@ -1,4 +1,6 @@
 #include "bindings.h"
+#include "raster_alpha.cuh"
+#include "rasterize_to_pixels_fwd_subtile.cuh"
 #include "types.cuh"
 #include <cooperative_groups.h>
 #include <cub/cub.cuh>
@@ -135,20 +137,15 @@ __global__ void rasterize_to_pixels_fwd_kernel(
         // process gaussians in the current batch for this pixel
         uint32_t batch_size = min(block_size, range_end - batch_start);
         for (uint32_t t = 0; (t < batch_size) && !done; ++t) {
-            const vec3<S> conic = conic_batch[t];
-            const vec3<S> xy_opac = xy_opacity_batch[t];
-            const S opac = xy_opac.z;
-            const vec2<S> delta = {xy_opac.x - px, xy_opac.y - py};
-            const S sigma = 0.5f * (conic.x * delta.x * delta.x +
-                                    conic.z * delta.y * delta.y) +
-                            conic.y * delta.x * delta.y;
-            S alpha = min(0.999f, opac * __expf(-sigma));
-            if (sigma < 0.f || alpha < 1.f / 255.f) {
+            S alpha;
+            if (!gaussian_alpha<S>(
+                    conic_batch[t], xy_opacity_batch[t], px, py, alpha
+                )) {
                 continue;
             }
 
             const S next_T = T * (1.0f - alpha);
-            if (next_T <= 1e-4) { // this pixel is done: exclusive
+            if (next_T <= TRANSMITTANCE_THRESHOLD) { // this pixel is done: exclusive
                 done = true;
                 break;
             }
@@ -184,248 +181,6 @@ __global__ void rasterize_to_pixels_fwd_kernel(
     }
 }
 
-/****************************************************************************
- * Forward with subtile masks (PennyGS, arXiv 2611.27525 Sec. 3.4; VkSplat
- * subtile masks, HiGS per-warp hit lists)
- *
- * A 16x16 tile is eight 8x4 subtiles, one per warp. When a batch of Gaussians
- * is staged, each Gaussian also records which subtiles its alpha >= 1/255
- * ellipse can reach (conservative bounding-box test). Each warp compacts the
- * entries reaching its subtile into a hit list, in depth order, and blends only
- * those. Skipped entries have alpha < 1/255 at every pixel of the subtile,
- * which the default kernel skips per pixel, so the outputs are identical.
- ****************************************************************************/
-
-namespace subtile_fwd {
-constexpr uint32_t TILE = 16;
-constexpr uint32_t THREADS = TILE * TILE; // 8 warps
-
-// Subtiles whose pixel centres can see alpha >= 1/255: bounding box of
-// {d : 0.5 d^T Q d <= ln(255 * opacity) + err}. The renderer evaluates sigma in
-// float32, where cancellation between the quadratic terms can accept pixels the
-// exact ellipse excludes (far, anisotropic Gaussians), so `err` bounds that
-// rounding error over the tile: 16 * 2^-24 * (largest |term| sum at the tile's
-// corners). Ill-conditioned conics (det below 1e-4 * q00 * q11, where det loses
-// its accuracy), degenerate or nonfinite input reach every subtile.
-template <typename S>
-inline __device__ uint32_t subtile_mask(
-    const S x, const S y, const vec3<S> conic, const S opac, const S tile_x0,
-    const S tile_y0
-) {
-    if (!(opac * 255.f >= 1.f)) {
-        return isfinite(opac) ? 0u : 0xffu;
-    }
-    const S det = conic.x * conic.z - conic.y * conic.y;
-    if (!(det > 1e-4f * conic.x * conic.z) || !isfinite(det) || !isfinite(x) ||
-        !isfinite(y)) {
-        return 0xffu;
-    }
-    const S dx = fmaxf(fabsf(x - tile_x0), fabsf(x - tile_x0 - 16.f));
-    const S dy = fmaxf(fabsf(y - tile_y0), fabsf(y - tile_y0 - 16.f));
-    const S terms = 0.5f * (fabsf(conic.x) * dx * dx + fabsf(conic.z) * dy * dy) +
-                    fabsf(conic.y) * dx * dy;
-    const S tau = __logf(opac * 255.f) * 1.01f + 1e-3f + terms * 9.5367431640625e-7f;
-    const S half_x = sqrtf(2.f * tau * conic.z / det) + 0.05f;
-    const S half_y = sqrtf(2.f * tau * conic.x / det) + 0.05f;
-    if (!isfinite(half_x) || !isfinite(half_y)) {
-        return 0xffu;
-    }
-    uint32_t mask = 0u;
-    GSPLAT_PRAGMA_UNROLL
-    for (uint32_t w = 0; w < 8; ++w) {
-        const S x0 = tile_x0 + (w % 2) * 8.f;
-        const S y0 = tile_y0 + (w / 2) * 4.f;
-        const bool reach = x + half_x >= x0 + 0.5f && x - half_x <= x0 + 7.5f &&
-                           y + half_y >= y0 + 0.5f && y - half_y <= y0 + 3.5f;
-        mask |= reach ? (1u << w) : 0u;
-    }
-    return mask;
-}
-
-// Colour staging (PennyGS Sec. 3.4): for up to MAX_STAGE_DIM channels, the
-// thread that loads a batch entry also copies its colours to shared memory,
-// channel-major ([k][entry]) so the stores are conflict-free and a warp's reads
-// of one entry broadcast. The blend arithmetic is unchanged, so outputs stay
-// identical. Wider colours are read from global memory per hit: on water2
-// (RTX 4090) staging 8, 16 or 32 channels was slower on some views at 1280x720
-// or 3840x2160 (the staged batch costs occupancy), while 1-4 channels were
-// faster on every view (benchmarks/pennygs/subtile_staging.md).
-constexpr uint32_t MAX_STAGE_DIM = 4;
-} // namespace subtile_fwd
-
-template <uint32_t COLOR_DIM, typename S>
-__global__ void __launch_bounds__(subtile_fwd::THREADS)
-    rasterize_to_pixels_fwd_subtile_kernel(
-        const uint32_t C,
-        const uint32_t n_isects,
-        const vec2<S> *__restrict__ means2d,
-        const vec3<S> *__restrict__ conics,
-        const S *__restrict__ colors,
-        const S *__restrict__ opacities,
-        const S *__restrict__ backgrounds,
-        const bool *__restrict__ masks,
-        const uint32_t image_width,
-        const uint32_t image_height,
-        const uint32_t tile_width,
-        const uint32_t tile_height,
-        const int32_t *__restrict__ tile_offsets,
-        const int32_t *__restrict__ flatten_ids,
-        S *__restrict__ render_colors,
-        S *__restrict__ render_alphas,
-        int32_t *__restrict__ last_ids
-    ) {
-    using namespace subtile_fwd;
-    constexpr bool STAGED = COLOR_DIM <= MAX_STAGE_DIM;
-    auto block = cg::this_thread_block();
-    cg::thread_block_tile<32> warp = cg::tiled_partition<32>(block);
-    const int32_t camera_id = block.group_index().x;
-    const uint32_t tile_row = block.group_index().y;
-    const uint32_t tile_col = block.group_index().z;
-    const int32_t tile_id = tile_row * tile_width + tile_col;
-    const uint32_t tr = block.thread_rank();
-    const uint32_t warp_id = tr / 32;
-    const uint32_t lane = warp.thread_rank();
-    // this thread's pixel: lane of the warp's 8x4 subtile
-    const uint32_t i = tile_row * TILE + (warp_id / 2) * 4 + lane / 8;
-    const uint32_t j = tile_col * TILE + (warp_id % 2) * 8 + lane % 8;
-
-    tile_offsets += camera_id * tile_height * tile_width;
-    render_colors += camera_id * image_height * image_width * COLOR_DIM;
-    render_alphas += camera_id * image_height * image_width;
-    last_ids += camera_id * image_height * image_width;
-    if (backgrounds != nullptr) {
-        backgrounds += camera_id * COLOR_DIM;
-    }
-    if (masks != nullptr) {
-        masks += camera_id * tile_height * tile_width;
-    }
-
-    const S px = (S)j + 0.5f;
-    const S py = (S)i + 0.5f;
-    const int32_t pix_id = i * image_width + j;
-    const bool inside = (i < image_height && j < image_width);
-    bool done = !inside;
-
-    if (masks != nullptr && inside && !masks[tile_id]) {
-        for (uint32_t k = 0; k < COLOR_DIM; ++k) {
-            render_colors[pix_id * COLOR_DIM + k] =
-                backgrounds == nullptr ? 0.0f : backgrounds[k];
-        }
-        return;
-    }
-
-    const int32_t range_start = tile_offsets[tile_id];
-    const int32_t range_end =
-        (camera_id == C - 1) && (tile_id == tile_width * tile_height - 1)
-            ? n_isects
-            : tile_offsets[tile_id + 1];
-    const uint32_t num_batches = (range_end - range_start + THREADS - 1) / THREADS;
-
-    // with staged colours the Gaussian ids are not needed
-    __shared__ int32_t id_batch[STAGED ? 1 : THREADS];
-    __shared__ S color_batch[STAGED ? COLOR_DIM * THREADS : 1]; // [k][entry]
-    __shared__ vec3<S> xy_opacity_batch[THREADS];
-    __shared__ vec3<S> conic_batch[THREADS];
-    __shared__ uint8_t mask_batch[THREADS];
-    __shared__ uint16_t hits[8][THREADS]; // per-warp hit list of batch entries
-
-    const S tile_x0 = (S)(tile_col * TILE);
-    const S tile_y0 = (S)(tile_row * TILE);
-    S T = 1.0f;
-    uint32_t cur_idx = 0;
-    S pix_out[COLOR_DIM] = {0.f};
-    for (uint32_t b = 0; b < num_batches; ++b) {
-        if (__syncthreads_count(done) >= THREADS) {
-            break;
-        }
-        const uint32_t batch_start = range_start + THREADS * b;
-        const uint32_t idx = batch_start + tr;
-        if (idx < range_end) {
-            const int32_t g = flatten_ids[idx];
-            const vec2<S> xy = means2d[g];
-            const S opac = opacities[g];
-            const vec3<S> conic = conics[g];
-            xy_opacity_batch[tr] = {xy.x, xy.y, opac};
-            conic_batch[tr] = conic;
-            mask_batch[tr] =
-                (uint8_t)subtile_mask<S>(xy.x, xy.y, conic, opac, tile_x0, tile_y0);
-            if constexpr (STAGED) {
-                const S *c_ptr = colors + g * COLOR_DIM;
-                GSPLAT_PRAGMA_UNROLL
-                for (uint32_t k = 0; k < COLOR_DIM; ++k) {
-                    color_batch[k * THREADS + tr] = c_ptr[k];
-                }
-            } else {
-                id_batch[tr] = g;
-            }
-        }
-        block.sync();
-
-        // compact this warp's entries, keeping depth order
-        const uint32_t batch_size = min(THREADS, range_end - batch_start);
-        uint32_t n_hits = 0;
-        for (uint32_t base = 0; base < batch_size; base += 32) {
-            const uint32_t e = base + lane;
-            const bool hit = e < batch_size && ((mask_batch[e] >> warp_id) & 1u);
-            const uint32_t ballot = warp.ballot(hit);
-            if (hit) {
-                hits[warp_id][n_hits + __popc(ballot & ((1u << lane) - 1u))] = e;
-            }
-            n_hits += __popc(ballot);
-        }
-        warp.sync();
-
-        for (uint32_t h = 0; (h < n_hits) && !done; ++h) {
-            const uint32_t t = hits[warp_id][h];
-            const vec3<S> conic = conic_batch[t];
-            const vec3<S> xy_opac = xy_opacity_batch[t];
-            const S opac = xy_opac.z;
-            const vec2<S> delta = {xy_opac.x - px, xy_opac.y - py};
-            const S sigma = 0.5f * (conic.x * delta.x * delta.x +
-                                    conic.z * delta.y * delta.y) +
-                            conic.y * delta.x * delta.y;
-            S alpha = min(0.999f, opac * __expf(-sigma));
-            if (sigma < 0.f || alpha < 1.f / 255.f) {
-                continue;
-            }
-
-            const S next_T = T * (1.0f - alpha);
-            if (next_T <= 1e-4) { // this pixel is done: exclusive
-                done = true;
-                break;
-            }
-
-            const S vis = alpha * T;
-            if constexpr (STAGED) {
-                GSPLAT_PRAGMA_UNROLL
-                for (uint32_t k = 0; k < COLOR_DIM; ++k) {
-                    pix_out[k] += color_batch[k * THREADS + t] * vis;
-                }
-            } else {
-                const S *c_ptr = colors + id_batch[t] * COLOR_DIM;
-                GSPLAT_PRAGMA_UNROLL
-                for (uint32_t k = 0; k < COLOR_DIM; ++k) {
-                    pix_out[k] += c_ptr[k] * vis;
-                }
-            }
-            cur_idx = batch_start + t;
-
-            T = next_T;
-        }
-    }
-
-    if (inside) {
-        render_alphas[pix_id] = 1.0f - T;
-        GSPLAT_PRAGMA_UNROLL
-        for (uint32_t k = 0; k < COLOR_DIM; ++k) {
-            render_colors[pix_id * COLOR_DIM + k] =
-                backgrounds == nullptr ? pix_out[k]
-                                       : (pix_out[k] + T * backgrounds[k]);
-        }
-        last_ids[pix_id] = static_cast<int32_t>(cur_idx);
-    }
-}
-
 template <uint32_t CDIM>
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> call_kernel_with_dim(
     // Gaussian parameters
@@ -442,7 +197,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> call_kernel_with_dim(
     // intersections
     const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
     const torch::Tensor &flatten_ids,  // [n_isects]
-    const bool subtile_masks
+    const bool subtile
 ) {
     GSPLAT_DEVICE_GUARD(means2d);
     GSPLAT_CHECK_INPUT(means2d);
@@ -484,33 +239,24 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> call_kernel_with_dim(
     );
 
     at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
-    if (subtile_masks) {
-        TORCH_CHECK(
-            tile_size == subtile_fwd::TILE,
-            "subtile masks need tile_size 16, got ",
-            tile_size
+    if (subtile) {
+        launch_rasterize_to_pixels_fwd_subtile<CDIM>(
+            means2d,
+            conics,
+            colors,
+            opacities,
+            backgrounds,
+            masks,
+            image_width,
+            image_height,
+            tile_size,
+            tile_offsets,
+            flatten_ids,
+            renders,
+            alphas,
+            last_ids,
+            stream
         );
-        rasterize_to_pixels_fwd_subtile_kernel<CDIM, float>
-            <<<blocks, subtile_fwd::THREADS, 0, stream>>>(
-                C,
-                n_isects,
-                reinterpret_cast<vec2<float> *>(means2d.data_ptr<float>()),
-                reinterpret_cast<vec3<float> *>(conics.data_ptr<float>()),
-                colors.data_ptr<float>(),
-                opacities.data_ptr<float>(),
-                backgrounds.has_value() ? backgrounds.value().data_ptr<float>()
-                                        : nullptr,
-                masks.has_value() ? masks.value().data_ptr<bool>() : nullptr,
-                image_width,
-                image_height,
-                tile_width,
-                tile_height,
-                tile_offsets.data_ptr<int32_t>(),
-                flatten_ids.data_ptr<int32_t>(),
-                renders.data_ptr<float>(),
-                alphas.data_ptr<float>(),
-                last_ids.data_ptr<int32_t>()
-            );
         return std::make_tuple(renders, alphas, last_ids);
     }
     const uint32_t shared_mem =
@@ -575,7 +321,7 @@ rasterize_to_pixels_fwd_tensor(
     // intersections
     const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
     const torch::Tensor &flatten_ids,  // [n_isects]
-    const bool subtile_masks
+    const bool subtile
 ) {
     GSPLAT_CHECK_INPUT(colors);
     uint32_t channels = colors.size(-1);
@@ -594,7 +340,7 @@ rasterize_to_pixels_fwd_tensor(
             tile_size,                                                         \
             tile_offsets,                                                      \
             flatten_ids,                                                       \
-            subtile_masks                                                      \
+            subtile                                                      \
         );
 
     // TODO: an optimization can be done by passing the actual number of

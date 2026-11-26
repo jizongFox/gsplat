@@ -2,7 +2,7 @@
 
 PennyGS stages each batch's colours in shared memory next to the other batch
 parameters, so a hit reads its colour from shared memory instead of global
-memory. This adds it to the subtile forward kernel (`subtile_masks=True`) and
+memory. This adds it to the subtile forward kernel (`forward="subtile"`) and
 measures it for the colours an application actually passes as
 `override_color`: depth, RGB, RGB + depth, the parent application's training
 renderer (RGB + camera normal + expected depth, 7 channels padded to 8), and
@@ -18,7 +18,7 @@ wider feature renders.
 - **Only for 1-4 channels** (`subtile_fwd::MAX_STAGE_DIM = 4`, compile time).
   Wider colours are read from global memory per hit, as before; for 5 or more
   channels the kernel is unchanged (8 channels: 47 registers, 11.5 KB).
-- No new argument: it is part of `subtile_masks=True`.
+- No new argument: it is part of `forward="subtile"`.
 
 Cost of staging, per 256-thread block (from `cuobjdump`; no staging / staged):
 
