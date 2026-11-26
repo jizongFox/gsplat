@@ -2248,8 +2248,13 @@ def rasterize_to_pixels_2dgs(
     packed: bool = False,
     absgrad: bool = False,
     distloss: bool = False,
+    forward: Literal["pixel", "subtile"] = "pixel",
 ) -> Tuple[Tensor, Tensor]:
     """Rasterize Gaussians to pixels.
+
+    Pixels of masked-out tiles (``masks`` False) get the background color (0
+    without backgrounds) and the values of an empty pixel in every other output
+    (alpha, normal, distortion and median depth 0).
 
     Args:
         means2d: Projected Gaussian means. [C, N, 2] if packed is False, [nnz, 2] if packed is True.
@@ -2265,6 +2270,11 @@ def rasterize_to_pixels_2dgs(
         masks: Optional tile mask to skip rendering GS to masked tiles. [C, tile_height, tile_width]. Default: None.
         packed: If True, the input tensors are expected to be packed with shape [nnz, ...]. Default: False.
         absgrad: If True, the backward pass will compute a `.absgrad` attribute for `means2d`. Default: False.
+        forward: Forward kernel. "pixel" (default) is the per-pixel kernel.
+            "subtile" gives the same outputs and gradients; a warp visits only the
+            surfels that can reach its 8x4 part of the tile (the 2DGS counterpart
+            of `rasterize_to_pixels(forward="subtile")`, without its color
+            staging). It needs tile_size 16.
 
     Returns:
         A tuple:
@@ -2277,6 +2287,8 @@ def rasterize_to_pixels_2dgs(
 
 
     """
+    if forward not in ("pixel", "subtile"):
+        raise ValueError(f"Unknown forward kernel: {forward!r}")
     C = isect_offsets.size(0)
     device = means2d.device
     if packed:
@@ -2348,6 +2360,7 @@ def rasterize_to_pixels_2dgs(
         flatten_ids.contiguous(),
         absgrad,
         distloss,
+        forward == "subtile",
     )
 
     if padded_channels > 0:
@@ -2454,6 +2467,7 @@ class _RasterizeToPixels2DGS(torch.autograd.Function):
         flatten_ids: Tensor,
         absgrad: bool,
         distloss: bool,
+        subtile: bool,
     ) -> Tuple[Tensor, Tensor]:
         (
             render_colors,
@@ -2476,6 +2490,7 @@ class _RasterizeToPixels2DGS(torch.autograd.Function):
             tile_size,
             isect_offsets,
             flatten_ids,
+            subtile,
         )
 
         ctx.save_for_backward(
@@ -2591,6 +2606,7 @@ class _RasterizeToPixels2DGS(torch.autograd.Function):
             v_normals,
             v_densify,
             v_backgrounds,
+            None,
             None,
             None,
             None,

@@ -1061,6 +1061,7 @@ def rasterization_2dgs(
     distloss: bool = False,
     depth_mode: Literal["expected", "median"] = "expected",
     normals_coordinate: Literal["world", "camera"] = "world",
+    rasterize_forward: Literal["pixel", "subtile"] = "pixel",
 ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Dict]:
     """Rasterize a set of 2D Gaussians (N) to a batch of image planes (C).
 
@@ -1124,6 +1125,9 @@ def rasterization_2dgs(
         distloss: If true, use distortion regularization to get better geometry detail.
         depth_mode: render depth mode. Choose from expected depth and median depth.
         normals_coordinate: the coordinate system of the normals.
+        rasterize_forward: Forward kernel of the rasterizer, "pixel" (default) or
+            "subtile" (same outputs), see `rasterize_to_pixels_2dgs(forward=...)`.
+            "subtile" needs tile_size 16.
 
     Returns:
         A tuple:
@@ -1326,6 +1330,7 @@ def rasterization_2dgs(
         packed=packed,
         absgrad=absgrad,
         distloss=distloss,
+        forward=rasterize_forward,
     )
     render_normals_from_depth = None
     if render_mode in ["ED", "RGB+ED"]:
