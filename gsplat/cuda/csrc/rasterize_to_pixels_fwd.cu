@@ -1,6 +1,7 @@
 #include "bindings.h"
 #include "types.cuh"
 #include <cooperative_groups.h>
+#include <cstdlib>
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
 
@@ -241,9 +242,18 @@ inline __device__ uint32_t subtile_mask(
     }
     return mask;
 }
+
+// Colour staging (PennyGS Sec. 3.4): the thread that loads a batch entry also
+// copies its colours to shared memory, channel-major ([k][entry]) so the
+// stores are conflict-free and a warp's reads of one entry broadcast. The blend
+// arithmetic is unchanged, so outputs stay identical. Modes: 0 none (colours
+// read from global memory per hit), 1 every entry, 2 entries some warp hits.
+// A staged batch takes COLOR_DIM KB; 33 channels still fit the 48 KB static
+// limit next to the other buffers (11.25 KB).
+constexpr uint32_t MAX_STAGE_DIM = 33;
 } // namespace subtile_fwd
 
-template <uint32_t COLOR_DIM, typename S>
+template <uint32_t COLOR_DIM, typename S, uint32_t STAGE>
 __global__ void __launch_bounds__(subtile_fwd::THREADS)
     rasterize_to_pixels_fwd_subtile_kernel(
         const uint32_t C,
@@ -265,6 +275,8 @@ __global__ void __launch_bounds__(subtile_fwd::THREADS)
         int32_t *__restrict__ last_ids
     ) {
     using namespace subtile_fwd;
+    constexpr bool STAGED = STAGE != 0;
+    static_assert(STAGE <= 2 && (!STAGED || COLOR_DIM <= MAX_STAGE_DIM));
     auto block = cg::this_thread_block();
     cg::thread_block_tile<32> warp = cg::tiled_partition<32>(block);
     const int32_t camera_id = block.group_index().x;
@@ -310,7 +322,9 @@ __global__ void __launch_bounds__(subtile_fwd::THREADS)
             : tile_offsets[tile_id + 1];
     const uint32_t num_batches = (range_end - range_start + THREADS - 1) / THREADS;
 
-    __shared__ int32_t id_batch[THREADS];
+    // with staged colours the Gaussian ids are not needed
+    __shared__ int32_t id_batch[STAGED ? 1 : THREADS];
+    __shared__ S color_batch[STAGED ? COLOR_DIM * THREADS : 1]; // [k][entry]
     __shared__ vec3<S> xy_opacity_batch[THREADS];
     __shared__ vec3<S> conic_batch[THREADS];
     __shared__ uint8_t mask_batch[THREADS];
@@ -329,14 +343,25 @@ __global__ void __launch_bounds__(subtile_fwd::THREADS)
         const uint32_t idx = batch_start + tr;
         if (idx < range_end) {
             const int32_t g = flatten_ids[idx];
-            id_batch[tr] = g;
             const vec2<S> xy = means2d[g];
             const S opac = opacities[g];
             const vec3<S> conic = conics[g];
             xy_opacity_batch[tr] = {xy.x, xy.y, opac};
             conic_batch[tr] = conic;
-            mask_batch[tr] =
-                (uint8_t)subtile_mask<S>(xy.x, xy.y, conic, opac, tile_x0, tile_y0);
+            const uint32_t mask =
+                subtile_mask<S>(xy.x, xy.y, conic, opac, tile_x0, tile_y0);
+            mask_batch[tr] = (uint8_t)mask;
+            if constexpr (STAGED) {
+                if (STAGE == 1 || mask != 0u) {
+                    const S *c_ptr = colors + g * COLOR_DIM;
+                    GSPLAT_PRAGMA_UNROLL
+                    for (uint32_t k = 0; k < COLOR_DIM; ++k) {
+                        color_batch[k * THREADS + tr] = c_ptr[k];
+                    }
+                }
+            } else {
+                id_batch[tr] = g;
+            }
         }
         block.sync();
 
@@ -374,12 +399,18 @@ __global__ void __launch_bounds__(subtile_fwd::THREADS)
                 break;
             }
 
-            const int32_t g = id_batch[t];
             const S vis = alpha * T;
-            const S *c_ptr = colors + g * COLOR_DIM;
-            GSPLAT_PRAGMA_UNROLL
-            for (uint32_t k = 0; k < COLOR_DIM; ++k) {
-                pix_out[k] += c_ptr[k] * vis;
+            if constexpr (STAGED) {
+                GSPLAT_PRAGMA_UNROLL
+                for (uint32_t k = 0; k < COLOR_DIM; ++k) {
+                    pix_out[k] += color_batch[k * THREADS + t] * vis;
+                }
+            } else {
+                const S *c_ptr = colors + id_batch[t] * COLOR_DIM;
+                GSPLAT_PRAGMA_UNROLL
+                for (uint32_t k = 0; k < COLOR_DIM; ++k) {
+                    pix_out[k] += c_ptr[k] * vis;
+                }
             }
             cur_idx = batch_start + t;
 
@@ -463,8 +494,14 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> call_kernel_with_dim(
             "subtile masks need tile_size 16, got ",
             tile_size
         );
-        rasterize_to_pixels_fwd_subtile_kernel<CDIM, float>
-            <<<blocks, subtile_fwd::THREADS, 0, stream>>>(
+        // EXPERIMENT: GSPLAT_SUBTILE_COLOR_STAGE=0/1/2 picks the colour staging
+        // mode (benchmark only; default 0).
+        uint32_t stage = 0;
+        if (const char *env = std::getenv("GSPLAT_SUBTILE_COLOR_STAGE")) {
+            stage = static_cast<uint32_t>(std::atoi(env));
+        }
+        auto launch = [&](auto kernel) {
+            kernel<<<blocks, subtile_fwd::THREADS, 0, stream>>>(
                 C,
                 n_isects,
                 reinterpret_cast<vec2<float> *>(means2d.data_ptr<float>()),
@@ -484,6 +521,18 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> call_kernel_with_dim(
                 alphas.data_ptr<float>(),
                 last_ids.data_ptr<int32_t>()
             );
+        };
+        if constexpr (CDIM <= subtile_fwd::MAX_STAGE_DIM) {
+            if (stage == 1) {
+                launch(rasterize_to_pixels_fwd_subtile_kernel<CDIM, float, 1>);
+                return std::make_tuple(renders, alphas, last_ids);
+            }
+            if (stage == 2) {
+                launch(rasterize_to_pixels_fwd_subtile_kernel<CDIM, float, 2>);
+                return std::make_tuple(renders, alphas, last_ids);
+            }
+        }
+        launch(rasterize_to_pixels_fwd_subtile_kernel<CDIM, float, 0>);
         return std::make_tuple(renders, alphas, last_ids);
     }
     const uint32_t shared_mem =

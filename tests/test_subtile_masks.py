@@ -129,6 +129,20 @@ def test_subtile_forward_packed_masked_and_stressed():
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
+@pytest.mark.parametrize("stage", ["0", "1", "2"])
+@pytest.mark.parametrize("channels", [1, 3, 4, 7, 8, 16, 32, 33, 64])
+def test_subtile_colour_staging_is_identical(channels, stage, monkeypatch):
+    # staged colours (up to 33 channels; wider ones fall back to global reads)
+    monkeypatch.setenv("GSPLAT_SUBTILE_COLOR_STAGE", stage)
+    _assert_identical(_scene(channels, width=250, height=170))
+    if channels == 7:
+        _assert_identical(_scene(7, packed=True))
+        scene = _scene(7, stress=True)
+        masks = torch.rand(scene["offsets"].shape, device=device) > 0.3
+        _assert_identical(scene, masks)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
 def test_subtile_forward_needs_tile_16():
     from gsplat.cuda._wrapper import (
         fully_fused_projection,
