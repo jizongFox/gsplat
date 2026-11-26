@@ -371,6 +371,7 @@ def isect_tiles(
     compact_box_tau2: Optional[float] = None,
     compact_box_impl: Literal["rect_min", "sweep"] = "sweep",
     ray_transforms: Optional[Tensor] = None,
+    short_keys: bool = False,
 ) -> Tuple[Tensor, Tensor, Tensor]:
     """Maps projected Gaussians to intersecting tiles.
 
@@ -403,6 +404,12 @@ def isect_tiles(
         compact_box_impl: Compact Box implementation. "rect_min" uses
             per-tile rectangle minimum testing, "sweep" uses a slice-based
             span traversal. Default: "sweep".
+        short_keys: If True, sort 32-bit keys (PennyGS, arXiv 2611.27525 Sec. 3.3):
+            camera_id | tile_id | the top (32 - Xc - Xt) bits of the depth's float
+            bits without its sign, so depths within a relative 2^-(24 - Xc - Xt) of
+            each other keep their input order instead of depth order.
+            The intersection ids are then Int32 bit patterns of these keys, which
+            `isect_offset_encode` accepts. Default: False.
 
     Returns:
         A tuple:
@@ -494,6 +501,7 @@ def isect_tiles(
         compact_box_use_sweep,
         sort,
         True,  # DoubleBuffer: memory efficient radixsort
+        short_keys,
     )
     return tiles_per_gauss, isect_ids, flatten_ids
 

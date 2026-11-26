@@ -1,0 +1,182 @@
+{
+ "gsplat": "/home/jizong/workspace/dConstruct/gaussian-splatting/.worktrees/gsplat-pennygs/gsplat",
+ "device": "NVIDIA GeForce RTX 4090",
+ "gaussians": 2909851,
+ "scope": "render",
+ "views": [
+  {
+   "view": 0,
+   "image": "DECXIN20230102350/00000008",
+   "median_ms": {
+    "default": {
+     "forward": 5.430272102355957,
+     "backward": 10.822080135345459,
+     "total": 16.25697612762451
+    },
+    "short_keys": {
+     "forward": 5.4276158809661865,
+     "backward": 10.76585578918457,
+     "total": 16.176640033721924
+    }
+   },
+   "checks": {
+    "short_keys": {
+     "rgb_psnr_vs_default": 52.29261016907223,
+     "image_max_abs": 0.19157660007476807,
+     "gradient_rel_l2": {
+      "means": 0.07732594881271068,
+      "quats": 0.05303700236401821,
+      "log_scales": 0.059329552207505215,
+      "opacity_logits": 0.028317205694813923,
+      "dc": 0.10340477848417755
+     }
+    }
+   }
+  },
+  {
+   "view": 250,
+   "image": "DECXIN20230102350/00001179",
+   "median_ms": {
+    "default": {
+     "forward": 9.889232158660889,
+     "backward": 16.623279571533203,
+     "total": 26.488656044006348
+    },
+    "short_keys": {
+     "forward": 9.411471843719482,
+     "backward": 16.623104095458984,
+     "total": 26.07360029220581
+    }
+   },
+   "checks": {
+    "short_keys": {
+     "rgb_psnr_vs_default": 53.536736298562744,
+     "image_max_abs": 0.18935996294021606,
+     "gradient_rel_l2": {
+      "means": 0.08951359937461749,
+      "quats": 0.06047721958976148,
+      "log_scales": 0.07437459611286773,
+      "opacity_logits": 0.053726360360447686,
+      "dc": 0.10938316291977565
+     }
+    }
+   }
+  },
+  {
+   "view": 500,
+   "image": "DECXIN2023012346/00000865",
+   "median_ms": {
+    "default": {
+     "forward": 5.521104097366333,
+     "backward": 10.883488178253174,
+     "total": 16.419840097427368
+    },
+    "short_keys": {
+     "forward": 5.472192049026489,
+     "backward": 10.886720180511475,
+     "total": 16.36857581138611
+    }
+   },
+   "checks": {
+    "short_keys": {
+     "rgb_psnr_vs_default": 47.401769099530156,
+     "image_max_abs": 0.2689695954322815,
+     "gradient_rel_l2": {
+      "means": 0.1320902917889346,
+      "quats": 0.07579784435893712,
+      "log_scales": 0.10357697522076786,
+      "opacity_logits": 0.0785256086326735,
+      "dc": 0.11813868117260415
+     }
+    }
+   }
+  },
+  {
+   "view": 750,
+   "image": "DECXIN2023012347/00000637",
+   "median_ms": {
+    "default": {
+     "forward": 6.158240079879761,
+     "backward": 11.852752208709717,
+     "total": 17.954336166381836
+    },
+    "short_keys": {
+     "forward": 6.081632137298584,
+     "backward": 11.852752208709717,
+     "total": 17.888000011444092
+    }
+   },
+   "checks": {
+    "short_keys": {
+     "rgb_psnr_vs_default": 50.153757393787366,
+     "image_max_abs": 0.2319072186946869,
+     "gradient_rel_l2": {
+      "means": 0.10098211581939678,
+      "quats": 0.0894609384783589,
+      "log_scales": 0.08414313626776114,
+      "opacity_logits": 0.06101059994386143,
+      "dc": 0.09977375080069839
+     }
+    }
+   }
+  },
+  {
+   "view": 1000,
+   "image": "DECXIN2023012348/00000409",
+   "median_ms": {
+    "default": {
+     "forward": 5.371312141418457,
+     "backward": 10.744368076324463,
+     "total": 16.128032207489014
+    },
+    "short_keys": {
+     "forward": 5.334959983825684,
+     "backward": 10.706287860870361,
+     "total": 16.078991889953613
+    }
+   },
+   "checks": {
+    "short_keys": {
+     "rgb_psnr_vs_default": 59.115900027038265,
+     "image_max_abs": 0.1618431806564331,
+     "gradient_rel_l2": {
+      "means": 0.09861967799200716,
+      "quats": 0.06750455414601828,
+      "log_scales": 0.09176615840615969,
+      "opacity_logits": 0.045600258787014826,
+      "dc": 0.10083243069090013
+     }
+    }
+   }
+  },
+  {
+   "view": 1250,
+   "image": "DECXIN20230102350/00000859",
+   "median_ms": {
+    "default": {
+     "forward": 5.249744176864624,
+     "backward": 10.538336277008057,
+     "total": 15.813119888305664
+    },
+    "short_keys": {
+     "forward": 5.21560001373291,
+     "backward": 10.541104316711426,
+     "total": 15.774096012115479
+    }
+   },
+   "checks": {
+    "short_keys": {
+     "rgb_psnr_vs_default": 51.67094628312567,
+     "image_max_abs": 0.16882562637329102,
+     "gradient_rel_l2": {
+      "means": 0.08387547703732466,
+      "quats": 0.07044810662160383,
+      "log_scales": 0.08098411987590931,
+      "opacity_logits": 0.062264373422658004,
+      "dc": 0.15993740514632418
+     }
+    }
+   }
+  }
+ ]
+}
