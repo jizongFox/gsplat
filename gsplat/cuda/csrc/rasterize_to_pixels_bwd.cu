@@ -415,9 +415,13 @@ inline __device__ uint32_t pixel_of(uint32_t chunk, uint32_t lane) {
     return y * TILE + x;
 }
 
-// Chunks whose pixel centres can see alpha >= 1/255 from this Gaussian. Bounding
-// box of {d : 0.5 d^T Q d <= ln(255 * opacity)} with a margin; any degenerate or
-// nonfinite input reaches every chunk, so culling never drops a valid pixel.
+// Chunks whose pixel centres can see alpha >= 1/255: bounding box of
+// {d : 0.5 d^T Q d <= ln(255 * opacity) + err}. The renderer evaluates sigma in
+// float32, where cancellation can accept pixels the exact ellipse excludes (far,
+// anisotropic Gaussians), so `err` bounds that rounding error over the tile:
+// 16 * 2^-24 * (largest |term| sum at the tile's corners). Ill-conditioned
+// conics (det below 1e-4 * q00 * q11), degenerate or nonfinite input reach every
+// chunk, so culling never drops a pixel the per-pixel kernel would use.
 template <typename S>
 inline __device__ uint32_t chunk_mask(
     const vec2<S> xy, const vec3<S> conic, const S opac, const S tile_x0,
@@ -426,11 +430,16 @@ inline __device__ uint32_t chunk_mask(
     if (!(opac * 255.f >= 1.f)) {
         return isfinite(opac) ? 0u : 0xffu;
     }
-    const S tau = __logf(opac * 255.f) * 1.01f + 1e-3f;
     const S det = conic.x * conic.z - conic.y * conic.y;
-    if (!(det > 0.f) || !isfinite(det) || !isfinite(xy.x) || !isfinite(xy.y)) {
+    if (!(det > 1e-4f * conic.x * conic.z) || !isfinite(det) || !isfinite(xy.x) ||
+        !isfinite(xy.y)) {
         return 0xffu;
     }
+    const S dx = fmaxf(fabsf(xy.x - tile_x0), fabsf(xy.x - tile_x0 - (S)TILE));
+    const S dy = fmaxf(fabsf(xy.y - tile_y0), fabsf(xy.y - tile_y0 - (S)TILE));
+    const S terms = 0.5f * (fabsf(conic.x) * dx * dx + fabsf(conic.z) * dy * dy) +
+                    fabsf(conic.y) * dx * dy;
+    const S tau = __logf(opac * 255.f) * 1.01f + 1e-3f + terms * 9.5367431640625e-7f;
     const S half_x = sqrtf(2.f * tau * conic.z / det) + 0.05f;
     const S half_y = sqrtf(2.f * tau * conic.x / det) + 0.05f;
     if (!isfinite(half_x) || !isfinite(half_y)) {

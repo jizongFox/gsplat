@@ -64,8 +64,10 @@ Gaussian enters a chunk when every earlier Gaussian walking that chunk has left
 Gaussian's gradient is reduced once per tile (one set of atomics per Gaussian
 and tile instead of per warp). Variants: `chunk` (standard arithmetic),
 `chunk_lean` (scalar behind-colour state), `chunk_cull` (a Gaussian walks and
-waits only for chunks its alpha >= 1/255 ellipse can reach, conservative
-bounding-box test; degenerate or nonfinite input walks every chunk) and
+waits only for chunks its alpha >= 1/255 ellipse can reach: a conservative
+bounding-box test whose threshold includes a bound on the float32 rounding of
+the renderer's sigma over the tile; ill-conditioned, degenerate or nonfinite
+conics walk every chunk) and
 `chunk_lean_cull` (both, the paper's full design). Tile size 16 and at most 8
 padded channels.
 
@@ -107,7 +109,7 @@ Why it loses here (resource usage from `cuobjdump --dump-resource-usage`, 8 chan
   (`measurements/chunk_tuning_attempt_raster.json`); it is not in this branch.
 
 Sanitizers: memcheck and synccheck 0 errors over `tests/test_backward_variants.py`
-(32 cases). racecheck reports potential hazards on the shared pixel state
+(34 cases). racecheck reports potential hazards on the shared pixel state
 `s_T`/`s_buf`: that is the intended cross-warp handoff, ordered by the
 acquire/release counter, which racecheck does not model (it tracks barriers
 only). Every variant still matches the per-pixel gradients under the
