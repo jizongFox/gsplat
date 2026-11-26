@@ -1,0 +1,85 @@
+{
+ "gsplat": "/home/jizong/workspace/dConstruct/gaussian-splatting/.worktrees/gsplat-fused/gsplat",
+ "device": "NVIDIA GeForce RTX 4090",
+ "gaussians": 2909851,
+ "views": [
+  {
+   "view": 0,
+   "image": "DECXIN20230102350/00000008",
+   "visible": 260011,
+   "median_ms": {
+    "proj_bwd+adam": 2.1707839965820312,
+    "proj_bwd+selective_adam": 0.808815985918045,
+    "fused_fp32": 0.6133760213851929,
+    "fused_bf16": 0.44123201072216034
+   },
+   "update_rel_l2_fused_fp32_vs_selective_adam": 4.3728200580517296e-06,
+   "update_rel_l2_fused_bf16_vs_fused_fp32": 0.0015397999668493867
+  },
+  {
+   "view": 250,
+   "image": "DECXIN20230102350/00001179",
+   "visible": 2527193,
+   "median_ms": {
+    "proj_bwd+adam": 2.470911979675293,
+    "proj_bwd+selective_adam": 1.7177280187606812,
+    "fused_fp32": 0.9819680154323578,
+    "fused_bf16": 0.7147520184516907
+   },
+   "update_rel_l2_fused_fp32_vs_selective_adam": 0.0005960618727840483,
+   "update_rel_l2_fused_bf16_vs_fused_fp32": 0.00153234857134521
+  },
+  {
+   "view": 500,
+   "image": "DECXIN2023012346/00000865",
+   "visible": 320001,
+   "median_ms": {
+    "proj_bwd+adam": 2.151423931121826,
+    "proj_bwd+selective_adam": 0.8800479769706726,
+    "fused_fp32": 0.7157760262489319,
+    "fused_bf16": 0.5041119754314423
+   },
+   "update_rel_l2_fused_fp32_vs_selective_adam": 0.00012660594074986875,
+   "update_rel_l2_fused_bf16_vs_fused_fp32": 0.0015220347559079528
+  },
+  {
+   "view": 750,
+   "image": "DECXIN2023012347/00000637",
+   "visible": 689503,
+   "median_ms": {
+    "proj_bwd+adam": 2.231648087501526,
+    "proj_bwd+selective_adam": 1.1117600202560425,
+    "fused_fp32": 1.0026400089263916,
+    "fused_bf16": 0.6492159962654114
+   },
+   "update_rel_l2_fused_fp32_vs_selective_adam": 0.0015765995485708117,
+   "update_rel_l2_fused_bf16_vs_fused_fp32": 0.0014804541133344173
+  },
+  {
+   "view": 1000,
+   "image": "DECXIN2023012348/00000409",
+   "visible": 145831,
+   "median_ms": {
+    "proj_bwd+adam": 2.0986080169677734,
+    "proj_bwd+selective_adam": 0.6755039989948273,
+    "fused_fp32": 0.4156000018119812,
+    "fused_bf16": 0.30852800607681274
+   },
+   "update_rel_l2_fused_fp32_vs_selective_adam": 3.571429715520935e-06,
+   "update_rel_l2_fused_bf16_vs_fused_fp32": 0.001538111362606287
+  },
+  {
+   "view": 1250,
+   "image": "DECXIN20230102350/00000859",
+   "visible": 146389,
+   "median_ms": {
+    "proj_bwd+adam": 2.089743971824646,
+    "proj_bwd+selective_adam": 0.6666240096092224,
+    "fused_fp32": 0.40857601165771484,
+    "fused_bf16": 0.3051519989967346
+   },
+   "update_rel_l2_fused_fp32_vs_selective_adam": 4.076144250575453e-06,
+   "update_rel_l2_fused_bf16_vs_fused_fp32": 0.0014871970051899552
+  }
+ ]
+}

@@ -510,6 +510,35 @@ void selective_adam_update(
     const uint32_t N,
     const uint32_t M);
 
+// Fused projection backward + sparse Adam, one pinhole camera
+// (PennyGS, arXiv 2611.27525 Sec. 3.7); see fused_projection_adam.cu.
+void fused_projection_adam_tensor(
+    torch::Tensor &means,
+    torch::Tensor &quats,
+    torch::Tensor &log_scales,
+    const torch::Tensor &viewmat,
+    const torch::Tensor &K,
+    const uint32_t image_width,
+    const uint32_t image_height,
+    const torch::Tensor &radii,
+    const torch::Tensor &conics,
+    const torch::Tensor &v_means2d,
+    const torch::Tensor &v_depths,
+    const torch::Tensor &v_conics,
+    torch::Tensor &means_m,
+    torch::Tensor &means_v,
+    torch::Tensor &quats_m,
+    torch::Tensor &quats_v,
+    torch::Tensor &scales_m,
+    torch::Tensor &scales_v,
+    const float lr_means,
+    const float lr_quats,
+    const float lr_scales,
+    const float b1,
+    const float b2,
+    const float eps
+);
+
 } // namespace gsplat
 
 #endif // GSPLAT_CUDA_BINDINGS_H
