@@ -1,6 +1,8 @@
 #include "bindings.h"
 #include "types.cuh"
 #include "2dgs.cuh"
+#include "raster_alpha_2dgs.cuh"
+#include "rasterize_to_pixels_2dgs_fwd_subtile.cuh"
 #include <cooperative_groups.h>
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
@@ -95,12 +97,14 @@ __global__ void rasterize_to_pixels_fwd_2dgs_kernel(
     bool done = !inside;
 
     // when the mask is provided, render the background color and return
-    // if this tile is labeled as False
+    // if this tile is labeled as False: no surfel is blended, so the other
+    // outputs take the values of an empty pixel (they are allocated
+    // uninitialized)
     if (masks != nullptr && inside && !masks[tile_id]) {
-        for (uint32_t k = 0; k < COLOR_DIM; ++k) {
-            render_colors[pix_id * COLOR_DIM + k] =
-                backgrounds == nullptr ? 0.0f : backgrounds[k];
-        }
+        write_empty_surfel_pixel<COLOR_DIM, S>(
+            pix_id, backgrounds, render_colors, render_alphas, render_normals,
+            render_distort, render_median, last_ids, median_ids
+        );
         return;
     }
 
@@ -262,86 +266,29 @@ __global__ void rasterize_to_pixels_fwd_2dgs_kernel(
         uint32_t batch_size = min(block_size, range_end - batch_start);
         for (uint32_t t = 0; (t < batch_size) && !done; ++t) {
 
-            const vec3<S> xy_opac = xy_opacity_batch[t];
-            const S opac = xy_opac.z;
-
-            const vec3<S> u_M = u_Ms_batch[t];
-            const vec3<S> v_M = v_Ms_batch[t];
-            const vec3<S> w_M = w_Ms_batch[t];
-
-            // h_u and h_v are the homogeneous plane representations (they are contravariant to the points on the primitive plane)
-            const vec3<S> h_u = px * w_M - u_M;
-            const vec3<S> h_v = py * w_M - v_M;
-
-            const vec3<S> ray_cross = glm::cross(h_u, h_v);
-            if (ray_cross.z == 0.0)
-                continue;
-
-            const vec2<S> s = vec2<S>(ray_cross.x / ray_cross.z, ray_cross.y / ray_cross.z);
-
-            // IMPORTANT: This is where the gaussian kernel is evaluated!!!!!
-
-            // point of interseciton in uv space
-            const S gauss_weight_3d = s.x * s.x + s.y * s.y;
-            
-            // projected gaussian kernel
-            const vec2<S> d = {xy_opac.x - px, xy_opac.y - py};
-            // #define FILTER_INV_SQUARE 2.0f
-            const S gauss_weight_2d = FILTER_INV_SQUARE * (d.x * d.x + d.y * d.y);
-            
-            // merge ray-intersection kernel and 2d gaussian kernel
-            const S gauss_weight = min(gauss_weight_3d, gauss_weight_2d);
-
-
-            const S sigma = 0.5f * gauss_weight;
-            // evaluation of the gaussian exponential term
-            S alpha = min(0.999f, opac * __expf(-sigma));
-
-            // ignore transparent gaussians
-            if (sigma < 0.f || alpha < 1.f / 255.f) {
+            // the per-pixel weight and alpha (raster_alpha_2dgs.cuh): smaller of
+            // the ray-splat intersection and the screen-space low-pass
+            S alpha;
+            if (!surfel_alpha<S>(
+                    xy_opacity_batch[t], u_Ms_batch[t], v_Ms_batch[t],
+                    w_Ms_batch[t], px, py, alpha
+                )) {
                 continue;
             }
 
-            const S next_T = T * (1.0f - alpha);
-            if (next_T <= 1e-4) { // this pixel is done: exclusive
+            const S next_T = surfel_next_T(T, alpha);
+            if (next_T <= TRANSMITTANCE_THRESHOLD) { // this pixel is done: exclusive
                 done = true;
                 break;
             }
 
-            // run volumetric rendering..
-            int32_t g = id_batch[t];
-            const S vis = alpha * T;
-            const S *c_ptr = colors + g * COLOR_DIM;
-            GSPLAT_PRAGMA_UNROLL
-            for (uint32_t k = 0; k < COLOR_DIM; ++k) {
-                pix_out[k] += c_ptr[k] * vis;
-            }
-
-            const S *n_ptr = normals + g * 3;
-            GSPLAT_PRAGMA_UNROLL
-            for (uint32_t k = 0; k < 3; ++k) {
-                normal_out[k] += n_ptr[k] * vis;
-            }
-
-            if (render_distort != nullptr) {
-                // the last channel of colors is depth
-                const S depth = c_ptr[COLOR_DIM - 1];
-                // in nerfacc, loss_bi_0 = weights * t_mids *
-                // exclusive_sum(weights)
-                const S distort_bi_0 = vis * depth * (1.0f - T);
-                // in nerfacc, loss_bi_1 = weights * exclusive_sum(weights *
-                // t_mids)
-                const S distort_bi_1 = vis * accum_vis_depth;
-                distort += 2.0f * (distort_bi_0 - distort_bi_1);
-                accum_vis_depth += vis * depth;
-            }
-
-            // compute median depth
-            if (T > 0.5) {
-                median_depth = c_ptr[COLOR_DIM - 1];
-                median_idx = batch_start + t;
-            }
-
+            // volumetric rendering: colours, normals, distortion, median depth
+            const int32_t g = id_batch[t];
+            surfel_blend<COLOR_DIM, S>(
+                alpha, T, colors + g * COLOR_DIM, normals + g * 3, pix_out,
+                normal_out, render_distort != nullptr, distort, accum_vis_depth,
+                median_depth, median_idx, batch_start + t
+            );
             cur_idx = batch_start + t;
 
             T = next_T;
@@ -358,7 +305,7 @@ __global__ void rasterize_to_pixels_fwd_2dgs_kernel(
         for (uint32_t k = 0; k < COLOR_DIM; ++k) {
             render_colors[pix_id * COLOR_DIM + k] =
                 backgrounds == nullptr ? pix_out[k]
-                                       : (pix_out[k] + T * backgrounds[k]);
+                                       : __fmaf_rn(T, backgrounds[k], pix_out[k]);
         }
         GSPLAT_PRAGMA_UNROLL
         for (uint32_t k = 0; k < 3; ++k) {
@@ -401,7 +348,8 @@ call_kernel_with_dim(
     const uint32_t tile_size,
     // intersections
     const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
-    const torch::Tensor &flatten_ids   // [n_isects]
+    const torch::Tensor &flatten_ids,  // [n_isects]
+    const bool subtile
 ) {
     GSPLAT_DEVICE_GUARD(means2d);
     GSPLAT_CHECK_INPUT(means2d);
@@ -461,6 +409,39 @@ call_kernel_with_dim(
     );
 
     at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
+    if (subtile) {
+        launch_rasterize_to_pixels_fwd_2dgs_subtile<CDIM>(
+            means2d,
+            ray_transforms,
+            colors,
+            opacities,
+            normals,
+            backgrounds,
+            masks,
+            image_width,
+            image_height,
+            tile_size,
+            tile_offsets,
+            flatten_ids,
+            renders,
+            alphas,
+            render_normals,
+            render_distort,
+            render_median,
+            last_ids,
+            median_ids,
+            stream
+        );
+        return std::make_tuple(
+            renders,
+            alphas,
+            render_normals,
+            render_distort,
+            render_median,
+            last_ids,
+            median_ids
+        );
+    }
     const uint32_t shared_mem =
         tile_size * tile_size *
         (sizeof(int32_t) + sizeof(vec3<float>) + sizeof(vec3<float>) +
@@ -544,7 +525,8 @@ rasterize_to_pixels_fwd_2dgs_tensor(
     const uint32_t tile_size,
     // intersections
     const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
-    const torch::Tensor &flatten_ids   // [n_isects]
+    const torch::Tensor &flatten_ids,  // [n_isects]
+    const bool subtile
 ) {
     GSPLAT_CHECK_INPUT(colors);
     uint32_t channels = colors.size(-1);
@@ -563,7 +545,8 @@ rasterize_to_pixels_fwd_2dgs_tensor(
             image_height,                                                      \
             tile_size,                                                         \
             tile_offsets,                                                      \
-            flatten_ids                                                        \
+            flatten_ids,                                                       \
+            subtile                                                            \
         );
     // TODO: an optimization can be done by passing the actual number of
     // channels into the kernel functions and avoid necessary global memory
