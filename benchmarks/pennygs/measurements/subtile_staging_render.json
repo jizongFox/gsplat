@@ -1,0 +1,814 @@
+{
+ "gsplat": "/home/jizong/workspace/dConstruct/gaussian-splatting/.worktrees/gsplat-subtile-staging/gsplat",
+ "device": "NVIDIA GeForce RTX 4090",
+ "gaussians": 2909851,
+ "scope": "render",
+ "warmup": 20,
+ "repeats": 80,
+ "cases": [
+  {
+   "view": 0,
+   "scale": 1,
+   "size": [
+    1280,
+    720
+   ],
+   "channels": 8,
+   "median_ms": {
+    "default": {
+     "forward": 5.453135967254639,
+     "backward": 10.691056251525879,
+     "total": 16.154320001602173
+    },
+    "subtile": {
+     "forward": 5.36300802230835,
+     "backward": 10.703360080718994,
+     "total": 16.073328018188477
+    },
+    "stage_all": {
+     "forward": 5.3713438510894775,
+     "backward": 10.680831909179688,
+     "total": 16.075151681900024
+    },
+    "stage_hit": {
+     "forward": 5.359824180603027,
+     "backward": 10.67622423171997,
+     "total": 16.048960208892822
+    }
+   },
+   "checks": {
+    "subtile": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 1.0316024253675605e-07,
+      "quats": 4.7205043015007335e-07,
+      "log_scales": 2.3502647710571182e-07,
+      "opacity_logits": 1.4516219745345148e-07,
+      "dc": 1.059813006620646e-07
+     }
+    },
+    "stage_all": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 9.325210152328118e-08,
+      "quats": 5.464022171331964e-07,
+      "log_scales": 2.462763632883054e-07,
+      "opacity_logits": 1.6845941543321236e-07,
+      "dc": 1.0626312087662371e-07
+     }
+    },
+    "stage_hit": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 1.0039006742685621e-07,
+      "quats": 5.326235611413184e-07,
+      "log_scales": 2.602246297102267e-07,
+      "opacity_logits": 1.302081850443164e-07,
+      "dc": 1.0724266986069909e-07
+     }
+    }
+   },
+   "gpu_guard": {
+    "attempts": 1,
+    "contended": false
+   }
+  },
+  {
+   "view": 0,
+   "scale": 3,
+   "size": [
+    3840,
+    2160
+   ],
+   "channels": 8,
+   "median_ms": {
+    "default": {
+     "forward": 13.671472072601318,
+     "backward": 21.76563262939453,
+     "total": 35.3515682220459
+    },
+    "subtile": {
+     "forward": 13.515456199645996,
+     "backward": 21.739216804504395,
+     "total": 35.116543769836426
+    },
+    "stage_all": {
+     "forward": 13.508095741271973,
+     "backward": 21.777088165283203,
+     "total": 35.19387197494507
+    },
+    "stage_hit": {
+     "forward": 13.51145601272583,
+     "backward": 21.766143798828125,
+     "total": 35.11822319030762
+    }
+   },
+   "checks": {
+    "subtile": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 1.9610690646638574e-07,
+      "quats": 1.3233318391537006e-05,
+      "log_scales": 6.897756048211753e-07,
+      "opacity_logits": 3.0313699440874036e-07,
+      "dc": 2.160012741851504e-07
+     }
+    },
+    "stage_all": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 1.6876164405662086e-07,
+      "quats": 6.106932110556863e-06,
+      "log_scales": 7.397604965098408e-07,
+      "opacity_logits": 2.5595373582566427e-07,
+      "dc": 2.1378323938342563e-07
+     }
+    },
+    "stage_hit": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 1.8731469505138265e-07,
+      "quats": 1.30888162132929e-05,
+      "log_scales": 7.945241034653447e-07,
+      "opacity_logits": 3.0776939883364966e-07,
+      "dc": 2.1329266885355252e-07
+     }
+    }
+   },
+   "gpu_guard": {
+    "attempts": 1,
+    "contended": false
+   }
+  },
+  {
+   "view": 250,
+   "scale": 1,
+   "size": [
+    1280,
+    720
+   ],
+   "channels": 8,
+   "median_ms": {
+    "default": {
+     "forward": 9.905680179595947,
+     "backward": 16.608256340026855,
+     "total": 26.530400276184082
+    },
+    "subtile": {
+     "forward": 8.784704208374023,
+     "backward": 16.750144004821777,
+     "total": 25.471744060516357
+    },
+    "stage_all": {
+     "forward": 8.55948781967163,
+     "backward": 16.61849594116211,
+     "total": 25.21436834335327
+    },
+    "stage_hit": {
+     "forward": 8.55072021484375,
+     "backward": 16.61180877685547,
+     "total": 25.177616119384766
+    }
+   },
+   "checks": {
+    "subtile": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 7.688357747029702e-08,
+      "quats": 3.140701352772932e-06,
+      "log_scales": 6.165437570252455e-07,
+      "opacity_logits": 8.089748168872073e-08,
+      "dc": 9.855132975737341e-08
+     }
+    },
+    "stage_all": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 6.919284250884068e-08,
+      "quats": 1.587740847794725e-06,
+      "log_scales": 4.816894738317456e-07,
+      "opacity_logits": 9.242494521007645e-08,
+      "dc": 9.854546972685223e-08
+     }
+    },
+    "stage_hit": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 7.424335091135091e-08,
+      "quats": 2.3452892568050517e-06,
+      "log_scales": 7.222352365837468e-07,
+      "opacity_logits": 7.95285361620144e-08,
+      "dc": 9.898048175303154e-08
+     }
+    }
+   },
+   "gpu_guard": {
+    "attempts": 1,
+    "contended": false
+   }
+  },
+  {
+   "view": 250,
+   "scale": 3,
+   "size": [
+    3840,
+    2160
+   ],
+   "channels": 8,
+   "median_ms": {
+    "default": {
+     "forward": 16.472512245178223,
+     "backward": 24.743935585021973,
+     "total": 41.221120834350586
+    },
+    "subtile": {
+     "forward": 16.027520179748535,
+     "backward": 24.774656295776367,
+     "total": 40.80329608917236
+    },
+    "stage_all": {
+     "forward": 16.12382411956787,
+     "backward": 24.785216331481934,
+     "total": 40.906879901885986
+    },
+    "stage_hit": {
+     "forward": 16.1321439743042,
+     "backward": 24.776704788208008,
+     "total": 40.924912452697754
+    }
+   },
+   "checks": {
+    "subtile": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 2.486909193167688e-07,
+      "quats": 1.6889566820967008e-05,
+      "log_scales": 3.0591109667387917e-06,
+      "opacity_logits": 2.376729590985787e-07,
+      "dc": 1.9903562529202297e-07
+     }
+    },
+    "stage_all": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 2.824337447677108e-07,
+      "quats": 2.4931857134683768e-05,
+      "log_scales": 1.5557232895705788e-06,
+      "opacity_logits": 1.4591617259076618e-07,
+      "dc": 1.9961235995845646e-07
+     }
+    },
+    "stage_hit": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 4.687236300036363e-07,
+      "quats": 3.9788501869689496e-05,
+      "log_scales": 4.037028867403316e-06,
+      "opacity_logits": 1.4350307311151351e-07,
+      "dc": 2.0152710993034576e-07
+     }
+    }
+   },
+   "gpu_guard": {
+    "attempts": 1,
+    "contended": false
+   }
+  },
+  {
+   "view": 500,
+   "scale": 1,
+   "size": [
+    1280,
+    720
+   ],
+   "channels": 8,
+   "median_ms": {
+    "default": {
+     "forward": 5.525504112243652,
+     "backward": 10.890111923217773,
+     "total": 16.416768074035645
+    },
+    "subtile": {
+     "forward": 5.407135963439941,
+     "backward": 10.88921594619751,
+     "total": 16.299472332000732
+    },
+    "stage_all": {
+     "forward": 5.433248043060303,
+     "backward": 10.867743968963623,
+     "total": 16.31929588317871
+    },
+    "stage_hit": {
+     "forward": 5.449215888977051,
+     "backward": 10.874335765838623,
+     "total": 16.356351852416992
+    }
+   },
+   "checks": {
+    "subtile": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 1.5350048729799412e-07,
+      "quats": 9.0322039496177e-06,
+      "log_scales": 1.0195343314743595e-06,
+      "opacity_logits": 1.0943278482204585e-07,
+      "dc": 9.44479776740007e-08
+     }
+    },
+    "stage_all": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 1.5767664448682308e-07,
+      "quats": 8.269061878350974e-06,
+      "log_scales": 9.175457692016776e-07,
+      "opacity_logits": 1.1444464419520139e-07,
+      "dc": 9.487677361025205e-08
+     }
+    },
+    "stage_hit": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 2.077966323873964e-07,
+      "quats": 1.0881764714301646e-05,
+      "log_scales": 1.3555809961158268e-06,
+      "opacity_logits": 1.0795437962119551e-07,
+      "dc": 9.285977293444953e-08
+     }
+    }
+   },
+   "gpu_guard": {
+    "attempts": 1,
+    "contended": false
+   }
+  },
+  {
+   "view": 500,
+   "scale": 3,
+   "size": [
+    3840,
+    2160
+   ],
+   "channels": 8,
+   "median_ms": {
+    "default": {
+     "forward": 13.605200290679932,
+     "backward": 21.974016189575195,
+     "total": 35.53481578826904
+    },
+    "subtile": {
+     "forward": 13.486527919769287,
+     "backward": 21.984895706176758,
+     "total": 35.46879959106445
+    },
+    "stage_all": {
+     "forward": 13.470191955566406,
+     "backward": 21.9640474319458,
+     "total": 35.382272243499756
+    },
+    "stage_hit": {
+     "forward": 13.436927795410156,
+     "backward": 21.991456031799316,
+     "total": 35.385648250579834
+    }
+   },
+   "checks": {
+    "subtile": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 2.138231517058791e-06,
+      "quats": 0.00014953006363602122,
+      "log_scales": 6.034743415869279e-06,
+      "opacity_logits": 2.353781716433911e-07,
+      "dc": 1.9566233431853835e-07
+     }
+    },
+    "stage_all": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 3.970118159786217e-06,
+      "quats": 0.00021711243423250316,
+      "log_scales": 6.667855373858492e-06,
+      "opacity_logits": 2.216835866695246e-07,
+      "dc": 1.8937564688406822e-07
+     }
+    },
+    "stage_hit": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 2.4437187918583896e-06,
+      "quats": 0.0001775516392335198,
+      "log_scales": 7.805787702161414e-06,
+      "opacity_logits": 2.4805872508008405e-07,
+      "dc": 1.9269947899252632e-07
+     }
+    }
+   },
+   "gpu_guard": {
+    "attempts": 1,
+    "contended": false
+   }
+  },
+  {
+   "view": 750,
+   "scale": 1,
+   "size": [
+    1280,
+    720
+   ],
+   "channels": 8,
+   "median_ms": {
+    "default": {
+     "forward": 6.147295951843262,
+     "backward": 11.87614393234253,
+     "total": 18.007231950759888
+    },
+    "subtile": {
+     "forward": 5.907279968261719,
+     "backward": 11.879424095153809,
+     "total": 17.79318404197693
+    },
+    "stage_all": {
+     "forward": 5.87556791305542,
+     "backward": 11.900223731994629,
+     "total": 17.792319774627686
+    },
+    "stage_hit": {
+     "forward": 5.874544143676758,
+     "backward": 11.889999866485596,
+     "total": 17.774944305419922
+    }
+   },
+   "checks": {
+    "subtile": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 7.084508132024906e-08,
+      "quats": 8.595915736261279e-07,
+      "log_scales": 4.242934616153267e-07,
+      "opacity_logits": 8.800966543313209e-08,
+      "dc": 1.0677539895253515e-07
+     }
+    },
+    "stage_all": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 7.345601135566397e-08,
+      "quats": 1.2690765778920317e-06,
+      "log_scales": 4.5444881835015246e-07,
+      "opacity_logits": 8.855742095554116e-08,
+      "dc": 1.0595339479459185e-07
+     }
+    },
+    "stage_hit": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 7.280063220301334e-08,
+      "quats": 9.14313057836447e-07,
+      "log_scales": 4.31560838853292e-07,
+      "opacity_logits": 8.748139163696281e-08,
+      "dc": 1.0586637393839704e-07
+     }
+    }
+   },
+   "gpu_guard": {
+    "attempts": 1,
+    "contended": false
+   }
+  },
+  {
+   "view": 750,
+   "scale": 3,
+   "size": [
+    3840,
+    2160
+   ],
+   "channels": 8,
+   "median_ms": {
+    "default": {
+     "forward": 14.828847885131836,
+     "backward": 23.774720191955566,
+     "total": 38.60163116455078
+    },
+    "subtile": {
+     "forward": 14.562000274658203,
+     "backward": 23.777280807495117,
+     "total": 38.34819221496582
+    },
+    "stage_all": {
+     "forward": 14.554192066192627,
+     "backward": 23.766528129577637,
+     "total": 38.32310390472412
+    },
+    "stage_hit": {
+     "forward": 14.575680255889893,
+     "backward": 23.767727851867676,
+     "total": 38.34659242630005
+    }
+   },
+   "checks": {
+    "subtile": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 1.538459631631205e-07,
+      "quats": 1.6715436791277066e-05,
+      "log_scales": 1.866947232307947e-06,
+      "opacity_logits": 1.8681436469696287e-07,
+      "dc": 2.2620342100269528e-07
+     }
+    },
+    "stage_all": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 1.8647081211635605e-07,
+      "quats": 2.2936001876530424e-05,
+      "log_scales": 2.021591594086937e-06,
+      "opacity_logits": 1.8397079609740686e-07,
+      "dc": 2.2082383739030723e-07
+     }
+    },
+    "stage_hit": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 2.3652819749773775e-07,
+      "quats": 2.6537072080828343e-05,
+      "log_scales": 1.744385451439309e-06,
+      "opacity_logits": 1.8631064398643046e-07,
+      "dc": 2.2410470164929375e-07
+     }
+    }
+   },
+   "gpu_guard": {
+    "attempts": 1,
+    "contended": false
+   }
+  },
+  {
+   "view": 1000,
+   "scale": 1,
+   "size": [
+    1280,
+    720
+   ],
+   "channels": 8,
+   "median_ms": {
+    "default": {
+     "forward": 5.385727882385254,
+     "backward": 10.677759647369385,
+     "total": 16.095360040664673
+    },
+    "subtile": {
+     "forward": 5.296127796173096,
+     "backward": 10.687103748321533,
+     "total": 16.016000509262085
+    },
+    "stage_all": {
+     "forward": 5.2867841720581055,
+     "backward": 10.652160167694092,
+     "total": 15.99123215675354
+    },
+    "stage_hit": {
+     "forward": 5.296208143234253,
+     "backward": 10.671695709228516,
+     "total": 15.992815971374512
+    }
+   },
+   "checks": {
+    "subtile": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 9.147865334633864e-08,
+      "quats": 3.4636948106440724e-06,
+      "log_scales": 5.721127864622898e-07,
+      "opacity_logits": 1.1174647830474399e-07,
+      "dc": 1.2826852674612654e-07
+     }
+    },
+    "stage_all": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 8.563652990854474e-08,
+      "quats": 1.9729352340534265e-06,
+      "log_scales": 7.312827938475699e-07,
+      "opacity_logits": 1.031155254557906e-07,
+      "dc": 1.298669202325494e-07
+     }
+    },
+    "stage_hit": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 8.917507584110346e-08,
+      "quats": 2.496050487230668e-06,
+      "log_scales": 4.026989547296088e-07,
+      "opacity_logits": 1.1024751847936155e-07,
+      "dc": 1.298485247061374e-07
+     }
+    }
+   },
+   "gpu_guard": {
+    "attempts": 1,
+    "contended": false
+   }
+  },
+  {
+   "view": 1000,
+   "scale": 3,
+   "size": [
+    3840,
+    2160
+   ],
+   "channels": 8,
+   "median_ms": {
+    "default": {
+     "forward": 13.413776397705078,
+     "backward": 21.432815551757812,
+     "total": 34.81793689727783
+    },
+    "subtile": {
+     "forward": 13.290656089782715,
+     "backward": 21.419343948364258,
+     "total": 34.654207706451416
+    },
+    "stage_all": {
+     "forward": 13.283280372619629,
+     "backward": 21.42211151123047,
+     "total": 34.632896423339844
+    },
+    "stage_hit": {
+     "forward": 13.271632194519043,
+     "backward": 21.431535720825195,
+     "total": 34.62921619415283
+    }
+   },
+   "checks": {
+    "subtile": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 3.3200452031796806e-07,
+      "quats": 3.5747402715002874e-05,
+      "log_scales": 1.6978502933136377e-06,
+      "opacity_logits": 2.0898552881526675e-07,
+      "dc": 2.669957659885431e-07
+     }
+    },
+    "stage_all": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 2.8327977736847994e-07,
+      "quats": 1.983776374049486e-05,
+      "log_scales": 2.19073297724858e-06,
+      "opacity_logits": 2.258790056491903e-07,
+      "dc": 2.6282213335721897e-07
+     }
+    },
+    "stage_hit": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 2.8199346530901506e-07,
+      "quats": 2.3748142529262024e-05,
+      "log_scales": 2.4200980316469854e-06,
+      "opacity_logits": 2.8109384595631323e-07,
+      "dc": 2.6854437749772296e-07
+     }
+    }
+   },
+   "gpu_guard": {
+    "attempts": 1,
+    "contended": false
+   }
+  },
+  {
+   "view": 1250,
+   "scale": 1,
+   "size": [
+    1280,
+    720
+   ],
+   "channels": 8,
+   "median_ms": {
+    "default": {
+     "forward": 5.246927976608276,
+     "backward": 10.473983764648438,
+     "total": 15.74083161354065
+    },
+    "subtile": {
+     "forward": 5.176687955856323,
+     "backward": 10.500607967376709,
+     "total": 15.70145583152771
+    },
+    "stage_all": {
+     "forward": 5.184512138366699,
+     "backward": 10.505727767944336,
+     "total": 15.718880414962769
+    },
+    "stage_hit": {
+     "forward": 5.182448148727417,
+     "backward": 10.486608028411865,
+     "total": 15.694720268249512
+    }
+   },
+   "checks": {
+    "subtile": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 1.5675354470442697e-07,
+      "quats": 1.4630901732847382e-05,
+      "log_scales": 1.0782765658715439e-06,
+      "opacity_logits": 1.2183876086694125e-07,
+      "dc": 1.0668627149659576e-07
+     }
+    },
+    "stage_all": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 1.8155381649212287e-07,
+      "quats": 3.285829741392958e-05,
+      "log_scales": 8.595507397911737e-07,
+      "opacity_logits": 1.2820002904920512e-07,
+      "dc": 1.0841139803327461e-07
+     }
+    },
+    "stage_hit": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 1.4183615250864159e-07,
+      "quats": 1.6499232205959253e-05,
+      "log_scales": 1.1433830166179503e-06,
+      "opacity_logits": 1.2748026273638053e-07,
+      "dc": 1.0720956664779484e-07
+     }
+    }
+   },
+   "gpu_guard": {
+    "attempts": 1,
+    "contended": false
+   }
+  },
+  {
+   "view": 1250,
+   "scale": 3,
+   "size": [
+    3840,
+    2160
+   ],
+   "channels": 8,
+   "median_ms": {
+    "default": {
+     "forward": 13.0763521194458,
+     "backward": 21.072383880615234,
+     "total": 34.061359882354736
+    },
+    "subtile": {
+     "forward": 12.98366403579712,
+     "backward": 21.099519729614258,
+     "total": 33.95737600326538
+    },
+    "stage_all": {
+     "forward": 12.967504024505615,
+     "backward": 21.08086395263672,
+     "total": 33.97217607498169
+    },
+    "stage_hit": {
+     "forward": 12.97542428970337,
+     "backward": 21.113727569580078,
+     "total": 34.04843187332153
+    }
+   },
+   "checks": {
+    "subtile": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 1.5922611625995049e-06,
+      "quats": 0.0005946022856509409,
+      "log_scales": 1.7682159104699607e-05,
+      "opacity_logits": 2.7461426342361473e-07,
+      "dc": 2.045334694897421e-07
+     }
+    },
+    "stage_all": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 1.4959774855998322e-06,
+      "quats": 0.0008372956222055633,
+      "log_scales": 1.0811323740725354e-05,
+      "opacity_logits": 2.99258774484771e-07,
+      "dc": 2.046166116590492e-07
+     }
+    },
+    "stage_hit": {
+     "outputs_identical": true,
+     "gradient_rel_l2": {
+      "means": 1.3501692238246718e-06,
+      "quats": 0.0007075169504633704,
+      "log_scales": 7.382793552230962e-06,
+      "opacity_logits": 2.51643138275071e-07,
+      "dc": 2.0733519704416202e-07
+     }
+    }
+   },
+   "gpu_guard": {
+    "attempts": 1,
+    "contended": false
+   }
+  }
+ ]
+}

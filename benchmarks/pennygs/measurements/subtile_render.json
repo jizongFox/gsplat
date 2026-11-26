@@ -1,0 +1,164 @@
+{
+ "gsplat": "/home/jizong/workspace/dConstruct/gaussian-splatting/.worktrees/gsplat-pennygs/gsplat",
+ "device": "NVIDIA GeForce RTX 4090",
+ "gaussians": 2909851,
+ "scope": "render",
+ "views": [
+  {
+   "view": 0,
+   "image": "DECXIN20230102350/00000008",
+   "median_ms": {
+    "default": {
+     "forward": 5.443615913391113,
+     "backward": 10.802175998687744,
+     "total": 16.25220775604248
+    },
+    "subtile": {
+     "forward": 5.505024194717407,
+     "backward": 10.702655792236328,
+     "total": 16.12387204170227
+    }
+   },
+   "check": {
+    "outputs_identical": true,
+    "gradient_rel_l2": {
+     "means": 8.59967670067121e-08,
+     "quats": 6.596637416169272e-07,
+     "log_scales": 3.3440313613046337e-07,
+     "opacity_logits": 1.4934794643351243e-07,
+     "dc": 1.0778824386682983e-07
+    }
+   }
+  },
+  {
+   "view": 250,
+   "image": "DECXIN20230102350/00001179",
+   "median_ms": {
+    "default": {
+     "forward": 9.885040283203125,
+     "backward": 16.550512313842773,
+     "total": 26.467008590698242
+    },
+    "subtile": {
+     "forward": 8.761472225189209,
+     "backward": 16.558080673217773,
+     "total": 25.385663986206055
+    }
+   },
+   "check": {
+    "outputs_identical": true,
+    "gradient_rel_l2": {
+     "means": 7.617654347267202e-08,
+     "quats": 2.9338172556853972e-06,
+     "log_scales": 6.431648365465428e-07,
+     "opacity_logits": 8.316757901912431e-08,
+     "dc": 9.83167786598301e-08
+    }
+   }
+  },
+  {
+   "view": 500,
+   "image": "DECXIN2023012346/00000865",
+   "median_ms": {
+    "default": {
+     "forward": 5.52345609664917,
+     "backward": 10.840752124786377,
+     "total": 16.371055841445923
+    },
+    "subtile": {
+     "forward": 5.400063991546631,
+     "backward": 10.84988784790039,
+     "total": 16.256911754608154
+    }
+   },
+   "check": {
+    "outputs_identical": true,
+    "gradient_rel_l2": {
+     "means": 2.2942202794698066e-07,
+     "quats": 1.3550124435857207e-05,
+     "log_scales": 1.4272090395891948e-06,
+     "opacity_logits": 1.1071610928534227e-07,
+     "dc": 9.381658102698327e-08
+    }
+   }
+  },
+  {
+   "view": 750,
+   "image": "DECXIN2023012347/00000637",
+   "median_ms": {
+    "default": {
+     "forward": 6.144592046737671,
+     "backward": 11.816960334777832,
+     "total": 17.930400133132935
+    },
+    "subtile": {
+     "forward": 5.886528015136719,
+     "backward": 11.835904121398926,
+     "total": 17.711359977722168
+    }
+   },
+   "check": {
+    "outputs_identical": true,
+    "gradient_rel_l2": {
+     "means": 7.388918154340331e-08,
+     "quats": 1.138332742581149e-06,
+     "log_scales": 4.552382421160589e-07,
+     "opacity_logits": 9.261654074259443e-08,
+     "dc": 1.0854511754381093e-07
+    }
+   }
+  },
+  {
+   "view": 1000,
+   "image": "DECXIN2023012348/00000409",
+   "median_ms": {
+    "default": {
+     "forward": 5.367424011230469,
+     "backward": 10.665328025817871,
+     "total": 16.0459041595459
+    },
+    "subtile": {
+     "forward": 5.287935972213745,
+     "backward": 10.669439792633057,
+     "total": 15.969279766082764
+    }
+   },
+   "check": {
+    "outputs_identical": true,
+    "gradient_rel_l2": {
+     "means": 8.617407194274166e-08,
+     "quats": 1.2887740770113953e-06,
+     "log_scales": 3.322716617395352e-07,
+     "opacity_logits": 1.1195429117814612e-07,
+     "dc": 1.28416920499242e-07
+    }
+   }
+  },
+  {
+   "view": 1250,
+   "image": "DECXIN20230102350/00000859",
+   "median_ms": {
+    "default": {
+     "forward": 5.247584104537964,
+     "backward": 10.414591789245605,
+     "total": 15.681519746780396
+    },
+    "subtile": {
+     "forward": 5.175807952880859,
+     "backward": 10.404272079467773,
+     "total": 15.60256028175354
+    }
+   },
+   "check": {
+    "outputs_identical": true,
+    "gradient_rel_l2": {
+     "means": 1.9416020106674686e-07,
+     "quats": 5.890520579407573e-05,
+     "log_scales": 9.048725774435678e-07,
+     "opacity_logits": 1.1747240002804774e-07,
+     "dc": 1.0612280604900949e-07
+    }
+   }
+  }
+ ]
+}

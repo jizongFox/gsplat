@@ -532,6 +532,7 @@ def rasterize_to_pixels(
     masks: Optional[Tensor] = None,  # [C, tile_height, tile_width]
     packed: bool = False,
     absgrad: bool = False,
+    forward: Literal["pixel", "subtile"] = "pixel",
 ) -> Tuple[Tensor, Tensor]:
     """Rasterizes Gaussians to pixels.
 
@@ -549,6 +550,13 @@ def rasterize_to_pixels(
         masks: Optional tile mask to skip rendering GS to masked tiles. [C, tile_height, tile_width]. Default: None.
         packed: If True, the input tensors are expected to be packed with shape [nnz, ...]. Default: False.
         absgrad: If True, the backward pass will compute a `.absgrad` attribute for `means2d`. Default: False.
+        forward: Forward kernel. "pixel" (default) is the per-pixel kernel.
+            "subtile" gives the same images, alphas and gradients; a warp visits
+            only the Gaussians that can reach its 8x4 part of the tile, and 1-4
+            channel colors are staged in shared memory (PennyGS, arXiv 2611.27525
+            Sec. 3.4). It needs tile_size 16. Faster on the measured scenes, but
+            about 1.6 % slower with 32 channels at 3840x2160
+            (benchmarks/pennygs/subtile_staging.md).
 
     Returns:
         A tuple:
@@ -557,6 +565,8 @@ def rasterize_to_pixels(
         - **Rendered alphas**. [C, image_height, image_width, 1]
     """
 
+    if forward not in ("pixel", "subtile"):
+        raise ValueError(f"Unknown forward kernel: {forward!r}")
     C = isect_offsets.size(0)
     device = means2d.device
     if packed:
@@ -646,6 +656,7 @@ def rasterize_to_pixels(
         isect_offsets.contiguous(),
         flatten_ids.contiguous(),
         absgrad,
+        forward == "subtile",
     )
 
     if padded_channels > 0:
@@ -1200,6 +1211,7 @@ class _RasterizeToPixels(torch.autograd.Function):
         isect_offsets: Tensor,  # [C, tile_height, tile_width]
         flatten_ids: Tensor,  # [n_isects]
         absgrad: bool,
+        subtile: bool,
     ) -> Tuple[Tensor, Tensor]:
         render_colors, render_alphas, last_ids = _make_lazy_cuda_func(
             "rasterize_to_pixels_fwd"
@@ -1215,6 +1227,7 @@ class _RasterizeToPixels(torch.autograd.Function):
             tile_size,
             isect_offsets,
             flatten_ids,
+            subtile,
         )
 
         ctx.save_for_backward(
@@ -1302,6 +1315,7 @@ class _RasterizeToPixels(torch.autograd.Function):
             v_colors,
             v_opacities,
             v_backgrounds,
+            None,
             None,
             None,
             None,

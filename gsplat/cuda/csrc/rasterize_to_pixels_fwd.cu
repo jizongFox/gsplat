@@ -1,4 +1,6 @@
 #include "bindings.h"
+#include "raster_alpha.cuh"
+#include "rasterize_to_pixels_fwd_subtile.cuh"
 #include "types.cuh"
 #include <cooperative_groups.h>
 #include <cub/cub.cuh>
@@ -135,20 +137,15 @@ __global__ void rasterize_to_pixels_fwd_kernel(
         // process gaussians in the current batch for this pixel
         uint32_t batch_size = min(block_size, range_end - batch_start);
         for (uint32_t t = 0; (t < batch_size) && !done; ++t) {
-            const vec3<S> conic = conic_batch[t];
-            const vec3<S> xy_opac = xy_opacity_batch[t];
-            const S opac = xy_opac.z;
-            const vec2<S> delta = {xy_opac.x - px, xy_opac.y - py};
-            const S sigma = 0.5f * (conic.x * delta.x * delta.x +
-                                    conic.z * delta.y * delta.y) +
-                            conic.y * delta.x * delta.y;
-            S alpha = min(0.999f, opac * __expf(-sigma));
-            if (sigma < 0.f || alpha < 1.f / 255.f) {
+            S alpha;
+            if (!gaussian_alpha<S>(
+                    conic_batch[t], xy_opacity_batch[t], px, py, alpha
+                )) {
                 continue;
             }
 
             const S next_T = T * (1.0f - alpha);
-            if (next_T <= 1e-4) { // this pixel is done: exclusive
+            if (next_T <= TRANSMITTANCE_THRESHOLD) { // this pixel is done: exclusive
                 done = true;
                 break;
             }
@@ -199,7 +196,8 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> call_kernel_with_dim(
     const uint32_t tile_size,
     // intersections
     const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
-    const torch::Tensor &flatten_ids   // [n_isects]
+    const torch::Tensor &flatten_ids,  // [n_isects]
+    const bool subtile
 ) {
     GSPLAT_DEVICE_GUARD(means2d);
     GSPLAT_CHECK_INPUT(means2d);
@@ -241,6 +239,26 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> call_kernel_with_dim(
     );
 
     at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
+    if (subtile) {
+        launch_rasterize_to_pixels_fwd_subtile<CDIM>(
+            means2d,
+            conics,
+            colors,
+            opacities,
+            backgrounds,
+            masks,
+            image_width,
+            image_height,
+            tile_size,
+            tile_offsets,
+            flatten_ids,
+            renders,
+            alphas,
+            last_ids,
+            stream
+        );
+        return std::make_tuple(renders, alphas, last_ids);
+    }
     const uint32_t shared_mem =
         tile_size * tile_size *
         (sizeof(int32_t) + sizeof(vec3<float>) + sizeof(vec3<float>));
@@ -302,7 +320,8 @@ rasterize_to_pixels_fwd_tensor(
     const uint32_t tile_size,
     // intersections
     const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
-    const torch::Tensor &flatten_ids   // [n_isects]
+    const torch::Tensor &flatten_ids,  // [n_isects]
+    const bool subtile
 ) {
     GSPLAT_CHECK_INPUT(colors);
     uint32_t channels = colors.size(-1);
@@ -320,7 +339,8 @@ rasterize_to_pixels_fwd_tensor(
             image_height,                                                      \
             tile_size,                                                         \
             tile_offsets,                                                      \
-            flatten_ids                                                        \
+            flatten_ids,                                                       \
+            subtile                                                      \
         );
 
     // TODO: an optimization can be done by passing the actual number of
