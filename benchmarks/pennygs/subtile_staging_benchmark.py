@@ -9,7 +9,10 @@ Arms, all in one process on one build, alternating inside each repeat:
 - ``stage_hit``: subtile masks, only entries some warp hits are staged.
 
 The staging mode is chosen by the experiment variable
-``GSPLAT_SUBTILE_COLOR_STAGE`` (0/1/2), read on every call.
+``GSPLAT_SUBTILE_COLOR_STAGE`` (0/1/2), read on every call. Only commit
+``a622588`` reads it: from the next commit on, the subtile kernel stages 1-4
+channels and reads wider colours per hit, whatever the variable says, so the
+three subtile arms measure the same kernel. Reproduce the sweep at ``a622588``.
 
 Colours model the parent application's ``override_color``: depth (1), RGB (3),
 RGB + depth (4), RGB + camera normal + depth (7, padded to 8: the training

@@ -1,7 +1,6 @@
 #include "bindings.h"
 #include "types.cuh"
 #include <cooperative_groups.h>
-#include <cstdlib>
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
 
@@ -243,17 +242,18 @@ inline __device__ uint32_t subtile_mask(
     return mask;
 }
 
-// Colour staging (PennyGS Sec. 3.4): the thread that loads a batch entry also
-// copies its colours to shared memory, channel-major ([k][entry]) so the
-// stores are conflict-free and a warp's reads of one entry broadcast. The blend
-// arithmetic is unchanged, so outputs stay identical. Modes: 0 none (colours
-// read from global memory per hit), 1 every entry, 2 entries some warp hits.
-// A staged batch takes COLOR_DIM KB; 33 channels still fit the 48 KB static
-// limit next to the other buffers (11.25 KB).
-constexpr uint32_t MAX_STAGE_DIM = 33;
+// Colour staging (PennyGS Sec. 3.4): for up to MAX_STAGE_DIM channels, the
+// thread that loads a batch entry also copies its colours to shared memory,
+// channel-major ([k][entry]) so the stores are conflict-free and a warp's reads
+// of one entry broadcast. The blend arithmetic is unchanged, so outputs stay
+// identical. Wider colours are read from global memory per hit: on water2
+// (RTX 4090) staging 8, 16 or 32 channels was slower on some views at 1280x720
+// or 3840x2160 (the staged batch costs occupancy), while 1-4 channels were
+// faster on every view (benchmarks/pennygs/subtile_staging.md).
+constexpr uint32_t MAX_STAGE_DIM = 4;
 } // namespace subtile_fwd
 
-template <uint32_t COLOR_DIM, typename S, uint32_t STAGE>
+template <uint32_t COLOR_DIM, typename S>
 __global__ void __launch_bounds__(subtile_fwd::THREADS)
     rasterize_to_pixels_fwd_subtile_kernel(
         const uint32_t C,
@@ -275,8 +275,7 @@ __global__ void __launch_bounds__(subtile_fwd::THREADS)
         int32_t *__restrict__ last_ids
     ) {
     using namespace subtile_fwd;
-    constexpr bool STAGED = STAGE != 0;
-    static_assert(STAGE <= 2 && (!STAGED || COLOR_DIM <= MAX_STAGE_DIM));
+    constexpr bool STAGED = COLOR_DIM <= MAX_STAGE_DIM;
     auto block = cg::this_thread_block();
     cg::thread_block_tile<32> warp = cg::tiled_partition<32>(block);
     const int32_t camera_id = block.group_index().x;
@@ -348,16 +347,13 @@ __global__ void __launch_bounds__(subtile_fwd::THREADS)
             const vec3<S> conic = conics[g];
             xy_opacity_batch[tr] = {xy.x, xy.y, opac};
             conic_batch[tr] = conic;
-            const uint32_t mask =
-                subtile_mask<S>(xy.x, xy.y, conic, opac, tile_x0, tile_y0);
-            mask_batch[tr] = (uint8_t)mask;
+            mask_batch[tr] =
+                (uint8_t)subtile_mask<S>(xy.x, xy.y, conic, opac, tile_x0, tile_y0);
             if constexpr (STAGED) {
-                if (STAGE == 1 || mask != 0u) {
-                    const S *c_ptr = colors + g * COLOR_DIM;
-                    GSPLAT_PRAGMA_UNROLL
-                    for (uint32_t k = 0; k < COLOR_DIM; ++k) {
-                        color_batch[k * THREADS + tr] = c_ptr[k];
-                    }
+                const S *c_ptr = colors + g * COLOR_DIM;
+                GSPLAT_PRAGMA_UNROLL
+                for (uint32_t k = 0; k < COLOR_DIM; ++k) {
+                    color_batch[k * THREADS + tr] = c_ptr[k];
                 }
             } else {
                 id_batch[tr] = g;
@@ -494,14 +490,8 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> call_kernel_with_dim(
             "subtile masks need tile_size 16, got ",
             tile_size
         );
-        // EXPERIMENT: GSPLAT_SUBTILE_COLOR_STAGE=0/1/2 picks the colour staging
-        // mode (benchmark only; default 0).
-        uint32_t stage = 0;
-        if (const char *env = std::getenv("GSPLAT_SUBTILE_COLOR_STAGE")) {
-            stage = static_cast<uint32_t>(std::atoi(env));
-        }
-        auto launch = [&](auto kernel) {
-            kernel<<<blocks, subtile_fwd::THREADS, 0, stream>>>(
+        rasterize_to_pixels_fwd_subtile_kernel<CDIM, float>
+            <<<blocks, subtile_fwd::THREADS, 0, stream>>>(
                 C,
                 n_isects,
                 reinterpret_cast<vec2<float> *>(means2d.data_ptr<float>()),
@@ -521,18 +511,6 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> call_kernel_with_dim(
                 alphas.data_ptr<float>(),
                 last_ids.data_ptr<int32_t>()
             );
-        };
-        if constexpr (CDIM <= subtile_fwd::MAX_STAGE_DIM) {
-            if (stage == 1) {
-                launch(rasterize_to_pixels_fwd_subtile_kernel<CDIM, float, 1>);
-                return std::make_tuple(renders, alphas, last_ids);
-            }
-            if (stage == 2) {
-                launch(rasterize_to_pixels_fwd_subtile_kernel<CDIM, float, 2>);
-                return std::make_tuple(renders, alphas, last_ids);
-            }
-        }
-        launch(rasterize_to_pixels_fwd_subtile_kernel<CDIM, float, 0>);
         return std::make_tuple(renders, alphas, last_ids);
     }
     const uint32_t shared_mem =

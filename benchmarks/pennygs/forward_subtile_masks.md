@@ -29,8 +29,12 @@ absgrad, compact-box sweep, tile 16).
 
 Skipped entries have alpha < 1/255 at every pixel of the subtile, which the
 default kernel skips pixel by pixel, so images, alphas and `last_ids` are
-identical. The backward kernel is unchanged. Colour staging, the other half of
-PennyGS's forward change, is the separate open PR #11.
+identical. The backward kernel is unchanged.
+
+Colour staging, the other half of PennyGS's forward change, is added to the
+subtile kernel for 1-4 channels only: see `subtile_staging.md`. It does not
+apply to the 7-channel (padded to 8) renderer measured below, whose subtile
+kernel is the one measured here.
 
 Resources (8 channels): 48 registers and 11.5 KB static shared memory per
 256-thread block, against 40 registers and 7 KB for the default.
