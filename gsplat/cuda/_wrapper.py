@@ -371,6 +371,7 @@ def isect_tiles(
     compact_box_tau2: Optional[float] = None,
     compact_box_impl: Literal["rect_min", "sweep"] = "sweep",
     ray_transforms: Optional[Tensor] = None,
+    single_pass_capacity: int = 0,
 ) -> Tuple[Tensor, Tensor, Tensor]:
     """Maps projected Gaussians to intersecting tiles.
 
@@ -403,6 +404,14 @@ def isect_tiles(
         compact_box_impl: Compact Box implementation. "rect_min" uses
             per-tile rectangle minimum testing, "sweep" uses a slice-based
             span traversal. Default: "sweep".
+        single_pass_capacity: If positive, count and emit the intersections in
+            one kernel into a buffer of this many pairs, reserving each warp's
+            range with one atomic (PennyGS, arXiv 2611.27525 Sec. 3.3), instead of
+            a counting pass, a prefix sum and an emitting pass. Above the capacity
+            it warns and falls back to the two passes. Sorted outputs equal the
+            two-pass ones (runs of exactly equal keys are put back in Gaussian
+            index order); with sort=False the order depends on scheduling.
+            Default: 0 (two passes).
 
     Returns:
         A tuple:
@@ -494,6 +503,7 @@ def isect_tiles(
         compact_box_use_sweep,
         sort,
         True,  # DoubleBuffer: memory efficient radixsort
+        single_pass_capacity,
     )
     return tiles_per_gauss, isect_ids, flatten_ids
 
