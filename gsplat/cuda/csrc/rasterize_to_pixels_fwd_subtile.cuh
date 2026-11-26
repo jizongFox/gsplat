@@ -6,6 +6,7 @@
 
 #include "bindings.h"
 #include "raster_alpha.cuh"
+#include "subtile_layout.cuh"
 #include "types.cuh"
 #include <cooperative_groups.h>
 #include <cuda_runtime.h>
@@ -29,25 +30,7 @@ namespace cg = cooperative_groups;
  ****************************************************************************/
 
 namespace subtile_fwd {
-constexpr uint32_t TILE = 16;
-constexpr uint32_t THREADS = TILE * TILE;
-// The tile is SUBTILES subtiles of SUB_W x SUB_H pixels, row-major; warp w
-// renders subtile w, and bit w of a Gaussian's mask means it may reach it.
-constexpr uint32_t SUB_W = 8;
-constexpr uint32_t SUB_H = 4;
-constexpr uint32_t SUB_COLS = TILE / SUB_W;
-constexpr uint32_t SUBTILES = THREADS / 32;
-static_assert(SUB_W * SUB_H == 32, "one subtile per warp");
-static_assert(SUB_COLS * (TILE / SUB_H) == SUBTILES, "subtiles cover the tile");
-static_assert(SUBTILES <= 8, "masks are stored as uint8_t");
-
-// top-left pixel of subtile w, relative to the tile
-inline __device__ uint32_t subtile_x0(const uint32_t w) {
-    return (w % SUB_COLS) * SUB_W;
-}
-inline __device__ uint32_t subtile_y0(const uint32_t w) {
-    return (w / SUB_COLS) * SUB_H;
-}
+using namespace subtile_layout; // TILE, THREADS, SUB_W/H, SUBTILES, ...
 
 // Subtiles where gaussian_alpha (raster_alpha.cuh) may accept the Gaussian at
 // some pixel centre: bounding box of
@@ -240,16 +223,8 @@ __global__ void __launch_bounds__(subtile_fwd::THREADS)
 
         // compact this warp's entries, keeping depth order
         const uint32_t batch_size = min(THREADS, range_end - batch_start);
-        uint32_t n_hits = 0;
-        for (uint32_t base = 0; base < batch_size; base += 32) {
-            const uint32_t e = base + lane;
-            const bool hit = e < batch_size && ((mask_batch[e] >> warp_id) & 1u);
-            const uint32_t ballot = warp.ballot(hit);
-            if (hit) {
-                hits[warp_id][n_hits + __popc(ballot & ((1u << lane) - 1u))] = e;
-            }
-            n_hits += __popc(ballot);
-        }
+        const uint32_t n_hits =
+            compact_warp_hits(warp, warp_id, mask_batch, batch_size, hits[warp_id]);
         warp.sync();
 
         for (uint32_t h = 0; (h < n_hits) && !done; ++h) {
