@@ -38,6 +38,65 @@ def selective_adam_update(
     )
 
 
+def fused_projection_adam(
+    means: Tensor,  # [N, 3], updated in place
+    quats: Tensor,  # [N, 4] raw quaternions, updated in place
+    log_scales: Tensor,  # [N, 3], updated in place
+    viewmat: Tensor,  # [4, 4]
+    K: Tensor,  # [3, 3]
+    width: int,
+    height: int,
+    radii: Tensor,  # [N]
+    conics: Tensor,  # [N, 3]
+    v_means2d: Tensor,  # [N, 2]
+    v_depths: Tensor,  # [N]
+    v_conics: Tensor,  # [N, 3]
+    moments: Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor],
+    lrs: Tuple[float, float, float],
+    betas: Tuple[float, float] = (0.9, 0.999),
+    eps: float = 1e-15,
+) -> None:
+    """Projection backward fused with a sparse Adam step (PennyGS, arXiv
+    2611.27525 Sec. 3.7), for one pinhole camera.
+
+    For every Gaussian with radius > 0 it computes the gradients of its mean, raw
+    quaternion and log-scale from the projected-Gaussian gradients, as
+    `fully_fused_projection` backward does (scales = exp(log_scales), no
+    covariance input, no compensation, no camera gradients), and applies the
+    `SelectiveAdam` update (no bias correction) in the same kernel. Unseen
+    Gaussians are not touched. ``moments`` = (means exp_avg, means exp_avg_sq,
+    quats exp_avg, quats exp_avg_sq, scales exp_avg, scales exp_avg_sq); the
+    exp_avg tensors are all float32 or all bfloat16 (compact first moments), the
+    exp_avg_sq tensors float32 (a bfloat16 second moment would stop changing:
+    beta2 = 0.999 moves it by less than half an ulp per step). ``lrs`` = (means,
+    quats, scales).
+    It updates its inputs in place and bypasses autograd: gradients that other
+    losses put on these parameters are not included.
+    """
+    assert all(m.dtype == moments[0].dtype for m in moments[0::2]), "mixed exp_avg dtypes"
+    _make_lazy_cuda_func("fused_projection_adam")(
+        means,
+        quats,
+        log_scales,
+        viewmat.contiguous(),
+        K.contiguous(),
+        width,
+        height,
+        radii.contiguous(),
+        conics.contiguous(),
+        v_means2d.contiguous(),
+        v_depths.contiguous(),
+        v_conics.contiguous(),
+        *moments,
+        float(lrs[0]),
+        float(lrs[1]),
+        float(lrs[2]),
+        float(betas[0]),
+        float(betas[1]),
+        float(eps),
+    )
+
+
 def _make_lazy_cuda_obj(name: str) -> Any:
     # pylint: disable=import-outside-toplevel
     from ._backend import _C

@@ -32,6 +32,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         "fully_fused_projection_bwd", &gsplat::fully_fused_projection_bwd_tensor
     );
 
+    m.def("fused_projection_adam", &gsplat::fused_projection_adam_tensor);
+
     m.def("isect_tiles", &gsplat::isect_tiles_tensor);
     m.def("isect_offset_encode", &gsplat::isect_offset_encode_tensor);
 
