@@ -532,6 +532,7 @@ def rasterize_to_pixels(
     masks: Optional[Tensor] = None,  # [C, tile_height, tile_width]
     packed: bool = False,
     absgrad: bool = False,
+    subtile_masks: bool = False,
 ) -> Tuple[Tensor, Tensor]:
     """Rasterizes Gaussians to pixels.
 
@@ -549,6 +550,10 @@ def rasterize_to_pixels(
         masks: Optional tile mask to skip rendering GS to masked tiles. [C, tile_height, tile_width]. Default: None.
         packed: If True, the input tensors are expected to be packed with shape [nnz, ...]. Default: False.
         absgrad: If True, the backward pass will compute a `.absgrad` attribute for `means2d`. Default: False.
+        subtile_masks: If True, the forward pass splits a 16x16 tile into eight 8x4
+            subtiles, one per warp, and each warp blends only the Gaussians whose
+            alpha >= 1/255 ellipse can reach its subtile (PennyGS, arXiv 2611.27525
+            Sec. 3.4). Same outputs; needs tile_size 16. Default: False.
 
     Returns:
         A tuple:
@@ -646,6 +651,7 @@ def rasterize_to_pixels(
         isect_offsets.contiguous(),
         flatten_ids.contiguous(),
         absgrad,
+        subtile_masks,
     )
 
     if padded_channels > 0:
@@ -1200,6 +1206,7 @@ class _RasterizeToPixels(torch.autograd.Function):
         isect_offsets: Tensor,  # [C, tile_height, tile_width]
         flatten_ids: Tensor,  # [n_isects]
         absgrad: bool,
+        subtile_masks: bool,
     ) -> Tuple[Tensor, Tensor]:
         render_colors, render_alphas, last_ids = _make_lazy_cuda_func(
             "rasterize_to_pixels_fwd"
@@ -1215,6 +1222,7 @@ class _RasterizeToPixels(torch.autograd.Function):
             tile_size,
             isect_offsets,
             flatten_ids,
+            subtile_masks,
         )
 
         ctx.save_for_backward(
@@ -1302,6 +1310,7 @@ class _RasterizeToPixels(torch.autograd.Function):
             v_colors,
             v_opacities,
             v_backgrounds,
+            None,
             None,
             None,
             None,

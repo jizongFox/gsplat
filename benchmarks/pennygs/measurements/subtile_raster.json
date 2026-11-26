@@ -1,0 +1,86 @@
+{
+ "gsplat": "/home/jizong/workspace/dConstruct/gaussian-splatting/.worktrees/gsplat-pennygs/gsplat",
+ "device": "NVIDIA GeForce RTX 4090",
+ "gaussians": 2909851,
+ "scope": "raster",
+ "views": [
+  {
+   "view": 0,
+   "image": "DECXIN20230102350/00000008",
+   "intersections": 1011765,
+   "median_ms": {
+    "default": 0.814848005771637,
+    "subtile": 0.7127839922904968
+   },
+   "check": {
+    "outputs_identical": true,
+    "gradient_rel_l2": {}
+   }
+  },
+  {
+   "view": 250,
+   "image": "DECXIN20230102350/00001179",
+   "intersections": 4830907,
+   "median_ms": {
+    "default": 4.12825608253479,
+    "subtile": 3.0648319721221924
+   },
+   "check": {
+    "outputs_identical": true,
+    "gradient_rel_l2": {}
+   }
+  },
+  {
+   "view": 500,
+   "image": "DECXIN2023012346/00000865",
+   "intersections": 996736,
+   "median_ms": {
+    "default": 0.7883999943733215,
+    "subtile": 0.6833440065383911
+   },
+   "check": {
+    "outputs_identical": true,
+    "gradient_rel_l2": {}
+   }
+  },
+  {
+   "view": 750,
+   "image": "DECXIN2023012347/00000637",
+   "intersections": 1781205,
+   "median_ms": {
+    "default": 1.1919360160827637,
+    "subtile": 0.9946720004081726
+   },
+   "check": {
+    "outputs_identical": true,
+    "gradient_rel_l2": {}
+   }
+  },
+  {
+   "view": 1000,
+   "image": "DECXIN2023012348/00000409",
+   "intersections": 754760,
+   "median_ms": {
+    "default": 0.7567040026187897,
+    "subtile": 0.6850079894065857
+   },
+   "check": {
+    "outputs_identical": true,
+    "gradient_rel_l2": {}
+   }
+  },
+  {
+   "view": 1250,
+   "image": "DECXIN20230102350/00000859",
+   "intersections": 619808,
+   "median_ms": {
+    "default": 0.6493760049343109,
+    "subtile": 0.5845440030097961
+   },
+   "check": {
+    "outputs_identical": true,
+    "gradient_rel_l2": {}
+   }
+  }
+ ]
+}
