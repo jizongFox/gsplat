@@ -244,6 +244,27 @@ __device__ inline void cb_intersect_fixed_y(
     has = true;
 }
 
+// Write one intersection. With `isect_keys` (PennyGS, arXiv 2611.27525 Sec. 3.3
+// "shortened keys") the 64-bit (camera | tile | depth) id becomes a 32-bit sort
+// key: camera | tile in the high bits, then the top `key_depth_bits` of the
+// depth's float bits (the sign bit is zero for emitted, in-front Gaussians).
+__device__ inline void write_isect(
+    int64_t *__restrict__ isect_ids,
+    uint32_t *__restrict__ isect_keys,
+    const uint32_t key_depth_bits,
+    const int64_t cur,
+    const int64_t id
+) {
+    if (isect_keys != nullptr) {
+        const uint32_t camera_tile = static_cast<uint32_t>(id >> 32);
+        const uint32_t depth = static_cast<uint32_t>(id) << 1;
+        isect_keys[cur] =
+            (camera_tile << key_depth_bits) | (depth >> (32 - key_depth_bits));
+    } else {
+        isect_ids[cur] = id;
+    }
+}
+
 template <typename T>
 __device__ inline int32_t cb_emit_or_count_sweep(
     const T mean_x,
@@ -266,6 +287,8 @@ __device__ inline int32_t cb_emit_or_count_sweep(
     const int64_t out_start,
     const bool write_out,
     int64_t *__restrict__ isect_ids,
+    uint32_t *__restrict__ isect_keys,
+    const uint32_t key_depth_bits,
     int32_t *__restrict__ flatten_ids
 ) {
     const T tsize = static_cast<T>(tile_size);
@@ -394,7 +417,13 @@ __device__ inline int32_t cb_emit_or_count_sweep(
             if (write_out) {
                 for (int32_t ty = ty_min; ty < ty_max; ++ty) {
                     const int64_t tile_id = ty * tile_width + tx;
-                    isect_ids[cur] = cid_enc | (tile_id << 32) | depth_id_enc;
+                    write_isect(
+                        isect_ids,
+                        isect_keys,
+                        key_depth_bits,
+                        cur,
+                        cid_enc | (tile_id << 32) | depth_id_enc
+                    );
                     flatten_ids[cur] = flatten_idx;
                     ++cur;
                 }
@@ -482,7 +511,13 @@ __device__ inline int32_t cb_emit_or_count_sweep(
             if (write_out) {
                 for (int32_t tx = tx_min; tx < tx_max; ++tx) {
                     const int64_t tile_id = ty * tile_width + tx;
-                    isect_ids[cur] = cid_enc | (tile_id << 32) | depth_id_enc;
+                    write_isect(
+                        isect_ids,
+                        isect_keys,
+                        key_depth_bits,
+                        cur,
+                        cid_enc | (tile_id << 32) | depth_id_enc
+                    );
                     flatten_ids[cur] = flatten_idx;
                     ++cur;
                 }
@@ -493,8 +528,13 @@ __device__ inline int32_t cb_emit_or_count_sweep(
     return n_tiles;
 }
 
+// One Gaussian of the binning. Count mode (no isect_ids or isect_keys) writes
+// tiles_per_gauss[idx]; write mode emits its pairs from cum_tiles_per_gauss
+// (two-pass) or from `write_start` (single-pass, cum_tiles_per_gauss null).
 template <typename T>
-__global__ void isect_tiles(
+__device__ inline void isect_tiles_one(
+    const uint32_t idx,
+    const int64_t write_start,
     // if the data is [C, N, ...] or [nnz, ...] (packed)
     const bool packed,
     // parallelize over C * N, only used if packed is False
@@ -523,17 +563,16 @@ __global__ void isect_tiles(
     const bool compact_box_use_sweep,
     int32_t *__restrict__ tiles_per_gauss, // [C, N] or [nnz]
     int64_t *__restrict__ isect_ids,       // [n_isects]
+    uint32_t *__restrict__ isect_keys,     // [n_isects], shortened keys
+    const uint32_t key_depth_bits,
     int32_t *__restrict__ flatten_ids      // [n_isects]
 ) {
     // For now we'll upcast float16 and bfloat16 to float32
     using OpT = typename OpType<T>::type;
 
-    // parallelize over C * N.
-    uint32_t idx = cg::this_grid().thread_rank();
-    // two-pass kernel:
-    // pass 1: count intersections per Gaussian (cum ptr is null)
-    // pass 2: write encoded intersection tuples
-    bool first_pass = cum_tiles_per_gauss == nullptr;
+    // count: count intersections per Gaussian (no output buffer)
+    // write: write encoded intersection tuples
+    bool first_pass = isect_ids == nullptr && isect_keys == nullptr;
     if (idx >= (packed ? nnz : C * N)) {
         return;
     }
@@ -648,6 +687,8 @@ __global__ void isect_tiles(
                 0,
                 false,
                 nullptr,
+                nullptr,
+                0,
                 nullptr
             );
         } else {
@@ -691,7 +732,9 @@ __global__ void isect_tiles(
 
     // Reinterpret depth bits and append to low 32 bits for stable depth sorting.
     int64_t depth_id_enc = (int64_t) * (int32_t *)&(depths[idx]);
-    int64_t cur_idx = (idx == 0) ? 0 : cum_tiles_per_gauss[idx - 1];
+    int64_t cur_idx = cum_tiles_per_gauss == nullptr
+                          ? write_start
+                          : (idx == 0 ? 0 : cum_tiles_per_gauss[idx - 1]);
     if (cb_skip_all) {
         return;
     }
@@ -717,6 +760,8 @@ __global__ void isect_tiles(
             cur_idx,
             true,
             isect_ids,
+            isect_keys,
+            key_depth_bits,
             flatten_ids
         );
         return;
@@ -741,11 +786,150 @@ __global__ void isect_tiles(
             int64_t tile_id = i * tile_width + j;
             // e.g. tile_n_bits = 22:
             // camera id (10 bits) | tile id (22 bits) | depth (32 bits)
-            isect_ids[cur_idx] = cid_enc | (tile_id << 32) | depth_id_enc;
+            write_isect(
+                isect_ids,
+                isect_keys,
+                key_depth_bits,
+                cur_idx,
+                cid_enc | (tile_id << 32) | depth_id_enc
+            );
             // the flatten index in [C * N] or [nnz]
             flatten_ids[cur_idx] = static_cast<int32_t>(idx);
             ++cur_idx;
         }
+    }
+}
+
+// After single-pass binning the pre-sort order of exactly equal keys depends on
+// scheduling. The two-pass path emits Gaussians in index order and the radix
+// sort is stable, so equal keys end up by ascending flatten id: restore that by
+// insertion-sorting each run of equal keys (runs are short: duplicated or
+// float-equal depths in one tile). KeyT int64_t: full ids; uint32_t: shortened
+// keys, whose runs also hold depths that agree in the kept bits, so they are
+// longer.
+template <typename KeyT>
+__global__ void sort_equal_key_runs(
+    const int64_t n,
+    const KeyT *__restrict__ keys,
+    int32_t *__restrict__ flatten_ids
+) {
+    const int64_t i = cg::this_grid().thread_rank();
+    if (i >= n || (i > 0 && keys[i] == keys[i - 1]) || i + 1 >= n ||
+        keys[i + 1] != keys[i]) {
+        return; // not the start of a run of two or more
+    }
+    int64_t end = i + 1;
+    while (end < n && keys[end] == keys[i]) {
+        ++end;
+    }
+    for (int64_t a = i + 1; a < end; ++a) {
+        const int32_t value = flatten_ids[a];
+        int64_t b = a - 1;
+        while (b >= i && flatten_ids[b] > value) {
+            flatten_ids[b + 1] = flatten_ids[b];
+            --b;
+        }
+        flatten_ids[b + 1] = value;
+    }
+}
+
+#define GSPLAT_ISECT_ARGS                                                      \
+    packed, C, N, nnz, camera_ids, gaussian_ids, means2d, radii, depths,       \
+        conics, ray_transforms, opacities
+#define GSPLAT_ISECT_PARAMS                                                    \
+    const bool packed, const uint32_t C, const uint32_t N, const uint32_t nnz, \
+        const int64_t *__restrict__ camera_ids,                                \
+        const int64_t *__restrict__ gaussian_ids,                              \
+        const T *__restrict__ means2d, const int32_t *__restrict__ radii,      \
+        const T *__restrict__ depths, const T *__restrict__ conics,            \
+        const T *__restrict__ ray_transforms, const T *__restrict__ opacities
+#define GSPLAT_CB_PARAMS                                                       \
+    const uint32_t tile_size, const uint32_t tile_width,                       \
+        const uint32_t tile_height, const uint32_t tile_n_bits,                \
+        const bool compact_box, const float compact_box_mult,                  \
+        const float compact_box_tau2, const bool compact_box_use_global_tau2,  \
+        const bool compact_box_use_sweep
+#define GSPLAT_CB_ARGS                                                         \
+    tile_size, tile_width, tile_height, tile_n_bits, compact_box,              \
+        compact_box_mult, compact_box_tau2, compact_box_use_global_tau2,       \
+        compact_box_use_sweep
+
+// Two-pass binning: called once to count (cum null, isect_ids null) and once to
+// write at the prefix-sum offsets.
+template <typename T>
+__global__ void isect_tiles(
+    GSPLAT_ISECT_PARAMS,
+    const int64_t *__restrict__ cum_tiles_per_gauss,
+    GSPLAT_CB_PARAMS,
+    int32_t *__restrict__ tiles_per_gauss,
+    int64_t *__restrict__ isect_ids,
+    uint32_t *__restrict__ isect_keys,
+    const uint32_t key_depth_bits,
+    int32_t *__restrict__ flatten_ids
+) {
+    isect_tiles_one<T>(
+        cg::this_grid().thread_rank(),
+        0,
+        GSPLAT_ISECT_ARGS,
+        cum_tiles_per_gauss,
+        GSPLAT_CB_ARGS,
+        tiles_per_gauss,
+        isect_ids,
+        isect_keys,
+        key_depth_bits,
+        flatten_ids
+    );
+}
+
+// Single-pass binning (PennyGS, arXiv 2611.27525 Sec. 3.3): each Gaussian counts
+// its tiles, the warp prefix-sums the counts and reserves one contiguous range of
+// a pre-allocated buffer with a single atomic on a global cursor, then every
+// lane writes its pairs there. No prefix-sum pass and no second launch; the
+// output order before sorting depends on warp scheduling. Pairs past `capacity`
+// are not written; the cursor still counts them so the caller can detect it.
+template <typename T>
+__global__ void isect_tiles_single_pass(
+    GSPLAT_ISECT_PARAMS,
+    GSPLAT_CB_PARAMS,
+    const int64_t capacity,
+    unsigned long long *__restrict__ cursor,
+    int32_t *__restrict__ tiles_per_gauss,
+    int64_t *__restrict__ isect_ids,
+    uint32_t *__restrict__ isect_keys,
+    const uint32_t key_depth_bits,
+    int32_t *__restrict__ flatten_ids
+) {
+    const uint32_t idx = cg::this_grid().thread_rank();
+    cg::thread_block_tile<32> warp = cg::tiled_partition<32>(cg::this_thread_block());
+    const uint32_t lane = warp.thread_rank();
+    int32_t count = 0;
+    if (idx < (packed ? nnz : C * N)) {
+        isect_tiles_one<T>(
+            idx, 0, GSPLAT_ISECT_ARGS, nullptr, GSPLAT_CB_ARGS, tiles_per_gauss,
+            nullptr, nullptr, 0, nullptr
+        );
+        count = tiles_per_gauss[idx];
+    }
+    int32_t inclusive = count;
+    GSPLAT_PRAGMA_UNROLL
+    for (uint32_t offset = 1; offset < 32; offset <<= 1) {
+        const int32_t up = warp.shfl_up(inclusive, offset);
+        if (lane >= offset) {
+            inclusive += up;
+        }
+    }
+    const int32_t warp_total = warp.shfl(inclusive, 31);
+    unsigned long long base = 0;
+    if (lane == 0 && warp_total > 0) {
+        base = atomicAdd(cursor, static_cast<unsigned long long>(warp_total));
+    }
+    base = warp.shfl(base, 0);
+    const int64_t start = static_cast<int64_t>(base) + inclusive - count;
+    if (count > 0 && start + count <= capacity) {
+        isect_tiles_one<T>(
+            idx, start, GSPLAT_ISECT_ARGS, nullptr, GSPLAT_CB_ARGS, nullptr,
+            isect_ids, isect_keys, key_depth_bits, flatten_ids
+        );
     }
 }
 
@@ -768,7 +952,10 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
     const bool compact_box_use_global_tau2,
     const bool compact_box_use_sweep,
     const bool sort,
-    const bool double_buffer
+    const bool double_buffer,
+    const bool short_keys,
+    const int64_t single_pass_capacity,
+    const bool single_pass_restore_ties
 ) {
     GSPLAT_DEVICE_GUARD(means2d);
     GSPLAT_CHECK_INPUT(means2d);
@@ -898,15 +1085,119 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
     // the first 32 bits are used for the camera id and tile id altogether, so
     // check if we have enough bits for them.
     assert(tile_n_bits + cam_n_bits <= 32);
+    // Shortened keys keep the top key_depth_bits of the sign-less depth float
+    // bits: 8 exponent bits and key_depth_bits - 8 mantissa bits, a relative
+    // depth step of 2^-(key_depth_bits - 8). Require at least 0.4 % (16 bits).
+    const uint32_t key_depth_bits =
+        short_keys ? 32 - tile_n_bits - cam_n_bits : 0;
+    TORCH_CHECK(
+        !short_keys || key_depth_bits >= 16,
+        "short_keys leaves only ",
+        key_depth_bits,
+        " depth bits for ",
+        n_tiles,
+        " tiles and ",
+        C,
+        " cameras"
+    );
+
+    torch::Tensor tiles_per_gauss =
+        torch::empty_like(depths, depths.options().dtype(torch::kInt32));
+    int64_t n_isects = 0;
+    torch::Tensor isect_ids, flatten_ids;
+
+    // Single pass into a pre-allocated buffer (falls back to two passes when the
+    // pairs exceed the capacity).
+    bool single_pass_done = false;
+    if (single_pass_capacity > 0 && total_elems) {
+        isect_ids = torch::empty(
+            {single_pass_capacity},
+            depths.options().dtype(short_keys ? torch::kInt32 : torch::kInt64)
+        );
+        flatten_ids = torch::empty(
+            {single_pass_capacity}, depths.options().dtype(torch::kInt32)
+        );
+        torch::Tensor cursor =
+            torch::zeros({1}, depths.options().dtype(torch::kInt64));
+        AT_DISPATCH_FLOATING_TYPES_AND2(
+            at::ScalarType::Half,
+            at::ScalarType::BFloat16,
+            means2d.scalar_type(),
+            "isect_tiles_single_pass",
+            [&]() {
+                isect_tiles_single_pass<<<
+                    (total_elems + GSPLAT_N_THREADS - 1) / GSPLAT_N_THREADS,
+                    GSPLAT_N_THREADS,
+                    0,
+                    stream>>>(
+                    packed,
+                    C,
+                    N,
+                    nnz,
+                    camera_ids_ptr,
+                    gaussian_ids_ptr,
+                    reinterpret_cast<scalar_t *>(means2d.data_ptr<scalar_t>()),
+                    radii.data_ptr<int32_t>(),
+                    depths.data_ptr<scalar_t>(),
+                    compact_box && conics.has_value()
+                        ? reinterpret_cast<scalar_t *>(
+                              conics_tensor.data_ptr<scalar_t>()
+                          )
+                        : nullptr,
+                    compact_box && ray_transforms.has_value()
+                        ? reinterpret_cast<scalar_t *>(
+                              ray_transforms_tensor.data_ptr<scalar_t>()
+                          )
+                        : nullptr,
+                    compact_box
+                        ? reinterpret_cast<scalar_t *>(
+                              opacities_tensor.data_ptr<scalar_t>()
+                          )
+                        : nullptr,
+                    tile_size,
+                    tile_width,
+                    tile_height,
+                    tile_n_bits,
+                    compact_box,
+                    compact_box_mult,
+                    compact_box_tau2,
+                    compact_box_use_global_tau2,
+                    compact_box_use_sweep,
+                    single_pass_capacity,
+                    reinterpret_cast<unsigned long long *>(
+                        cursor.data_ptr<int64_t>()
+                    ),
+                    tiles_per_gauss.data_ptr<int32_t>(),
+                    short_keys ? nullptr : isect_ids.data_ptr<int64_t>(),
+                    short_keys ? reinterpret_cast<uint32_t *>(
+                                     isect_ids.data_ptr<int32_t>()
+                                 )
+                               : nullptr,
+                    key_depth_bits,
+                    flatten_ids.data_ptr<int32_t>()
+                );
+            }
+        );
+        n_isects = cursor.item<int64_t>();
+        if (n_isects <= single_pass_capacity) {
+            isect_ids = isect_ids.narrow(0, 0, n_isects);
+            flatten_ids = flatten_ids.narrow(0, 0, n_isects);
+            single_pass_done = true;
+        } else {
+            TORCH_WARN(
+                "single-pass binning found ",
+                n_isects,
+                " intersections, above its capacity ",
+                single_pass_capacity,
+                "; using two passes"
+            );
+        }
+    }
 
     // First pass: count surviving tiles per gaussian.
     // Counts include CB pruning so prefix sum reflects final output size.
-    torch::Tensor tiles_per_gauss =
-        torch::empty_like(depths, depths.options().dtype(torch::kInt32));
-
-    int64_t n_isects;
     torch::Tensor cum_tiles_per_gauss;
-    if (total_elems) {
+    if (!single_pass_done && total_elems) {
         AT_DISPATCH_FLOATING_TYPES_AND2(
             at::ScalarType::Half,
             at::ScalarType::BFloat16,
@@ -955,22 +1246,27 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
                     compact_box_use_sweep,
                     tiles_per_gauss.data_ptr<int32_t>(),
                     nullptr,
+                    nullptr,
+                    0,
                     nullptr
                 );
             }
         );
         cum_tiles_per_gauss = torch::cumsum(tiles_per_gauss.view({-1}), 0);
         n_isects = cum_tiles_per_gauss[-1].item<int64_t>();
-    } else {
-        n_isects = 0;
     }
 
-    // Second pass: emit intersection records into compact arrays.
-    torch::Tensor isect_ids =
-        torch::empty({n_isects}, depths.options().dtype(torch::kInt64));
-    torch::Tensor flatten_ids =
-        torch::empty({n_isects}, depths.options().dtype(torch::kInt32));
-    if (n_isects) {
+    // Second pass: emit intersection records into compact arrays. Shortened keys
+    // are stored in an int32 tensor and handled as uint32 bit patterns.
+    if (!single_pass_done) {
+        isect_ids = torch::empty(
+            {n_isects},
+            depths.options().dtype(short_keys ? torch::kInt32 : torch::kInt64)
+        );
+        flatten_ids =
+            torch::empty({n_isects}, depths.options().dtype(torch::kInt32));
+    }
+    if (n_isects && !single_pass_done) {
         AT_DISPATCH_FLOATING_TYPES_AND2(
             at::ScalarType::Half,
             at::ScalarType::BFloat16,
@@ -1018,14 +1314,50 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
                     compact_box_use_global_tau2,
                     compact_box_use_sweep,
                     nullptr,
-                    isect_ids.data_ptr<int64_t>(),
+                    short_keys ? nullptr : isect_ids.data_ptr<int64_t>(),
+                    short_keys ? reinterpret_cast<uint32_t *>(
+                                     isect_ids.data_ptr<int32_t>()
+                                 )
+                               : nullptr,
+                    key_depth_bits,
                     flatten_ids.data_ptr<int32_t>()
                 );
             }
         );
     }
 
+    // After a single pass, put runs of equal keys back in flatten-id order (the
+    // two-pass order); without it the order within a run depends on scheduling.
+    const bool restore_ties = single_pass_done && single_pass_restore_ties;
+
     // optionally sort the Gaussians by isect_ids
+    if (n_isects && sort && short_keys) {
+        torch::Tensor keys_sorted = torch::empty_like(isect_ids);
+        torch::Tensor flatten_ids_sorted = torch::empty_like(flatten_ids);
+        GSPLAT_CUB_WRAPPER(
+            cub::DeviceRadixSort::SortPairs,
+            reinterpret_cast<uint32_t *>(isect_ids.data_ptr<int32_t>()),
+            reinterpret_cast<uint32_t *>(keys_sorted.data_ptr<int32_t>()),
+            flatten_ids.data_ptr<int32_t>(),
+            flatten_ids_sorted.data_ptr<int32_t>(),
+            n_isects,
+            0,
+            32,
+            stream
+        );
+        if (restore_ties) {
+            sort_equal_key_runs<uint32_t><<<
+                (n_isects + GSPLAT_N_THREADS - 1) / GSPLAT_N_THREADS,
+                GSPLAT_N_THREADS,
+                0,
+                stream>>>(
+                n_isects,
+                reinterpret_cast<uint32_t *>(keys_sorted.data_ptr<int32_t>()),
+                flatten_ids_sorted.data_ptr<int32_t>()
+            );
+        }
+        return std::make_tuple(tiles_per_gauss, keys_sorted, flatten_ids_sorted);
+    }
     if (n_isects && sort) {
         torch::Tensor isect_ids_sorted = torch::empty_like(isect_ids);
         torch::Tensor flatten_ids_sorted = torch::empty_like(flatten_ids);
@@ -1068,6 +1400,17 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
             // printf("DoubleBuffer d_keys selector: %d\n", d_keys.selector);
             // printf("DoubleBuffer d_values selector: %d\n",
             // d_values.selector);
+            if (restore_ties) {
+                sort_equal_key_runs<int64_t><<<
+                    (n_isects + GSPLAT_N_THREADS - 1) / GSPLAT_N_THREADS,
+                    GSPLAT_N_THREADS,
+                    0,
+                    stream>>>(
+                    n_isects,
+                    isect_ids_sorted.data_ptr<int64_t>(),
+                    flatten_ids_sorted.data_ptr<int32_t>()
+                );
+            }
         } else {
             GSPLAT_CUB_WRAPPER(
                 cub::DeviceRadixSort::SortPairs,
@@ -1080,6 +1423,17 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
                 32 + tile_n_bits + cam_n_bits,
                 stream
             );
+            if (restore_ties) {
+                sort_equal_key_runs<int64_t><<<
+                    (n_isects + GSPLAT_N_THREADS - 1) / GSPLAT_N_THREADS,
+                    GSPLAT_N_THREADS,
+                    0,
+                    stream>>>(
+                    n_isects,
+                    isect_ids_sorted.data_ptr<int64_t>(),
+                    flatten_ids_sorted.data_ptr<int32_t>()
+                );
+            }
         }
         return std::make_tuple(
             tiles_per_gauss, isect_ids_sorted, flatten_ids_sorted
@@ -1089,12 +1443,16 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
     }
 }
 
+// KeyT int64_t: (camera | tile) << 32 | depth. KeyT uint32_t: shortened keys,
+// (camera | tile) << depth_bits | depth prefix. `depth_bits` is the shift.
+template <typename KeyT>
 __global__ void isect_offset_encode(
     const uint32_t n_isects,
-    const int64_t *__restrict__ isect_ids,
+    const KeyT *__restrict__ isect_ids,
     const uint32_t C,
     const uint32_t n_tiles,
     const uint32_t tile_n_bits,
+    const uint32_t depth_bits,
     int32_t *__restrict__ offsets // [C, n_tiles]
 ) {
     // e.g., ids: [1, 1, 1, 3, 3], n_tiles = 6
@@ -1105,7 +1463,7 @@ __global__ void isect_offset_encode(
     if (idx >= n_isects)
         return;
 
-    int64_t isect_id_curr = isect_ids[idx] >> 32;
+    int64_t isect_id_curr = static_cast<int64_t>(isect_ids[idx] >> depth_bits);
     int64_t cid_curr = isect_id_curr >> tile_n_bits;
     int64_t tid_curr = isect_id_curr & ((1 << tile_n_bits) - 1);
     int64_t id_curr = cid_curr * n_tiles + tid_curr;
@@ -1124,7 +1482,9 @@ __global__ void isect_offset_encode(
     if (idx > 0) {
         // visit the current and previous isect_id and check if the (cid,
         // tile_id) pair changes.
-        int64_t isect_id_prev = isect_ids[idx - 1] >> 32; // shift out the depth
+        int64_t isect_id_prev = static_cast<int64_t>(
+            isect_ids[idx - 1] >> depth_bits
+        ); // shift out the depth
         if (isect_id_prev == isect_id_curr)
             return;
 
@@ -1153,19 +1513,31 @@ torch::Tensor isect_offset_encode_tensor(
     if (n_isects) {
         uint32_t n_tiles = tile_width * tile_height;
         uint32_t tile_n_bits = (uint32_t)floor(log2(n_tiles)) + 1;
+        uint32_t cam_n_bits = (uint32_t)floor(log2(C)) + 1;
         at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
-        isect_offset_encode<<<
-            (n_isects + GSPLAT_N_THREADS - 1) / GSPLAT_N_THREADS,
-            GSPLAT_N_THREADS,
-            0,
-            stream>>>(
-            n_isects,
-            isect_ids.data_ptr<int64_t>(),
-            C,
-            n_tiles,
-            tile_n_bits,
-            offsets.data_ptr<int32_t>()
-        );
+        const uint32_t blocks = (n_isects + GSPLAT_N_THREADS - 1) / GSPLAT_N_THREADS;
+        if (isect_ids.scalar_type() == torch::kInt32) {
+            // shortened keys from isect_tiles(..., short_keys=true)
+            isect_offset_encode<uint32_t><<<blocks, GSPLAT_N_THREADS, 0, stream>>>(
+                n_isects,
+                reinterpret_cast<uint32_t *>(isect_ids.data_ptr<int32_t>()),
+                C,
+                n_tiles,
+                tile_n_bits,
+                32 - tile_n_bits - cam_n_bits,
+                offsets.data_ptr<int32_t>()
+            );
+        } else {
+            isect_offset_encode<int64_t><<<blocks, GSPLAT_N_THREADS, 0, stream>>>(
+                n_isects,
+                isect_ids.data_ptr<int64_t>(),
+                C,
+                n_tiles,
+                tile_n_bits,
+                32,
+                offsets.data_ptr<int32_t>()
+            );
+        }
     } else {
         offsets.fill_(0);
     }

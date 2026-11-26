@@ -371,6 +371,9 @@ def isect_tiles(
     compact_box_tau2: Optional[float] = None,
     compact_box_impl: Literal["rect_min", "sweep"] = "sweep",
     ray_transforms: Optional[Tensor] = None,
+    short_keys: bool = False,
+    single_pass_capacity: int = 0,
+    single_pass_restore_ties: bool = True,
 ) -> Tuple[Tensor, Tensor, Tensor]:
     """Maps projected Gaussians to intersecting tiles.
 
@@ -403,6 +406,24 @@ def isect_tiles(
         compact_box_impl: Compact Box implementation. "rect_min" uses
             per-tile rectangle minimum testing, "sweep" uses a slice-based
             span traversal. Default: "sweep".
+        short_keys: If True, sort 32-bit keys (PennyGS, arXiv 2611.27525 Sec. 3.3):
+            camera_id | tile_id | the top (32 - Xc - Xt) bits of the depth's float
+            bits without its sign, so depths within a relative 2^-(24 - Xc - Xt) of
+            each other keep their input order instead of depth order.
+            The intersection ids are then Int32 bit patterns of these keys, which
+            `isect_offset_encode` accepts. Default: False.
+        single_pass_capacity: If positive, count and emit the intersections in
+            one kernel into a buffer of this many pairs, reserving each warp's
+            range with one atomic (PennyGS, arXiv 2611.27525 Sec. 3.3), instead of
+            a counting pass, a prefix sum and an emitting pass. Above the capacity
+            it warns and falls back to the two passes. Sorted outputs equal the
+            two-pass ones (runs of exactly equal keys are put back in Gaussian
+            index order); with sort=False the order depends on scheduling.
+            Combines with `short_keys`. Default: 0 (two passes).
+        single_pass_restore_ties: Experiment switch for the single pass. If
+            False, skip putting runs of equal keys back in Gaussian index order:
+            faster, but the order within a run then depends on scheduling and can
+            differ between calls. Default: True.
 
     Returns:
         A tuple:
@@ -494,6 +515,9 @@ def isect_tiles(
         compact_box_use_sweep,
         sort,
         True,  # DoubleBuffer: memory efficient radixsort
+        short_keys,
+        single_pass_capacity,
+        single_pass_restore_ties,
     )
     return tiles_per_gauss, isect_ids, flatten_ids
 

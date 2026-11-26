@@ -1,0 +1,340 @@
+{
+ "gsplat": "/home/jizong/workspace/dConstruct/gaussian-splatting/.worktrees/gsplat-isect-combined/gsplat",
+ "device": "NVIDIA GeForce RTX 4090",
+ "gaussians": 2909851,
+ "scope": "binning",
+ "warmup": 20,
+ "repeats": 80,
+ "views": [
+  {
+   "view": 0,
+   "image": "DECXIN20230102350/00000008",
+   "intersections": 1011765,
+   "capacity": 1264706,
+   "equal_key_runs": {
+    "ids64": {
+     "runs": 115,
+     "pairs_in_runs": 230,
+     "share_in_runs": 0.0002273255153123502,
+     "mean_run": 2.0,
+     "p99_run": 2.0,
+     "max_run": 2,
+     "sum_run_sq": 460
+    },
+    "keys32": {
+     "runs": 207626,
+     "pairs_in_runs": 530199,
+     "share_in_runs": 0.5240337430134469,
+     "mean_run": 2.5536252685116505,
+     "p99_run": 7.0,
+     "max_run": 27,
+     "sum_run_sq": 1570515
+    }
+   },
+   "median_ms": {
+    "default": 0.3123199939727783,
+    "short_keys": 0.25910399854183197,
+    "single_pass": 0.25732800364494324,
+    "combined": 0.21196800470352173,
+    "combined_no_ties": 0.2017280012369156
+   },
+   "checks": {
+    "short_keys": {
+     "intersections": 1011765,
+     "offsets_identical_to_default": true
+    },
+    "single_pass": {
+     "intersections": 1011765,
+     "offsets_identical_to_default": true,
+     "identical_to_default": true
+    },
+    "combined": {
+     "intersections": 1011765,
+     "offsets_identical_to_default": true,
+     "identical_to_short_keys": true
+    },
+    "combined_no_ties": {
+     "intersections": 1011765,
+     "offsets_identical_to_default": true,
+     "same_keys_and_pairs_as_short_keys": true,
+     "flatten_ids_identical_to_short_keys": false
+    }
+   }
+  },
+  {
+   "view": 250,
+   "image": "DECXIN20230102350/00001179",
+   "intersections": 4830907,
+   "capacity": 6038633,
+   "equal_key_runs": {
+    "ids64": {
+     "runs": 8313,
+     "pairs_in_runs": 16652,
+     "share_in_runs": 0.00344697175913343,
+     "mean_run": 2.0031276314206665,
+     "p99_run": 2.0,
+     "max_run": 4,
+     "sum_run_sq": 33384
+    },
+    "keys32": {
+     "runs": 715069,
+     "pairs_in_runs": 4289034,
+     "share_in_runs": 0.8878320365099142,
+     "mean_run": 5.998070116310454,
+     "p99_run": 35.0,
+     "max_run": 213,
+     "sum_run_sq": 62090794
+    }
+   },
+   "median_ms": {
+    "default": 1.0731039643287659,
+    "short_keys": 0.596992015838623,
+    "single_pass": 0.9372960031032562,
+    "combined": 0.5495840013027191,
+    "combined_no_ties": 0.44438399374485016
+   },
+   "checks": {
+    "short_keys": {
+     "intersections": 4830907,
+     "offsets_identical_to_default": true
+    },
+    "single_pass": {
+     "intersections": 4830907,
+     "offsets_identical_to_default": true,
+     "identical_to_default": true
+    },
+    "combined": {
+     "intersections": 4830907,
+     "offsets_identical_to_default": true,
+     "identical_to_short_keys": true
+    },
+    "combined_no_ties": {
+     "intersections": 4830907,
+     "offsets_identical_to_default": true,
+     "same_keys_and_pairs_as_short_keys": true,
+     "flatten_ids_identical_to_short_keys": false
+    }
+   }
+  },
+  {
+   "view": 500,
+   "image": "DECXIN2023012346/00000865",
+   "intersections": 996736,
+   "capacity": 1245920,
+   "equal_key_runs": {
+    "ids64": {
+     "runs": 365,
+     "pairs_in_runs": 731,
+     "share_in_runs": 0.0007333937973545653,
+     "mean_run": 2.0027397260273974,
+     "p99_run": 2.0,
+     "max_run": 3,
+     "sum_run_sq": 1465
+    },
+    "keys32": {
+     "runs": 199722,
+     "pairs_in_runs": 636371,
+     "share_in_runs": 0.6384549168485938,
+     "mean_run": 3.18628393466919,
+     "p99_run": 13.0,
+     "max_run": 38,
+     "sum_run_sq": 3077717
+    }
+   },
+   "median_ms": {
+    "default": 0.31118398904800415,
+    "short_keys": 0.2588319927453995,
+    "single_pass": 0.2433920055627823,
+    "combined": 0.20681599527597427,
+    "combined_no_ties": 0.1955839991569519
+   },
+   "checks": {
+    "short_keys": {
+     "intersections": 996736,
+     "offsets_identical_to_default": true
+    },
+    "single_pass": {
+     "intersections": 996736,
+     "offsets_identical_to_default": true,
+     "identical_to_default": true
+    },
+    "combined": {
+     "intersections": 996736,
+     "offsets_identical_to_default": true,
+     "identical_to_short_keys": true
+    },
+    "combined_no_ties": {
+     "intersections": 996736,
+     "offsets_identical_to_default": true,
+     "same_keys_and_pairs_as_short_keys": true,
+     "flatten_ids_identical_to_short_keys": false
+    }
+   }
+  },
+  {
+   "view": 750,
+   "image": "DECXIN2023012347/00000637",
+   "intersections": 1781205,
+   "capacity": 2226506,
+   "equal_key_runs": {
+    "ids64": {
+     "runs": 702,
+     "pairs_in_runs": 1404,
+     "share_in_runs": 0.0007882304395058401,
+     "mean_run": 2.0,
+     "p99_run": 2.0,
+     "max_run": 2,
+     "sum_run_sq": 2808
+    },
+    "keys32": {
+     "runs": 378038,
+     "pairs_in_runs": 1295604,
+     "share_in_runs": 0.7273750073686072,
+     "mean_run": 3.427179278273613,
+     "p99_run": 13.0,
+     "max_run": 56,
+     "sum_run_sq": 6650010
+    }
+   },
+   "median_ms": {
+    "default": 0.42392000555992126,
+    "short_keys": 0.3425440043210983,
+    "single_pass": 0.3266560137271881,
+    "combined": 0.25407999753952026,
+    "combined_no_ties": 0.23449599742889404
+   },
+   "checks": {
+    "short_keys": {
+     "intersections": 1781205,
+     "offsets_identical_to_default": true
+    },
+    "single_pass": {
+     "intersections": 1781205,
+     "offsets_identical_to_default": true,
+     "identical_to_default": true
+    },
+    "combined": {
+     "intersections": 1781205,
+     "offsets_identical_to_default": true,
+     "identical_to_short_keys": true
+    },
+    "combined_no_ties": {
+     "intersections": 1781205,
+     "offsets_identical_to_default": true,
+     "same_keys_and_pairs_as_short_keys": true,
+     "flatten_ids_identical_to_short_keys": false
+    }
+   }
+  },
+  {
+   "view": 1000,
+   "image": "DECXIN2023012348/00000409",
+   "intersections": 754760,
+   "capacity": 943450,
+   "equal_key_runs": {
+    "ids64": {
+     "runs": 516,
+     "pairs_in_runs": 1032,
+     "share_in_runs": 0.0013673220626424295,
+     "mean_run": 2.0,
+     "p99_run": 2.0,
+     "max_run": 2,
+     "sum_run_sq": 2064
+    },
+    "keys32": {
+     "runs": 157436,
+     "pairs_in_runs": 423140,
+     "share_in_runs": 0.5606285441729821,
+     "mean_run": 2.687695317462334,
+     "p99_run": 8.0,
+     "max_run": 44,
+     "sum_run_sq": 1489452
+    }
+   },
+   "median_ms": {
+    "default": 0.2465120032429695,
+    "short_keys": 0.21062400192022324,
+    "single_pass": 0.19968000054359436,
+    "combined": 0.17100800573825836,
+    "combined_no_ties": 0.15769599378108978
+   },
+   "checks": {
+    "short_keys": {
+     "intersections": 754760,
+     "offsets_identical_to_default": true
+    },
+    "single_pass": {
+     "intersections": 754760,
+     "offsets_identical_to_default": true,
+     "identical_to_default": true
+    },
+    "combined": {
+     "intersections": 754760,
+     "offsets_identical_to_default": true,
+     "identical_to_short_keys": true
+    },
+    "combined_no_ties": {
+     "intersections": 754760,
+     "offsets_identical_to_default": true,
+     "same_keys_and_pairs_as_short_keys": true,
+     "flatten_ids_identical_to_short_keys": false
+    }
+   }
+  },
+  {
+   "view": 1250,
+   "image": "DECXIN20230102350/00000859",
+   "intersections": 619808,
+   "capacity": 774760,
+   "equal_key_runs": {
+    "ids64": {
+     "runs": 219,
+     "pairs_in_runs": 438,
+     "share_in_runs": 0.0007066704527853787,
+     "mean_run": 2.0,
+     "p99_run": 2.0,
+     "max_run": 2,
+     "sum_run_sq": 876
+    },
+    "keys32": {
+     "runs": 130640,
+     "pairs_in_runs": 363829,
+     "share_in_runs": 0.5870027492384738,
+     "mean_run": 2.784973974280465,
+     "p99_run": 8.0,
+     "max_run": 31,
+     "sum_run_sq": 1263105
+    }
+   },
+   "median_ms": {
+    "default": 0.23004800081253052,
+    "short_keys": 0.20377600193023682,
+    "single_pass": 0.19251200556755066,
+    "combined": 0.16140799969434738,
+    "combined_no_ties": 0.15425600111484528
+   },
+   "checks": {
+    "short_keys": {
+     "intersections": 619808,
+     "offsets_identical_to_default": true
+    },
+    "single_pass": {
+     "intersections": 619808,
+     "offsets_identical_to_default": true,
+     "identical_to_default": true
+    },
+    "combined": {
+     "intersections": 619808,
+     "offsets_identical_to_default": true,
+     "identical_to_short_keys": true
+    },
+    "combined_no_ties": {
+     "intersections": 619808,
+     "offsets_identical_to_default": true,
+     "same_keys_and_pairs_as_short_keys": true,
+     "flatten_ids_identical_to_short_keys": false
+    }
+   }
+  }
+ ]
+}
