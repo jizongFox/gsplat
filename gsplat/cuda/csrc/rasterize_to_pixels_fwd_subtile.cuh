@@ -119,7 +119,7 @@ inline __device__ uint32_t subtile_mask(
 // identical. Wider colours are read from global memory per hit: on water2
 // (RTX 4090) staging 8, 16 or 32 channels was slower on some views at 1280x720
 // or 3840x2160 (the staged batch costs occupancy), while 1-4 channels were
-// faster on every view (benchmarks/pennygs/subtile_staging.md).
+// faster on every view (measurements in PR #25).
 constexpr uint32_t MAX_STAGE_DIM = 4;
 } // namespace subtile_fwd
 

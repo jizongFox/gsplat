@@ -558,8 +558,8 @@ def rasterize_to_pixels(
             only the Gaussians that can reach its 8x4 part of the tile, and 1-4
             channel colors are staged in shared memory (PennyGS, arXiv 2611.27525
             Sec. 3.4). It needs tile_size 16. Faster on the measured scenes, but
-            about 1.6 % slower with 32 channels at 3840x2160
-            (benchmarks/pennygs/subtile_staging.md).
+            about 1.6 % slower with 32 channels at 3840x2160 (measurements in
+            PR #25).
 
     Returns:
         A tuple:
