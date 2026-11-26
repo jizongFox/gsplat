@@ -22,7 +22,7 @@ either key type by dtype. Gaussians whose depths agree in the kept bits keep
 their input order instead of depth order, so this is an approximation.
 At least 16 depth bits are required (otherwise `RuntimeError`).
 
-`binning_variants.py --scope binning` (`isect_tiles` + `isect_offset_encode`, ms):
+`short_keys_benchmark.py --scope binning` (`isect_tiles` + `isect_offset_encode`, ms):
 
 | View | Intersections | default | short keys | Speedup | Tile ranges |
 |---|---:|---:|---:|---:|---|
@@ -58,6 +58,6 @@ Measurements: `measurements/short_keys_{binning,render}.json`.
 ```bash
 TORCH_CUDA_ARCH_LIST=8.9 python setup.py build_ext --inplace
 python -m pytest -q tests/test_short_keys.py
-PYTHONPATH=$PWD python benchmarks/pennygs/binning_variants.py --ply <point_cloud.ply> \
+PYTHONPATH=$PWD python benchmarks/pennygs/short_keys_benchmark.py --ply <point_cloud.ply> \
   --cameras <cameras.json> --scope binning --output binning.json   # then --scope render
 ```
