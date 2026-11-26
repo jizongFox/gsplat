@@ -1,0 +1,464 @@
+{
+ "gsplat": "/home/jizong/workspace/dConstruct/gaussian-splatting/.worktrees/gsplat-pennygs/gsplat",
+ "device": "NVIDIA GeForce RTX 4090",
+ "gaussians": 2909851,
+ "scope": "raster",
+ "views": [
+  {
+   "view": 0,
+   "image": "DECXIN20230102350/00000008",
+   "intersections": 1011765,
+   "visible": 260011,
+   "median_ms": {
+    "pixel": 1.2554880380630493,
+    "pixel_lean": 1.1704319715499878,
+    "chunk": 2.145279884338379,
+    "chunk_lean": 1.6348479986190796,
+    "chunk_cull": 1.8334720134735107,
+    "chunk_lean_cull": 1.3506560325622559
+   },
+   "checks": {
+    "pixel_lean": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 9.267093100402451e-07,
+      "conics": 4.4159919008951546e-07,
+      "colors": 1.0890358978982066e-07,
+      "opacities": 3.9587392006467905e-07,
+      "absgrad": 1.9922675285215984e-07
+     },
+     "finite": true,
+     "passed": true
+    },
+    "chunk": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 1.1251253964163539e-07,
+      "conics": 2.6443241968114544e-07,
+      "colors": 1.4881083771149093e-07,
+      "opacities": 1.5670502283767106e-07,
+      "absgrad": 9.394677762992871e-08
+     },
+     "finite": true,
+     "passed": true
+    },
+    "chunk_lean": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 9.275032427929811e-07,
+      "conics": 4.3535096488689156e-07,
+      "colors": 1.4950387687979146e-07,
+      "opacities": 3.831378455074944e-07,
+      "absgrad": 2.0207776117445377e-07
+     },
+     "finite": true,
+     "passed": true
+    },
+    "chunk_cull": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 1.1203041694594295e-07,
+      "conics": 2.5672406474675183e-07,
+      "colors": 1.493244614924187e-07,
+      "opacities": 1.4611627278236737e-07,
+      "absgrad": 9.42686593834917e-08
+     },
+     "finite": true,
+     "passed": true
+    },
+    "chunk_lean_cull": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 9.275949405322605e-07,
+      "conics": 4.4442579219925883e-07,
+      "colors": 1.4930730103383146e-07,
+      "opacities": 3.825759577302967e-07,
+      "absgrad": 2.0181948157916178e-07
+     },
+     "finite": true,
+     "passed": true
+    }
+   }
+  },
+  {
+   "view": 250,
+   "image": "DECXIN20230102350/00001179",
+   "intersections": 4830907,
+   "visible": 2527193,
+   "median_ms": {
+    "pixel": 6.880768060684204,
+    "pixel_lean": 6.957567930221558,
+    "chunk": 25.215999603271484,
+    "chunk_lean": 24.864255905151367,
+    "chunk_cull": 14.516784191131592,
+    "chunk_lean_cull": 14.528480052947998
+   },
+   "checks": {
+    "pixel_lean": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 1.9597663468891127e-06,
+      "conics": 7.762452864742328e-07,
+      "colors": 1.0090406713593086e-07,
+      "opacities": 9.050177754744833e-07,
+      "absgrad": 5.321036504277173e-07
+     },
+     "finite": true,
+     "passed": true
+    },
+    "chunk": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 9.176054638757417e-08,
+      "conics": 1.8308404805860538e-07,
+      "colors": 1.4514555307487373e-07,
+      "opacities": 1.0466018828450016e-07,
+      "absgrad": 9.15552520235637e-08
+     },
+     "finite": true,
+     "passed": true
+    },
+    "chunk_lean": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 1.9600225417114833e-06,
+      "conics": 7.601140955024318e-07,
+      "colors": 1.4527303301068606e-07,
+      "opacities": 9.042886307668991e-07,
+      "absgrad": 5.336320551445854e-07
+     },
+     "finite": true,
+     "passed": true
+    },
+    "chunk_cull": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 9.179037514043024e-08,
+      "conics": 1.754802082700032e-07,
+      "colors": 1.449853480003462e-07,
+      "opacities": 1.0474279382994536e-07,
+      "absgrad": 9.048223889999791e-08
+     },
+     "finite": true,
+     "passed": true
+    },
+    "chunk_lean_cull": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 1.9600300557260717e-06,
+      "conics": 7.610531976588688e-07,
+      "colors": 1.4516111388510374e-07,
+      "opacities": 9.045180732986813e-07,
+      "absgrad": 5.338736515006421e-07
+     },
+     "finite": true,
+     "passed": true
+    }
+   }
+  },
+  {
+   "view": 500,
+   "image": "DECXIN2023012346/00000865",
+   "intersections": 996736,
+   "visible": 320001,
+   "median_ms": {
+    "pixel": 1.3629440069198608,
+    "pixel_lean": 1.2397279739379883,
+    "chunk": 2.4139840602874756,
+    "chunk_lean": 1.716800034046173,
+    "chunk_cull": 2.0101120471954346,
+    "chunk_lean_cull": 1.423359990119934
+   },
+   "checks": {
+    "pixel_lean": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 6.978652077943755e-07,
+      "conics": 7.26975966181478e-07,
+      "colors": 9.509804722433828e-08,
+      "opacities": 5.607992330096652e-07,
+      "absgrad": 1.5459695535513067e-07
+     },
+     "finite": true,
+     "passed": true
+    },
+    "chunk": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 1.1041175575623026e-07,
+      "conics": 2.838132553673029e-07,
+      "colors": 1.414237199304703e-07,
+      "opacities": 1.3772587427977423e-07,
+      "absgrad": 9.673817484995214e-08
+     },
+     "finite": true,
+     "passed": true
+    },
+    "chunk_lean": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 6.989532135826874e-07,
+      "conics": 7.218185758517457e-07,
+      "colors": 1.4133301043383622e-07,
+      "opacities": 5.587165824312932e-07,
+      "absgrad": 1.5975092650740668e-07
+     },
+     "finite": true,
+     "passed": true
+    },
+    "chunk_cull": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 1.1023983502232309e-07,
+      "conics": 2.817042524815118e-07,
+      "colors": 1.413468237199343e-07,
+      "opacities": 1.3491623602334383e-07,
+      "absgrad": 9.795814727080993e-08
+     },
+     "finite": true,
+     "passed": true
+    },
+    "chunk_lean_cull": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 6.989623482965495e-07,
+      "conics": 7.353142293668877e-07,
+      "colors": 1.4148162490451166e-07,
+      "opacities": 5.573588944108269e-07,
+      "absgrad": 1.5915122009489892e-07
+     },
+     "finite": true,
+     "passed": true
+    }
+   }
+  },
+  {
+   "view": 750,
+   "image": "DECXIN2023012347/00000637",
+   "intersections": 1781205,
+   "visible": 689503,
+   "median_ms": {
+    "pixel": 2.245136022567749,
+    "pixel_lean": 2.1898239850997925,
+    "chunk": 4.38972806930542,
+    "chunk_lean": 3.4862080812454224,
+    "chunk_cull": 3.310912013053894,
+    "chunk_lean_cull": 2.6107040643692017
+   },
+   "checks": {
+    "pixel_lean": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 8.79419825569737e-07,
+      "conics": 8.402080575489151e-07,
+      "colors": 1.0821118737972032e-07,
+      "opacities": 5.802313539838764e-07,
+      "absgrad": 1.9688679127259483e-07
+     },
+     "finite": true,
+     "passed": true
+    },
+    "chunk": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 1.092192003651727e-07,
+      "conics": 2.589309805912677e-07,
+      "colors": 1.5843341478407362e-07,
+      "opacities": 1.2617631168200207e-07,
+      "absgrad": 8.634330828964666e-08
+     },
+     "finite": true,
+     "passed": true
+    },
+    "chunk_lean": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 8.805541144023041e-07,
+      "conics": 8.112483828470173e-07,
+      "colors": 1.5826418488699368e-07,
+      "opacities": 5.798112500977554e-07,
+      "absgrad": 2.0091945782899e-07
+     },
+     "finite": true,
+     "passed": true
+    },
+    "chunk_cull": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 1.091664821998859e-07,
+      "conics": 2.5006332624496913e-07,
+      "colors": 1.5775389744553805e-07,
+      "opacities": 1.2686097049014608e-07,
+      "absgrad": 8.615788626994358e-08
+     },
+     "finite": true,
+     "passed": true
+    },
+    "chunk_lean_cull": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 8.806149121177468e-07,
+      "conics": 8.165251586574925e-07,
+      "colors": 1.5808132345638554e-07,
+      "opacities": 5.798289287630075e-07,
+      "absgrad": 2.009767655739912e-07
+     },
+     "finite": true,
+     "passed": true
+    }
+   }
+  },
+  {
+   "view": 1000,
+   "image": "DECXIN2023012348/00000409",
+   "intersections": 754760,
+   "visible": 145831,
+   "median_ms": {
+    "pixel": 1.268288016319275,
+    "pixel_lean": 1.183743953704834,
+    "chunk": 2.247167944908142,
+    "chunk_lean": 1.6926720142364502,
+    "chunk_cull": 1.9505119919776917,
+    "chunk_lean_cull": 1.4437440037727356
+   },
+   "checks": {
+    "pixel_lean": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 8.203906734865436e-07,
+      "conics": 1.3778014290833383e-06,
+      "colors": 1.3122961814284616e-07,
+      "opacities": 5.73826245418212e-07,
+      "absgrad": 1.5567576593470135e-07
+     },
+     "finite": true,
+     "passed": true
+    },
+    "chunk": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 1.2411735240737613e-07,
+      "conics": 1.8639255805475023e-07,
+      "colors": 1.7417143110521743e-07,
+      "opacities": 1.3155047199932203e-07,
+      "absgrad": 9.473228818758031e-08
+     },
+     "finite": true,
+     "passed": true
+    },
+    "chunk_lean": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 8.209210658294999e-07,
+      "conics": 1.376524125778553e-06,
+      "colors": 1.7411070056445928e-07,
+      "opacities": 5.759728897217897e-07,
+      "absgrad": 1.5929098117180333e-07
+     },
+     "finite": true,
+     "passed": true
+    },
+    "chunk_cull": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 1.2379909460774916e-07,
+      "conics": 1.8120555148970448e-07,
+      "colors": 1.7416223619323397e-07,
+      "opacities": 1.3251672149532866e-07,
+      "absgrad": 9.506807141609414e-08
+     },
+     "finite": true,
+     "passed": true
+    },
+    "chunk_lean_cull": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 8.209384253072991e-07,
+      "conics": 1.376722225113597e-06,
+      "colors": 1.7417834979765093e-07,
+      "opacities": 5.763329763374968e-07,
+      "absgrad": 1.58710992692513e-07
+     },
+     "finite": true,
+     "passed": true
+    }
+   }
+  },
+  {
+   "view": 1250,
+   "image": "DECXIN20230102350/00000859",
+   "intersections": 619808,
+   "visible": 146389,
+   "median_ms": {
+    "pixel": 1.0270719528198242,
+    "pixel_lean": 0.9495680034160614,
+    "chunk": 1.7562400102615356,
+    "chunk_lean": 1.2078239917755127,
+    "chunk_cull": 1.53683203458786,
+    "chunk_lean_cull": 1.0567679405212402
+   },
+   "checks": {
+    "pixel_lean": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 5.07897978560676e-07,
+      "conics": 4.300345746332895e-07,
+      "colors": 1.0726278132757989e-07,
+      "opacities": 4.647794879613548e-07,
+      "absgrad": 1.1304547500271201e-07
+     },
+     "finite": true,
+     "passed": true
+    },
+    "chunk": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 1.2368904657426173e-07,
+      "conics": 1.6953473146791198e-07,
+      "colors": 1.4968011912485338e-07,
+      "opacities": 1.475855656670777e-07,
+      "absgrad": 9.415289496775637e-08
+     },
+     "finite": true,
+     "passed": true
+    },
+    "chunk_lean": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 5.09341190848679e-07,
+      "conics": 3.973255995151798e-07,
+      "colors": 1.5015330791871857e-07,
+      "opacities": 4.6019071174205526e-07,
+      "absgrad": 1.204926172885785e-07
+     },
+     "finite": true,
+     "passed": true
+    },
+    "chunk_cull": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 1.2256189277968138e-07,
+      "conics": 1.7196685465515846e-07,
+      "colors": 1.499118673434717e-07,
+      "opacities": 1.4578022773127716e-07,
+      "absgrad": 9.429596117248437e-08
+     },
+     "finite": true,
+     "passed": true
+    },
+    "chunk_lean_cull": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 5.09395103170601e-07,
+      "conics": 3.881347776468301e-07,
+      "colors": 1.4988452302845722e-07,
+      "opacities": 4.620893971627987e-07,
+      "absgrad": 1.2027423291942976e-07
+     },
+     "finite": true,
+     "passed": true
+    }
+   }
+  }
+ ]
+}

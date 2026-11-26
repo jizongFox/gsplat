@@ -55,7 +55,9 @@ def rasterization(
     distributed: bool = False,
     camera_model: Literal["pinhole", "ortho", "fisheye"] = "pinhole",
     covars: Optional[Tensor] = None,
-    rasterize_backward: Literal["pixel", "pixel_lean"] = "pixel",
+    rasterize_backward: Literal[
+        "pixel", "pixel_lean", "chunk", "chunk_lean", "chunk_cull", "chunk_lean_cull"
+    ] = "pixel",
 ) -> Tuple[Tensor, Tensor, Dict]:
     """Rasterize a set of 3D Gaussians (N) to a batch of image planes (C).
 

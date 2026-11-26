@@ -190,7 +190,14 @@ def main():
     parser.add_argument(
         "--variants",
         nargs="+",
-        default=["pixel", "pixel_lean"],
+        default=[
+            "pixel",
+            "pixel_lean",
+            "chunk",
+            "chunk_lean",
+            "chunk_cull",
+            "chunk_lean_cull",
+        ],
     )
     parser.add_argument("--scope", choices=("raster", "render"), default="raster")
     parser.add_argument("--warmup", type=int, default=10)

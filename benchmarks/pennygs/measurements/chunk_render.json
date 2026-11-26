@@ -1,0 +1,194 @@
+{
+ "gsplat": "/home/jizong/workspace/dConstruct/gaussian-splatting/.worktrees/gsplat-pennygs/gsplat",
+ "device": "NVIDIA GeForce RTX 4090",
+ "gaussians": 2909851,
+ "scope": "render",
+ "views": [
+  {
+   "view": 0,
+   "image": "DECXIN20230102350/00000008",
+   "median_ms": {
+    "pixel": {
+     "forward": 5.44977593421936,
+     "backward": 10.800640106201172,
+     "total": 16.279024124145508
+    },
+    "chunk_lean_cull": {
+     "forward": 5.451744079589844,
+     "backward": 10.925648212432861,
+     "total": 16.382848262786865
+    }
+   },
+   "checks": {
+    "chunk_lean_cull": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "grad.means": 1.241695669250597e-06,
+      "grad.quats": 2.748649089763511e-06,
+      "grad.log_scales": 1.463066563315151e-06,
+      "grad.opacity_logits": 6.856951752722184e-07,
+      "grad.dc": 1.5212853895049507e-07,
+      "grad.means2d_abs": 3.5120778408348e-07
+     },
+     "finite": true,
+     "passed": true
+    }
+   }
+  },
+  {
+   "view": 250,
+   "image": "DECXIN20230102350/00001179",
+   "median_ms": {
+    "pixel": {
+     "forward": 9.898895740509033,
+     "backward": 16.633392333984375,
+     "total": 26.555904388427734
+    },
+    "chunk_lean_cull": {
+     "forward": 9.902368068695068,
+     "backward": 24.425408363342285,
+     "total": 34.297760009765625
+    }
+   },
+   "checks": {
+    "chunk_lean_cull": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "grad.means": 2.489474093205448e-06,
+      "grad.quats": 5.401932591835075e-06,
+      "grad.log_scales": 2.9599572218455068e-06,
+      "grad.opacity_logits": 2.067076771378701e-06,
+      "grad.dc": 1.529361948553909e-07,
+      "grad.means2d_abs": 1.2395315927659727e-06
+     },
+     "finite": true,
+     "passed": true
+    }
+   }
+  },
+  {
+   "view": 500,
+   "image": "DECXIN2023012346/00000865",
+   "median_ms": {
+    "pixel": {
+     "forward": 5.5403361320495605,
+     "backward": 10.888304233551025,
+     "total": 16.43603205680847
+    },
+    "chunk_lean_cull": {
+     "forward": 5.524928092956543,
+     "backward": 10.959743976593018,
+     "total": 16.496304035186768
+    }
+   },
+   "checks": {
+    "chunk_lean_cull": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "grad.means": 1.228411060717411e-06,
+      "grad.quats": 1.1014648436192982e-05,
+      "grad.log_scales": 2.078762264341909e-06,
+      "grad.opacity_logits": 1.3317360451235009e-06,
+      "grad.dc": 1.4684436832244935e-07,
+      "grad.means2d_abs": 2.859548590728571e-07
+     },
+     "finite": true,
+     "passed": true
+    }
+   }
+  },
+  {
+   "view": 750,
+   "image": "DECXIN2023012347/00000637",
+   "median_ms": {
+    "pixel": {
+     "forward": 6.205968141555786,
+     "backward": 11.871551990509033,
+     "total": 18.009040117263794
+    },
+    "chunk_lean_cull": {
+     "forward": 6.150015830993652,
+     "backward": 12.25011157989502,
+     "total": 18.368319749832153
+    }
+   },
+   "checks": {
+    "chunk_lean_cull": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "grad.means": 9.353862733229773e-07,
+      "grad.quats": 2.3733734837570027e-06,
+      "grad.log_scales": 1.5453907512183277e-06,
+      "grad.opacity_logits": 1.4132640812014947e-06,
+      "grad.dc": 1.6458477585615427e-07,
+      "grad.means2d_abs": 3.904846321569017e-07
+     },
+     "finite": true,
+     "passed": true
+    }
+   }
+  },
+  {
+   "view": 1000,
+   "image": "DECXIN2023012348/00000409",
+   "median_ms": {
+    "pixel": {
+     "forward": 5.451568126678467,
+     "backward": 10.681407928466797,
+     "total": 16.120223999023438
+    },
+    "chunk_lean_cull": {
+     "forward": 5.372992038726807,
+     "backward": 10.911231994628906,
+     "total": 16.273552179336548
+    }
+   },
+   "checks": {
+    "chunk_lean_cull": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "grad.means": 1.8851088306254788e-06,
+      "grad.quats": 4.391295452830004e-06,
+      "grad.log_scales": 2.953247678963635e-06,
+      "grad.opacity_logits": 1.2185668824503422e-06,
+      "grad.dc": 1.774889602983573e-07,
+      "grad.means2d_abs": 3.566546149893097e-07
+     },
+     "finite": true,
+     "passed": true
+    }
+   }
+  },
+  {
+   "view": 1250,
+   "image": "DECXIN20230102350/00000859",
+   "median_ms": {
+    "pixel": {
+     "forward": 5.229135990142822,
+     "backward": 10.47705602645874,
+     "total": 15.718400001525879
+    },
+    "chunk_lean_cull": {
+     "forward": 5.228224039077759,
+     "backward": 10.494976043701172,
+     "total": 15.728048086166382
+    }
+   },
+   "checks": {
+    "chunk_lean_cull": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "grad.means": 1.0409273241345854e-06,
+      "grad.quats": 2.9855529673212152e-05,
+      "grad.log_scales": 1.8888028470253427e-06,
+      "grad.opacity_logits": 1.0637431611738565e-06,
+      "grad.dc": 1.565616321806493e-07,
+      "grad.means2d_abs": 1.845957358856579e-07
+     },
+     "finite": true,
+     "passed": true
+    }
+   }
+  }
+ ]
+}
