@@ -96,10 +96,6 @@ __global__ void rasterize_to_pixels_bwd_kernel(
         return;
     }
     const uint32_t block_size = block.size();
-    const uint32_t tr = block.thread_rank();
-    cg::thread_block_tile<32> warp = cg::tiled_partition<32>(block);
-    const uint32_t staging_size = WARP_PRIVATE ? 32 : block_size;
-    const uint32_t staging_lane = WARP_PRIVATE ? warp.thread_rank() : tr;
 
     extern __shared__ int s[];
     int32_t *id_batch = (int32_t *)s; // [block_size]
@@ -109,15 +105,6 @@ __global__ void rasterize_to_pixels_bwd_kernel(
         reinterpret_cast<vec3<float> *>(&xy_opacity_batch[block_size]
         );                                         // [block_size]
     S *rgbs_batch = (S *)&conic_batch[block_size]; // [block_size * COLOR_DIM]
-    if constexpr (WARP_PRIVATE) {
-        // Form every array's base before shifting: each full warp owns 32
-        // entries in each SoA array, and can reuse them independently.
-        const uint32_t offset = (tr / 32) * 32;
-        id_batch += offset;
-        xy_opacity_batch += offset;
-        conic_batch += offset;
-        rgbs_batch += offset * COLOR_DIM;
-    }
 
     // this is the T AFTER the last gaussian in this pixel
     S T_final = 1.0f - render_alphas[pix_id];
@@ -137,6 +124,19 @@ __global__ void rasterize_to_pixels_bwd_kernel(
 
     // collect and process batches of gaussians
     // each thread loads one gaussian at a time before rasterizing
+    const uint32_t tr = block.thread_rank();
+    cg::thread_block_tile<32> warp = cg::tiled_partition<32>(block);
+    const uint32_t staging_size = WARP_PRIVATE ? 32 : block_size;
+    const uint32_t staging_lane = WARP_PRIVATE ? warp.thread_rank() : tr;
+    if constexpr (WARP_PRIVATE) {
+        // Form every array's base before shifting: each full warp owns 32
+        // entries in each SoA array, and can reuse them independently.
+        const uint32_t offset = (tr / 32) * 32;
+        id_batch += offset;
+        xy_opacity_batch += offset;
+        conic_batch += offset;
+        rgbs_batch += offset * COLOR_DIM;
+    }
     const int32_t warp_bin_final =
         cg::reduce(warp, bin_final, cg::greater<int>());
     // last_ids are absolute intersection positions. Trim the tile's fully
@@ -525,8 +525,14 @@ call_kernel_with_dim_impl(
     );
 }
 
+// By default every batch is staged for the whole block (block-wide syncs).
+// With warp_private, each warp stages and walks its own 32-entry slices
+// (__syncwarp only); it applies to 8 or fewer channels and tiles of whole
+// warps, other cases take the default path. It is opt-in: it was faster or
+// slower depending on the workload.
 template <uint32_t CDIM, typename... Rest>
 auto dispatch_kernel_with_dim(
+    const bool warp_private,
     const torch::Tensor &means2d,
     const torch::Tensor &conics,
     const torch::Tensor &colors,
@@ -539,7 +545,7 @@ auto dispatch_kernel_with_dim(
     Rest &&...rest
 ) {
     if constexpr (CDIM <= 8) {
-        if ((tile_size * tile_size) % 32 == 0) {
+        if (warp_private && (tile_size * tile_size) % 32 == 0) {
             return call_kernel_with_dim_impl<CDIM, true>(
                 means2d, conics, colors, opacities, backgrounds, masks,
                 image_width, image_height, tile_size,
@@ -581,7 +587,8 @@ rasterize_to_pixels_bwd_tensor(
     const torch::Tensor &v_render_colors, // [C, image_height, image_width, 3]
     const torch::Tensor &v_render_alphas, // [C, image_height, image_width, 1]
     // options
-    bool absgrad
+    bool absgrad,
+    bool warp_private
 ) {
 
     GSPLAT_CHECK_INPUT(colors);
@@ -590,6 +597,7 @@ rasterize_to_pixels_bwd_tensor(
 #define __GS__CALL_(N)                                                         \
     case N:                                                                    \
         return dispatch_kernel_with_dim<N>(                                    \
+            warp_private,                                                      \
             means2d,                                                           \
             conics,                                                            \
             colors,                                                            \

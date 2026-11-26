@@ -56,6 +56,7 @@ def rasterization(
     camera_model: Literal["pinhole", "ortho", "fisheye"] = "pinhole",
     covars: Optional[Tensor] = None,
     rasterize_forward: Literal["pixel", "subtile"] = "pixel",
+    rasterize_backward: Literal["block", "warp_private"] = "block",
 ) -> Tuple[Tensor, Tensor, Dict]:
     """Rasterize a set of 3D Gaussians (N) to a batch of image planes (C).
 
@@ -203,6 +204,8 @@ def rasterization(
             `scales` will be ignored. [N, 3, 3], Default is None.
         rasterize_forward: Forward kernel of the rasterizer, "pixel" (default) or
             "subtile" (same outputs), see `rasterize_to_pixels(forward=...)`.
+        rasterize_backward: Backward kernel of the rasterizer, "block" (default)
+            or "warp_private", see `rasterize_to_pixels(backward=...)`.
 
     Returns:
         A tuple:
@@ -578,6 +581,7 @@ def rasterization(
                 packed=packed,
                 absgrad=absgrad,
                 forward=rasterize_forward,
+                backward=rasterize_backward,
             )
             render_colors.append(render_colors_)
             render_alphas.append(render_alphas_)
@@ -598,6 +602,7 @@ def rasterization(
             packed=packed,
             absgrad=absgrad,
             forward=rasterize_forward,
+            backward=rasterize_backward,
         )
     if render_mode in ["ED", "RGB+ED"]:
         # normalize the accumulated depth to get the expected depth
