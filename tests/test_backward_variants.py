@@ -1,4 +1,4 @@
-"""Backward variants of rasterize_to_pixels (PennyGS, arXiv 2611.27525).
+"""Backward-traversal variants of rasterize_to_pixels (PennyGS, arXiv 2611.27525).
 
 Every variant must reproduce the default per-pixel gradients up to summation
 order, including partial edge tiles, backgrounds, tile masks, packed inputs,
@@ -14,7 +14,7 @@ import torch
 from gsplat._helper import load_test_data
 
 device = torch.device("cuda:0")
-VARIANTS = ["pixel_lean"]
+VARIANTS = ["pixel_lean", "chunk", "chunk_lean", "chunk_cull", "chunk_lean_cull"]
 
 
 def rel_l2(value, ref):
@@ -169,20 +169,32 @@ def test_variants_match_torch_reference():
     reference = torch.autograd.grad(
         (image * v_image).sum() + (alpha * v_alpha).sum(), leaves
     )
-    for variant in VARIANTS:
+    for variant in ["chunk_lean_cull", "pixel_lean"]:
         grads = _grads(scene, variant)[2][:4]
         for grad, ref, tol in zip(grads, reference, (5e-3, 1e-3, 1e-3, 2e-3)):
             torch.testing.assert_close(grad, ref, rtol=tol, atol=tol)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
-def test_unknown_backward_is_rejected():
+def test_chunk_variants_reject_unsupported_layouts():
     from gsplat.cuda._wrapper import rasterize_to_pixels
 
-    scene = _scene(3)
+    scene = _scene(16)
+    leaves = [t.clone().requires_grad_() for t in scene["inputs"]]
+    image, alpha = rasterize_to_pixels(
+        *leaves,
+        scene["width"],
+        scene["height"],
+        16,
+        scene["offsets"],
+        scene["flatten_ids"],
+        backward="chunk",
+    )
+    with pytest.raises(RuntimeError, match="up to 8 channels"):
+        torch.autograd.grad(image.sum(), leaves)
     with pytest.raises(ValueError, match="Unknown backward"):
         rasterize_to_pixels(
-            *scene["inputs"],
+            *leaves,
             scene["width"],
             scene["height"],
             16,
@@ -190,3 +202,30 @@ def test_unknown_backward_is_rejected():
             scene["flatten_ids"],
             backward="warp",
         )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
+@pytest.mark.parametrize("variant", ["chunk_cull", "chunk_lean_cull"])
+def test_chunk_culling_covers_float32_cancellation(variant):
+    """A far, very anisotropic Gaussian whose float32 sigma at pixel (0, 0) passes
+    the renderer's threshold although the exact ellipse misses the tile."""
+    from gsplat.cuda._wrapper import rasterize_to_pixels
+
+    inputs = [
+        torch.tensor([[[-9331.5, 10250.751953125]]], device=device),
+        torch.tensor([[[0.652995348, 0.594497681, 0.541240573]]], device=device),
+        torch.ones((1, 1, 3), device=device),
+        torch.full((1, 1), 0.9, device=device),
+    ]
+    offsets = torch.zeros((1, 1, 1), dtype=torch.int32, device=device)
+    flatten_ids = torch.zeros(1, dtype=torch.int32, device=device)
+    grads = []
+    for backward in ("pixel", variant):
+        leaves = [t.clone().requires_grad_() for t in inputs]
+        image, alpha = rasterize_to_pixels(
+            *leaves, 16, 16, 16, offsets, flatten_ids, backward=backward
+        )
+        assert float(alpha.max()) > 0
+        grads.append(torch.autograd.grad(image.sum() + alpha.sum(), leaves))
+    for g, ref in zip(grads[1], grads[0]):
+        torch.testing.assert_close(g, ref, rtol=1e-5, atol=1e-6)

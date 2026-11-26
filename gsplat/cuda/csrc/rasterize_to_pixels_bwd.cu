@@ -4,6 +4,7 @@
 #include "warp_reduce_scatter.cuh"
 #include <cooperative_groups.h>
 #include <cub/cub.cuh>
+#include <cuda/atomic>
 #include <cuda_runtime.h>
 
 namespace gsplat {
@@ -383,10 +384,404 @@ __global__ void rasterize_to_pixels_bwd_kernel(
     }
 }
 
+/****************************************************************************
+ * Per-chunk backward traversal (PennyGS, arXiv 2611.27525 Sec. 3.6)
+ *
+ * A 16x16 tile is eight 8x4 pixel chunks. Four warps share the tile; a warp
+ * owns one Gaussian at a time and walks the chunks, its 32 lanes handling the
+ * chunk's 32 pixels. Pixel state (transmittance, the partial sums of the
+ * Gaussians behind, the color gradient) lives in shared memory. A pixel must
+ * meet its Gaussians back to front, so a Gaussian enters a chunk only after
+ * every earlier (further back) Gaussian that walks the chunk has left it;
+ * per-chunk counters order the warps. The warp reduces a Gaussian's gradient
+ * over all its pixels once and issues one set of atomics per tile.
+ *
+ * CULL ("chunk culling"): a Gaussian walks, and waits for, only the chunks its
+ * alpha >= 1/255 ellipse can reach (conservative bounding-box test).
+ * LEAN: as in the per-pixel kernel, keep only the dot product of the behind
+ * colors with the pixel's color gradient.
+ ****************************************************************************/
+
+namespace chunk_bwd {
+constexpr uint32_t TILE = 16;
+constexpr uint32_t CHUNKS = 8; // 8x4 pixels each: 2 columns x 4 rows
+constexpr uint32_t WARPS = 4;
+constexpr uint32_t THREADS = WARPS * 32;
+constexpr uint32_t BATCH = THREADS; // Gaussians staged per batch
+
+inline __device__ uint32_t pixel_of(uint32_t chunk, uint32_t lane) {
+    const uint32_t x = (chunk % 2) * 8 + lane % 8;
+    const uint32_t y = (chunk / 2) * 4 + lane / 8;
+    return y * TILE + x;
+}
+
+// Chunks whose pixel centres can see alpha >= 1/255: bounding box of
+// {d : 0.5 d^T Q d <= ln(255 * opacity) + err}. The renderer evaluates sigma in
+// float32, where cancellation can accept pixels the exact ellipse excludes (far,
+// anisotropic Gaussians), so `err` bounds that rounding error over the tile:
+// 16 * 2^-24 * (largest |term| sum at the tile's corners). Ill-conditioned
+// conics (det below 1e-4 * q00 * q11), degenerate or nonfinite input reach every
+// chunk, so culling never drops a pixel the per-pixel kernel would use.
+template <typename S>
+inline __device__ uint32_t chunk_mask(
+    const vec2<S> xy, const vec3<S> conic, const S opac, const S tile_x0,
+    const S tile_y0
+) {
+    if (!(opac * 255.f >= 1.f)) {
+        return isfinite(opac) ? 0u : 0xffu;
+    }
+    const S det = conic.x * conic.z - conic.y * conic.y;
+    if (!(det > 1e-4f * conic.x * conic.z) || !isfinite(det) || !isfinite(xy.x) ||
+        !isfinite(xy.y)) {
+        return 0xffu;
+    }
+    const S dx = fmaxf(fabsf(xy.x - tile_x0), fabsf(xy.x - tile_x0 - (S)TILE));
+    const S dy = fmaxf(fabsf(xy.y - tile_y0), fabsf(xy.y - tile_y0 - (S)TILE));
+    const S terms = 0.5f * (fabsf(conic.x) * dx * dx + fabsf(conic.z) * dy * dy) +
+                    fabsf(conic.y) * dx * dy;
+    const S tau = __logf(opac * 255.f) * 1.01f + 1e-3f + terms * 9.5367431640625e-7f;
+    const S half_x = sqrtf(2.f * tau * conic.z / det) + 0.05f;
+    const S half_y = sqrtf(2.f * tau * conic.x / det) + 0.05f;
+    if (!isfinite(half_x) || !isfinite(half_y)) {
+        return 0xffu;
+    }
+    uint32_t mask = 0u;
+    GSPLAT_PRAGMA_UNROLL
+    for (uint32_t c = 0; c < CHUNKS; ++c) {
+        // pixel centres of the chunk span [x0 + 0.5, x0 + 7.5] x [y0 + 0.5, y0 + 3.5]
+        const S x0 = tile_x0 + (c % 2) * 8.f;
+        const S y0 = tile_y0 + (c / 2) * 4.f;
+        const bool reach = xy.x + half_x >= x0 + 0.5f && xy.x - half_x <= x0 + 7.5f &&
+                           xy.y + half_y >= y0 + 0.5f && xy.y - half_y <= y0 + 3.5f;
+        mask |= reach ? (1u << c) : 0u;
+    }
+    return mask;
+}
+} // namespace chunk_bwd
+
+template <uint32_t COLOR_DIM, bool LEAN, bool CULL, typename S>
+__global__ void __launch_bounds__(chunk_bwd::THREADS)
+    rasterize_to_pixels_bwd_chunk_kernel(
+        const uint32_t C,
+        const uint32_t n_isects,
+        const vec2<S> *__restrict__ means2d,
+        const vec3<S> *__restrict__ conics,
+        const S *__restrict__ colors,
+        const S *__restrict__ opacities,
+        const S *__restrict__ backgrounds,
+        const bool *__restrict__ masks,
+        const uint32_t image_width,
+        const uint32_t image_height,
+        const uint32_t tile_width,
+        const uint32_t tile_height,
+        const int32_t *__restrict__ tile_offsets,
+        const int32_t *__restrict__ flatten_ids,
+        const S *__restrict__ render_alphas,
+        const int32_t *__restrict__ last_ids,
+        const S *__restrict__ v_render_colors,
+        const S *__restrict__ v_render_alphas,
+        vec2<S> *__restrict__ v_means2d_abs,
+        vec2<S> *__restrict__ v_means2d,
+        vec3<S> *__restrict__ v_conics,
+        S *__restrict__ v_colors,
+        S *__restrict__ v_opacities
+    ) {
+    using namespace chunk_bwd;
+    static_assert(COLOR_DIM <= 8, "chunk backward supports up to 8 channels");
+    constexpr uint32_t PIXELS = TILE * TILE;
+    constexpr uint32_t BUF = LEAN ? 1 : COLOR_DIM;
+
+    auto block = cg::this_thread_block();
+    cg::thread_block_tile<32> warp = cg::tiled_partition<32>(block);
+    const uint32_t camera_id = block.group_index().x;
+    const uint32_t tile_row = block.group_index().y;
+    const uint32_t tile_col = block.group_index().z;
+    const uint32_t tile_id = tile_row * tile_width + tile_col;
+    const uint32_t tr = block.thread_rank();
+    const uint32_t warp_id = tr / 32;
+    const uint32_t lane = warp.thread_rank();
+
+    tile_offsets += camera_id * tile_height * tile_width;
+    render_alphas += camera_id * image_height * image_width;
+    last_ids += camera_id * image_height * image_width;
+    v_render_colors += camera_id * image_height * image_width * COLOR_DIM;
+    v_render_alphas += camera_id * image_height * image_width;
+    if (backgrounds != nullptr) {
+        backgrounds += camera_id * COLOR_DIM;
+    }
+    if (masks != nullptr) {
+        masks += camera_id * tile_height * tile_width;
+        if (!masks[tile_id]) {
+            return;
+        }
+    }
+    int32_t range_start = tile_offsets[tile_id];
+    int32_t range_end =
+        (camera_id == C - 1) && (tile_id == tile_width * tile_height - 1)
+            ? n_isects
+            : tile_offsets[tile_id + 1];
+    if (range_start == range_end) {
+        return;
+    }
+
+    // Pixel state.
+    __shared__ S s_T[PIXELS];
+    __shared__ S s_buf[PIXELS * BUF];
+    __shared__ S s_vc[PIXELS * COLOR_DIM];
+    __shared__ S s_wfinal[PIXELS]; // T_final * (dL/dalpha_out - bg . dL/dcolor)
+    __shared__ int32_t s_bin[PIXELS];
+    // Gaussian batch.
+    __shared__ int32_t s_id[BATCH];
+    __shared__ vec3<S> s_xyo[BATCH];
+    __shared__ vec3<S> s_conic[BATCH];
+    __shared__ S s_rgb[BATCH * COLOR_DIM];
+    __shared__ uint8_t s_mask[BATCH];
+    __shared__ uint8_t s_rank[CHUNKS * BATCH];
+    __shared__ uint32_t s_warp_count[CHUNKS * WARPS];
+    __shared__ int32_t s_done[CHUNKS];
+    __shared__ int32_t s_last;
+
+    if (tr == 0) {
+        s_last = range_start;
+    }
+    block.sync();
+    const S tile_x0 = (S)(tile_col * TILE);
+    const S tile_y0 = (S)(tile_row * TILE);
+    for (uint32_t p = tr; p < PIXELS; p += THREADS) {
+        const uint32_t i = tile_row * TILE + p / TILE;
+        const uint32_t j = tile_col * TILE + p % TILE;
+        const bool inside = i < image_height && j < image_width;
+        const uint32_t pix = inside ? i * image_width + j : 0;
+        const S T_final = inside ? 1.0f - render_alphas[pix] : 1.0f;
+        s_T[p] = T_final;
+        GSPLAT_PRAGMA_UNROLL
+        for (uint32_t k = 0; k < BUF; ++k) {
+            s_buf[p * BUF + k] = 0.f;
+        }
+        S bg_dot_v = 0.f;
+        GSPLAT_PRAGMA_UNROLL
+        for (uint32_t k = 0; k < COLOR_DIM; ++k) {
+            const S v = inside ? v_render_colors[pix * COLOR_DIM + k] : 0.f;
+            s_vc[p * COLOR_DIM + k] = v;
+            if (backgrounds != nullptr) {
+                bg_dot_v += backgrounds[k] * v;
+            }
+        }
+        const S v_a = inside ? v_render_alphas[pix] : 0.f;
+        s_wfinal[p] = T_final * (v_a - bg_dot_v);
+        const int32_t bin = inside ? last_ids[pix] : -1;
+        s_bin[p] = bin;
+        if (inside) {
+            atomicMax(&s_last, bin);
+        }
+    }
+    block.sync();
+    // Trim the tile's fully occluded suffix, as the per-pixel kernel does.
+    const int64_t exclusive_end = static_cast<int64_t>(s_last) + 1;
+    range_end = static_cast<int32_t>(
+        exclusive_end < range_end ? exclusive_end : range_end
+    );
+
+    const uint32_t num_batches = (range_end - range_start + BATCH - 1) / BATCH;
+    for (uint32_t b = 0; b < num_batches; ++b) {
+        block.sync();
+        // order k = 0 is the furthest back Gaussian of the batch
+        const int32_t batch_end = range_end - 1 - BATCH * b;
+        const int32_t batch_size = min((int32_t)BATCH, batch_end + 1 - range_start);
+        uint32_t mask = 0u;
+        if ((int32_t)tr < batch_size) {
+            const int32_t g = flatten_ids[batch_end - tr];
+            s_id[tr] = g;
+            const vec2<S> xy = means2d[g];
+            const S opac = opacities[g];
+            const vec3<S> conic = conics[g];
+            s_xyo[tr] = {xy.x, xy.y, opac};
+            s_conic[tr] = conic;
+            GSPLAT_PRAGMA_UNROLL
+            for (uint32_t k = 0; k < COLOR_DIM; ++k) {
+                s_rgb[tr * COLOR_DIM + k] = colors[g * COLOR_DIM + k];
+            }
+            mask = CULL ? chunk_mask<S>(xy, conic, opac, tile_x0, tile_y0) : 0xffu;
+            s_mask[tr] = (uint8_t)mask;
+        }
+        if constexpr (CULL) {
+            // rank[c][k]: number of earlier Gaussians of the batch walking chunk c
+            GSPLAT_PRAGMA_UNROLL
+            for (uint32_t c = 0; c < CHUNKS; ++c) {
+                const uint32_t ballot = warp.ballot((mask >> c) & 1u);
+                s_rank[c * BATCH + tr] = __popc(ballot & ((1u << lane) - 1u));
+                if (lane == 0) {
+                    s_warp_count[c * WARPS + warp_id] = __popc(ballot);
+                }
+            }
+            block.sync();
+            GSPLAT_PRAGMA_UNROLL
+            for (uint32_t c = 0; c < CHUNKS; ++c) {
+                uint32_t base = 0;
+                for (uint32_t w = 0; w < warp_id; ++w) {
+                    base += s_warp_count[c * WARPS + w];
+                }
+                s_rank[c * BATCH + tr] += base;
+            }
+        }
+        if (tr < CHUNKS) {
+            s_done[tr] = 0;
+        }
+        block.sync();
+
+        for (int32_t k = warp_id; k < batch_size; k += WARPS) {
+            const int32_t idx = batch_end - k; // position in the tile's list
+            const vec3<S> xyo = s_xyo[k];
+            const vec3<S> conic = s_conic[k];
+            const S opac = xyo.z;
+            S rgb[COLOR_DIM];
+            GSPLAT_PRAGMA_UNROLL
+            for (uint32_t c = 0; c < COLOR_DIM; ++c) {
+                rgb[c] = s_rgb[k * COLOR_DIM + c];
+            }
+            const uint32_t walk = CULL ? s_mask[k] : 0xffu;
+
+            S v_rgb_local[COLOR_DIM] = {0.f};
+            vec3<S> v_conic_local = {0.f, 0.f, 0.f};
+            vec2<S> v_xy_local = {0.f, 0.f};
+            vec2<S> v_xy_abs_local = {0.f, 0.f};
+            S v_opacity_local = 0.f;
+
+            for (uint32_t c = 0; c < CHUNKS; ++c) {
+                if (!((walk >> c) & 1u)) {
+                    continue;
+                }
+                const int32_t rank = CULL ? (int32_t)s_rank[c * BATCH + k] : k;
+                // Wait until every earlier Gaussian walking this chunk has left
+                // (acquire: their pixel-state writes are visible after the warp
+                // barrier).
+                cuda::atomic_ref<int32_t, cuda::thread_scope_block> done(s_done[c]);
+                if (lane == 0) {
+                    while (done.load(cuda::memory_order_acquire) != rank) {
+                    }
+                }
+                warp.sync();
+
+                const uint32_t p = pixel_of(c, lane);
+                const S px = tile_x0 + (S)(p % TILE) + 0.5f;
+                const S py = tile_y0 + (S)(p / TILE) + 0.5f;
+                bool valid = idx <= s_bin[p];
+                S alpha = 0.f, vis = 0.f;
+                vec2<S> delta = {0.f, 0.f};
+                if (valid) {
+                    delta = {xyo.x - px, xyo.y - py};
+                    const S sigma =
+                        0.5f * (conic.x * delta.x * delta.x +
+                                conic.z * delta.y * delta.y) +
+                        conic.y * delta.x * delta.y;
+                    vis = __expf(-sigma);
+                    alpha = min(0.999f, opac * vis);
+                    if (sigma < 0.f || alpha < 1.f / 255.f) {
+                        valid = false;
+                    }
+                }
+                if (valid) {
+                    const S ra = 1.0f / (1.0f - alpha);
+                    const S T = s_T[p] * ra;
+                    s_T[p] = T;
+                    const S fac = alpha * T;
+                    S v_alpha = 0.f;
+                    S rgb_dot_v = 0.f;
+                    if constexpr (LEAN) {
+                        GSPLAT_PRAGMA_UNROLL
+                        for (uint32_t q = 0; q < COLOR_DIM; ++q) {
+                            const S v = s_vc[p * COLOR_DIM + q];
+                            rgb_dot_v += rgb[q] * v;
+                            v_rgb_local[q] += fac * v;
+                        }
+                        v_alpha = rgb_dot_v * T - s_buf[p] * ra;
+                        s_buf[p] += rgb_dot_v * fac;
+                    } else {
+                        GSPLAT_PRAGMA_UNROLL
+                        for (uint32_t q = 0; q < COLOR_DIM; ++q) {
+                            const S v = s_vc[p * COLOR_DIM + q];
+                            v_rgb_local[q] += fac * v;
+                            v_alpha += (rgb[q] * T - s_buf[p * COLOR_DIM + q] * ra) * v;
+                            s_buf[p * COLOR_DIM + q] += rgb[q] * fac;
+                        }
+                    }
+                    v_alpha += s_wfinal[p] * ra;
+                    if (opac * vis <= 0.999f) {
+                        const S v_sigma = -opac * vis * v_alpha;
+                        v_conic_local.x += 0.5f * v_sigma * delta.x * delta.x;
+                        v_conic_local.y += v_sigma * delta.x * delta.y;
+                        v_conic_local.z += 0.5f * v_sigma * delta.y * delta.y;
+                        const vec2<S> v_xy = {
+                            v_sigma * (conic.x * delta.x + conic.y * delta.y),
+                            v_sigma * (conic.y * delta.x + conic.z * delta.y)
+                        };
+                        v_xy_local.x += v_xy.x;
+                        v_xy_local.y += v_xy.y;
+                        v_xy_abs_local.x += abs(v_xy.x);
+                        v_xy_abs_local.y += abs(v_xy.y);
+                        v_opacity_local += vis * v_alpha;
+                    }
+                }
+                // Publish this chunk's pixel state to the next Gaussian: the
+                // warp barrier orders every lane's writes before the release.
+                warp.sync();
+                if (lane == 0) {
+                    done.store(rank + 1, cuda::memory_order_release);
+                }
+            }
+
+            // One reduction and one set of atomics per Gaussian and tile.
+            constexpr int conic_begin = COLOR_DIM;
+            constexpr int mean_begin = conic_begin + 3;
+            constexpr int opacity_index = mean_begin + 2;
+            constexpr int abs_mean_begin = opacity_index + 1;
+            constexpr int gradient_count = abs_mean_begin + 2;
+            S values[gradient_count];
+            GSPLAT_PRAGMA_UNROLL
+            for (uint32_t q = 0; q < COLOR_DIM; ++q) {
+                values[q] = v_rgb_local[q];
+            }
+            values[conic_begin] = v_conic_local.x;
+            values[conic_begin + 1] = v_conic_local.y;
+            values[conic_begin + 2] = v_conic_local.z;
+            values[mean_begin] = v_xy_local.x;
+            values[mean_begin + 1] = v_xy_local.y;
+            values[opacity_index] = v_opacity_local;
+            values[abs_mean_begin] = v_xy_abs_local.x;
+            values[abs_mean_begin + 1] = v_xy_abs_local.y;
+            const auto reduced = warp_reduce_scatter(values, warp);
+            if (reduced.owner) {
+                const int component = reduced.component;
+                const int32_t g = s_id[k];
+                S *destination = nullptr;
+                if (component < conic_begin) {
+                    destination = v_colors + COLOR_DIM * g + component;
+                } else if (component < mean_begin) {
+                    destination = (S *)v_conics + 3 * g + component - conic_begin;
+                } else if (component < opacity_index) {
+                    destination = (S *)v_means2d + 2 * g + component - mean_begin;
+                } else if (component == opacity_index) {
+                    destination = v_opacities + g;
+                } else if (v_means2d_abs != nullptr) {
+                    destination =
+                        (S *)v_means2d_abs + 2 * g + component - abs_mean_begin;
+                }
+                if (destination != nullptr) {
+                    gpuAtomicAdd(destination, reduced.value);
+                }
+            }
+        }
+    }
+}
+
 // Backward traversal choices (`rasterize_to_pixels(..., backward=...)`).
 enum class BackwardKernel : int64_t {
-    PIXEL = 0,      // per-pixel threads (default)
-    PIXEL_LEAN = 1, // per-pixel threads, scalar behind-color state
+    PIXEL = 0,           // per-pixel threads (default)
+    PIXEL_LEAN = 1,      // per-pixel threads, scalar behind-color state
+    CHUNK = 2,           // per-chunk warps
+    CHUNK_LEAN = 3,      // per-chunk warps, scalar behind-color state
+    CHUNK_CULL = 4,      // per-chunk warps, chunk culling
+    CHUNK_LEAN_CULL = 5, // per-chunk warps, scalar state and chunk culling
 };
 
 template <uint32_t CDIM>
@@ -463,7 +858,62 @@ call_kernel_with_dim(
         v_means2d_abs = torch::zeros_like(means2d);
     }
 
-    if (n_isects) {
+    const bool chunk = backward_kernel != BackwardKernel::PIXEL &&
+                       backward_kernel != BackwardKernel::PIXEL_LEAN;
+    if (n_isects && chunk) {
+        if constexpr (CDIM <= 8) {
+            TORCH_CHECK(
+                tile_size == chunk_bwd::TILE,
+                "chunk backward needs tile_size 16, got ",
+                tile_size
+            );
+            at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
+#define __GS__CHUNK_(LEAN, CULL)                                                \
+    rasterize_to_pixels_bwd_chunk_kernel<CDIM, LEAN, CULL, float>              \
+        <<<blocks, chunk_bwd::THREADS, 0, stream>>>(                           \
+            C,                                                                 \
+            n_isects,                                                          \
+            reinterpret_cast<vec2<float> *>(means2d.data_ptr<float>()),       \
+            reinterpret_cast<vec3<float> *>(conics.data_ptr<float>()),        \
+            colors.data_ptr<float>(),                                          \
+            opacities.data_ptr<float>(),                                       \
+            backgrounds.has_value() ? backgrounds.value().data_ptr<float>()    \
+                                    : nullptr,                                 \
+            masks.has_value() ? masks.value().data_ptr<bool>() : nullptr,      \
+            image_width,                                                       \
+            image_height,                                                      \
+            tile_width,                                                        \
+            tile_height,                                                       \
+            tile_offsets.data_ptr<int32_t>(),                                  \
+            flatten_ids.data_ptr<int32_t>(),                                   \
+            render_alphas.data_ptr<float>(),                                   \
+            last_ids.data_ptr<int32_t>(),                                      \
+            v_render_colors.data_ptr<float>(),                                 \
+            v_render_alphas.data_ptr<float>(),                                 \
+            absgrad ? reinterpret_cast<vec2<float> *>(                         \
+                          v_means2d_abs.data_ptr<float>()                      \
+                      )                                                        \
+                    : nullptr,                                                 \
+            reinterpret_cast<vec2<float> *>(v_means2d.data_ptr<float>()),     \
+            reinterpret_cast<vec3<float> *>(v_conics.data_ptr<float>()),      \
+            v_colors.data_ptr<float>(),                                        \
+            v_opacities.data_ptr<float>()                                      \
+        );
+            switch (backward_kernel) {
+            case BackwardKernel::CHUNK:
+                __GS__CHUNK_(false, false) break;
+            case BackwardKernel::CHUNK_LEAN:
+                __GS__CHUNK_(true, false) break;
+            case BackwardKernel::CHUNK_CULL:
+                __GS__CHUNK_(false, true) break;
+            default:
+                __GS__CHUNK_(true, true) break;
+            }
+#undef __GS__CHUNK_
+        } else {
+            AT_ERROR("chunk backward supports up to 8 channels, got ", CDIM);
+        }
+    } else if (n_isects) {
         const uint32_t shared_mem =
             tile_size * tile_size *
             (sizeof(int32_t) + sizeof(vec3<float>) + sizeof(vec3<float>) +
@@ -556,7 +1006,7 @@ rasterize_to_pixels_bwd_tensor(
     GSPLAT_CHECK_INPUT(colors);
     uint32_t COLOR_DIM = colors.size(-1);
     TORCH_CHECK(
-        backward_kernel >= 0 && backward_kernel <= 1,
+        backward_kernel >= 0 && backward_kernel <= 5,
         "Unknown backward kernel ",
         backward_kernel
     );

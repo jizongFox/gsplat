@@ -532,7 +532,9 @@ def rasterize_to_pixels(
     masks: Optional[Tensor] = None,  # [C, tile_height, tile_width]
     packed: bool = False,
     absgrad: bool = False,
-    backward: Literal["pixel", "pixel_lean"] = "pixel",
+    backward: Literal[
+        "pixel", "pixel_lean", "chunk", "chunk_lean", "chunk_cull", "chunk_lean_cull"
+    ] = "pixel",
 ) -> Tuple[Tensor, Tensor]:
     """Rasterizes Gaussians to pixels.
 
@@ -550,11 +552,12 @@ def rasterize_to_pixels(
         masks: Optional tile mask to skip rendering GS to masked tiles. [C, tile_height, tile_width]. Default: None.
         packed: If True, the input tensors are expected to be packed with shape [nnz, ...]. Default: False.
         absgrad: If True, the backward pass will compute a `.absgrad` attribute for `means2d`. Default: False.
-        backward: Backward traversal. "pixel" (default) is the per-pixel kernel.
-            "pixel_lean" keeps, per pixel, only the dot product of the colors
-            behind the current Gaussian with dL/dcolor instead of one partial sum
-            per channel (PennyGS, arXiv 2611.27525 Sec. 3.6); same gradients up to
-            floating-point summation order.
+        backward: Backward traversal (PennyGS, arXiv 2611.27525 Sec. 3.6). "pixel"
+            (default) runs one thread per pixel. "chunk*" runs one warp per Gaussian
+            over 8x4-pixel chunks of a 16x16 tile (tile_size 16, at most 8 padded
+            channels); "_lean" keeps one scalar of behind-color state per pixel;
+            "_cull" walks only the chunks a Gaussian can reach. All compute the
+            same gradients up to floating-point summation order.
 
     Returns:
         A tuple:
@@ -663,7 +666,14 @@ def rasterize_to_pixels(
 
 
 # Values of BackwardKernel in csrc/rasterize_to_pixels_bwd.cu.
-_BACKWARD_KERNELS = {"pixel": 0, "pixel_lean": 1}
+_BACKWARD_KERNELS = {
+    "pixel": 0,
+    "pixel_lean": 1,
+    "chunk": 2,
+    "chunk_lean": 3,
+    "chunk_cull": 4,
+    "chunk_lean_cull": 5,
+}
 
 
 @torch.no_grad()

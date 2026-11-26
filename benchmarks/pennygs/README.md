@@ -53,6 +53,70 @@ render here; projection, normals and the other per-Gaussian work dominate.
 
 Measurements: `measurements/lean_{raster,render}.json`.
 
+## Per-chunk backward traversal (`backward="chunk*"`, PennyGS Sec. 3.6) — experiment, slower here
+
+One 128-thread block (4 warps) per 16x16 tile. A warp owns one Gaussian at a time
+and walks the tile's eight 8x4-pixel chunks, its 32 lanes on the chunk's 32
+pixels; pixel state (transmittance, behind-colour sums, colour gradient) lives in
+shared memory. Back-to-front order per pixel is kept by per-chunk counters: a
+Gaussian enters a chunk when every earlier Gaussian walking that chunk has left
+(acquire/release on the counter, the warp barrier orders the lanes' writes). A
+Gaussian's gradient is reduced once per tile (one set of atomics per Gaussian
+and tile instead of per warp). Variants: `chunk` (standard arithmetic),
+`chunk_lean` (scalar behind-colour state), `chunk_cull` (a Gaussian walks and
+waits only for chunks its alpha >= 1/255 ellipse can reach: a conservative
+bounding-box test whose threshold includes a bound on the float32 rounding of
+the renderer's sigma over the tile; ill-conditioned, degenerate or nonfinite
+conics walk every chunk) and
+`chunk_lean_cull` (both, the paper's full design). Tile size 16 and at most 8
+padded channels.
+
+Raster backward (ms, speedup vs `pixel`; all gradients within rel-L2 2e-6):
+
+| View | Intersections | `pixel` | `pixel_lean` | `chunk` | `chunk_lean` | `chunk_cull` | `chunk_lean_cull` |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 0 | 1,011,765 | 1.255 | 1.170 (1.07x) | 2.145 (0.59x) | 1.635 (0.77x) | 1.833 (0.68x) | 1.351 (0.93x) |
+| 250 | 4,830,907 | 6.881 | 6.958 (0.99x) | 25.216 (0.27x) | 24.864 (0.28x) | 14.517 (0.47x) | 14.528 (0.47x) |
+| 500 | 996,736 | 1.363 | 1.240 (1.10x) | 2.414 (0.56x) | 1.717 (0.79x) | 2.010 (0.68x) | 1.423 (0.96x) |
+| 750 | 1,781,205 | 2.245 | 2.190 (1.03x) | 4.390 (0.51x) | 3.486 (0.64x) | 3.311 (0.68x) | 2.611 (0.86x) |
+| 1000 | 754,760 | 1.268 | 1.184 (1.07x) | 2.247 (0.56x) | 1.693 (0.75x) | 1.951 (0.65x) | 1.444 (0.88x) |
+| 1250 | 619,808 | 1.027 | 0.950 (1.08x) | 1.756 (0.58x) | 1.208 (0.85x) | 1.537 (0.67x) | 1.057 (0.97x) |
+| **geomean** | | 1.000x | 1.056x | 0.498x | 0.641x | 0.634x | 0.822x |
+
+Full renderer forward + backward with `chunk_lean_cull`: geomean **0.952x**
+(view 250: 26.56 -> 34.30 ms).
+
+Why it loses here (resource usage from `cuobjdump --dump-resource-usage`, 8 channels):
+
+| Kernel | Registers | Shared memory / block | Resident warps / SM |
+|---|---:|---:|---:|
+| `pixel` (256 threads) | 72 | 15 KB dynamic | 24 |
+| `pixel_lean` | 64 | 15 KB dynamic | 32 |
+| `chunk` (128 threads) | 80 | 27 KB | 12 |
+| `chunk_lean_cull` | 78 | 21 KB | 16 |
+
+- Eight channels make the per-pixel colour gradient and behind-colour state
+  large (PennyGS has three colour channels and ~9 KB per block), so shared memory
+  caps residency at 12-16 warps.
+- Only four Gaussians of a tile are in flight at a time; on the densest view
+  (4.8M intersections, ~1,300 per tile) that serial chain dominates (0.27-0.47x).
+- The baseline is not upstream gsplat: `dev/dc` already has warp reduce-scatter
+  and tile-tail trimming (PR9/PR14), which removed most of the atomic pressure
+  this design targets. PennyGS's 3.49x is against upstream gsplat.
+- One tuning attempt (64 Gaussians per batch, colour gradient read through L1
+  instead of shared memory: 8.6 KB, 72 registers, 28 warps) did not change the
+  outcome: `chunk_lean_cull` 0.90x / 0.78x / 1.04x on views 0 / 600 / 1200
+  (`measurements/chunk_tuning_attempt_raster.json`); it is not in this branch.
+
+Sanitizers: memcheck and synccheck 0 errors over `tests/test_backward_variants.py`
+(34 cases). racecheck reports potential hazards on the shared pixel state
+`s_T`/`s_buf`: that is the intended cross-warp handoff, ordered by the
+acquire/release counter, which racecheck does not model (it tracks barriers
+only). Every variant still matches the per-pixel gradients under the
+sanitizer-perturbed scheduling.
+
+Measurements: `measurements/chunk_{raster,render}.json`.
+
 ## Reproduce
 
 ```bash
