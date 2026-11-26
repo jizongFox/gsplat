@@ -9,8 +9,8 @@
    "image": "DECXIN20230102350/00000008",
    "intersections": 1011765,
    "median_ms": {
-    "default": 0.814848005771637,
-    "subtile": 0.7127839922904968
+    "default": 0.814079999923706,
+    "subtile": 0.7106559872627258
    },
    "check": {
     "outputs_identical": true,
@@ -22,8 +22,8 @@
    "image": "DECXIN20230102350/00001179",
    "intersections": 4830907,
    "median_ms": {
-    "default": 4.12825608253479,
-    "subtile": 3.0648319721221924
+    "default": 4.153343915939331,
+    "subtile": 3.0474880933761597
    },
    "check": {
     "outputs_identical": true,
@@ -35,8 +35,8 @@
    "image": "DECXIN2023012346/00000865",
    "intersections": 996736,
    "median_ms": {
-    "default": 0.7883999943733215,
-    "subtile": 0.6833440065383911
+    "default": 0.7890720069408417,
+    "subtile": 0.6820639967918396
    },
    "check": {
     "outputs_identical": true,
@@ -48,8 +48,8 @@
    "image": "DECXIN2023012347/00000637",
    "intersections": 1781205,
    "median_ms": {
-    "default": 1.1919360160827637,
-    "subtile": 0.9946720004081726
+    "default": 1.1980639696121216,
+    "subtile": 0.9895040094852448
    },
    "check": {
     "outputs_identical": true,
@@ -61,8 +61,8 @@
    "image": "DECXIN2023012348/00000409",
    "intersections": 754760,
    "median_ms": {
-    "default": 0.7567040026187897,
-    "subtile": 0.6850079894065857
+    "default": 0.7608320116996765,
+    "subtile": 0.6840320229530334
    },
    "check": {
     "outputs_identical": true,
@@ -74,8 +74,8 @@
    "image": "DECXIN20230102350/00000859",
    "intersections": 619808,
    "median_ms": {
-    "default": 0.6493760049343109,
-    "subtile": 0.5845440030097961
+    "default": 0.6503359973430634,
+    "subtile": 0.5850079953670502
    },
    "check": {
     "outputs_identical": true,

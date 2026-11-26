@@ -160,3 +160,35 @@ def test_subtile_forward_needs_tile_16():
             scene["flatten_ids"],
             subtile_masks=True,
         )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
+def test_subtile_masks_cover_float32_cancellation():
+    """A far, very anisotropic Gaussian whose float32 sigma at pixel (0, 0) is
+    accepted by the renderer although the exact ellipse misses the tile."""
+    from gsplat.cuda._wrapper import rasterize_to_pixels
+
+    means2d = torch.tensor([[[-9331.5, 10250.751953125]]], device=device)
+    conics = torch.tensor([[[0.652995348, 0.594497681, 0.541240573]]], device=device)
+    colors = torch.ones((1, 1, 3), device=device)
+    opacities = torch.ones((1, 1), device=device)
+    offsets = torch.zeros((1, 1, 1), dtype=torch.int32, device=device)
+    flatten_ids = torch.zeros(1, dtype=torch.int32, device=device)
+    images = [
+        rasterize_to_pixels(
+            means2d,
+            conics,
+            colors,
+            opacities,
+            16,
+            16,
+            16,
+            offsets,
+            flatten_ids,
+            subtile_masks=subtile,
+        )
+        for subtile in (False, True)
+    ]
+    assert float(images[0][1].max()) > 0  # the default kernel blends it
+    assert torch.equal(images[0][0], images[1][0])
+    assert torch.equal(images[0][1], images[1][1])

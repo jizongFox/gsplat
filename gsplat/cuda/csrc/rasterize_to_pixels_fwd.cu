@@ -201,8 +201,12 @@ constexpr uint32_t TILE = 16;
 constexpr uint32_t THREADS = TILE * TILE; // 8 warps
 
 // Subtiles whose pixel centres can see alpha >= 1/255: bounding box of
-// {d : 0.5 d^T Q d <= ln(255 * opacity)} with a margin. Degenerate or nonfinite
-// input reaches every subtile.
+// {d : 0.5 d^T Q d <= ln(255 * opacity) + err}. The renderer evaluates sigma in
+// float32, where cancellation between the quadratic terms can accept pixels the
+// exact ellipse excludes (far, anisotropic Gaussians), so `err` bounds that
+// rounding error over the tile: 16 * 2^-24 * (largest |term| sum at the tile's
+// corners). Ill-conditioned conics (det below 1e-4 * q00 * q11, where det loses
+// its accuracy), degenerate or nonfinite input reach every subtile.
 template <typename S>
 inline __device__ uint32_t subtile_mask(
     const S x, const S y, const vec3<S> conic, const S opac, const S tile_x0,
@@ -211,11 +215,16 @@ inline __device__ uint32_t subtile_mask(
     if (!(opac * 255.f >= 1.f)) {
         return isfinite(opac) ? 0u : 0xffu;
     }
-    const S tau = __logf(opac * 255.f) * 1.01f + 1e-3f;
     const S det = conic.x * conic.z - conic.y * conic.y;
-    if (!(det > 0.f) || !isfinite(det) || !isfinite(x) || !isfinite(y)) {
+    if (!(det > 1e-4f * conic.x * conic.z) || !isfinite(det) || !isfinite(x) ||
+        !isfinite(y)) {
         return 0xffu;
     }
+    const S dx = fmaxf(fabsf(x - tile_x0), fabsf(x - tile_x0 - 16.f));
+    const S dy = fmaxf(fabsf(y - tile_y0), fabsf(y - tile_y0 - 16.f));
+    const S terms = 0.5f * (fabsf(conic.x) * dx * dx + fabsf(conic.z) * dy * dy) +
+                    fabsf(conic.y) * dx * dy;
+    const S tau = __logf(opac * 255.f) * 1.01f + 1e-3f + terms * 9.5367431640625e-7f;
     const S half_x = sqrtf(2.f * tau * conic.z / det) + 0.05f;
     const S half_y = sqrtf(2.f * tau * conic.x / det) + 0.05f;
     if (!isfinite(half_x) || !isfinite(half_y)) {
