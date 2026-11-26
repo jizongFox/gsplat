@@ -176,14 +176,17 @@ __global__ void __launch_bounds__(subtile_fwd::THREADS)
     const bool inside = (i < image_height && j < image_width);
     bool done = !inside;
 
-    // a masked tile renders the background; the whole block leaves together,
-    // so no warp reaches the ballots below with some lanes exited
+    // a masked tile renders the background with alpha 0 and last_ids 0, as the
+    // default kernel; the whole block leaves together, so no warp reaches the
+    // ballots below with some lanes exited
     if (masks != nullptr && !masks[tile_id]) {
         if (inside) {
             for (uint32_t k = 0; k < COLOR_DIM; ++k) {
                 render_colors[pix_id * COLOR_DIM + k] =
                     backgrounds == nullptr ? 0.0f : backgrounds[k];
             }
+            render_alphas[pix_id] = 0.0f;
+            last_ids[pix_id] = 0;
         }
         return;
     }

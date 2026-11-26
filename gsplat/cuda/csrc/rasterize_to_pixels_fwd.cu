@@ -68,12 +68,15 @@ __global__ void rasterize_to_pixels_fwd_kernel(
     bool done = !inside;
 
     // when the mask is provided, render the background color and return
-    // if this tile is labeled as False
+    // if this tile is labeled as False: no Gaussian is blended, so alpha is 0
+    // and last_ids is 0 (the outputs are allocated uninitialized)
     if (masks != nullptr && inside && !masks[tile_id]) {
         for (uint32_t k = 0; k < COLOR_DIM; ++k) {
             render_colors[pix_id * COLOR_DIM + k] =
                 backgrounds == nullptr ? 0.0f : backgrounds[k];
         }
+        render_alphas[pix_id] = 0.0f;
+        last_ids[pix_id] = 0;
         return;
     }
 

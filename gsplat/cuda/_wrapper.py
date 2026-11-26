@@ -536,6 +536,9 @@ def rasterize_to_pixels(
 ) -> Tuple[Tensor, Tensor]:
     """Rasterizes Gaussians to pixels.
 
+    Pixels of masked-out tiles (``masks`` False) get the background color (0
+    without backgrounds) and alpha 0.
+
     Args:
         means2d: Projected Gaussian means. [C, N, 2] if packed is False, [nnz, 2] if packed is True.
         conics: Inverse of the projected covariances with only upper triangle values. [C, N, 3] if packed is False, [nnz, 3] if packed is True.
