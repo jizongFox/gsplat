@@ -14,7 +14,11 @@ namespace cg = cooperative_groups;
  * Rasterization to Pixels Backward Pass
  ****************************************************************************/
 
-template <uint32_t COLOR_DIM, typename S>
+// LEAN (PennyGS, arXiv 2611.27525 Sec. 3.6 "less state per pixel"): the colors
+// behind a Gaussian enter dL/dalpha only through their dot product with the
+// pixel's color gradient, so a pixel keeps that scalar instead of COLOR_DIM
+// partial sums. Same math; the summation order of that term changes.
+template <uint32_t COLOR_DIM, bool LEAN, typename S>
 __global__ void rasterize_to_pixels_bwd_kernel(
     const uint32_t C,
     const uint32_t N,
@@ -108,8 +112,9 @@ __global__ void rasterize_to_pixels_bwd_kernel(
     // this is the T AFTER the last gaussian in this pixel
     S T_final = 1.0f - render_alphas[pix_id];
     S T = T_final;
-    // the contribution from gaussians behind the current one
-    S buffer[COLOR_DIM] = {0.f};
+    // the contribution from gaussians behind the current one: per channel, or
+    // (LEAN) only its dot product with this pixel's color gradient
+    S buffer[LEAN ? 1 : COLOR_DIM] = {0.f};
     // index of last gaussian to contribute to this pixel
     const int32_t bin_final = inside ? last_ids[pix_id] : 0;
 
@@ -227,10 +232,19 @@ __global__ void rasterize_to_pixels_bwd_kernel(
                 }
                 // contribution from this pixel
                 S v_alpha = 0.f;
-                for (uint32_t k = 0; k < COLOR_DIM; ++k) {
-                    v_alpha +=
-                        (rgbs_batch[t * COLOR_DIM + k] * T - buffer[k] * ra) *
-                        v_render_c[k];
+                S rgb_dot_v = 0.f; // LEAN: this Gaussian's color . dL/dcolor
+                if constexpr (LEAN) {
+                    GSPLAT_PRAGMA_UNROLL
+                    for (uint32_t k = 0; k < COLOR_DIM; ++k) {
+                        rgb_dot_v += rgbs_batch[t * COLOR_DIM + k] * v_render_c[k];
+                    }
+                    v_alpha = rgb_dot_v * T - buffer[0] * ra;
+                } else {
+                    for (uint32_t k = 0; k < COLOR_DIM; ++k) {
+                        v_alpha += (rgbs_batch[t * COLOR_DIM + k] * T -
+                                    buffer[k] * ra) *
+                                   v_render_c[k];
+                    }
                 }
 
                 v_alpha += T_final * ra * v_render_a;
@@ -265,9 +279,13 @@ __global__ void rasterize_to_pixels_bwd_kernel(
                 }
 
                 if (valid) {
-                    GSPLAT_PRAGMA_UNROLL
-                    for (uint32_t k = 0; k < COLOR_DIM; ++k) {
-                        buffer[k] += rgbs_batch[t * COLOR_DIM + k] * fac;
+                    if constexpr (LEAN) {
+                        buffer[0] += rgb_dot_v * fac;
+                    } else {
+                        GSPLAT_PRAGMA_UNROLL
+                        for (uint32_t k = 0; k < COLOR_DIM; ++k) {
+                            buffer[k] += rgbs_batch[t * COLOR_DIM + k] * fac;
+                        }
                     }
                 }
             }
@@ -365,6 +383,12 @@ __global__ void rasterize_to_pixels_bwd_kernel(
     }
 }
 
+// Backward traversal choices (`rasterize_to_pixels(..., backward=...)`).
+enum class BackwardKernel : int64_t {
+    PIXEL = 0,      // per-pixel threads (default)
+    PIXEL_LEAN = 1, // per-pixel threads, scalar behind-color state
+};
+
 template <uint32_t CDIM>
 std::tuple<
     torch::Tensor,
@@ -394,7 +418,8 @@ call_kernel_with_dim(
     const torch::Tensor &v_render_colors, // [C, image_height, image_width, 3]
     const torch::Tensor &v_render_alphas, // [C, image_height, image_width, 1]
     // options
-    bool absgrad
+    bool absgrad,
+    BackwardKernel backward_kernel
 ) {
 
     GSPLAT_DEVICE_GUARD(means2d);
@@ -444,11 +469,12 @@ call_kernel_with_dim(
             (sizeof(int32_t) + sizeof(vec3<float>) + sizeof(vec3<float>) +
              sizeof(float) * COLOR_DIM);
         at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
+        const bool lean = backward_kernel == BackwardKernel::PIXEL_LEAN;
+        const auto kernel = lean ? rasterize_to_pixels_bwd_kernel<CDIM, true, float>
+                                 : rasterize_to_pixels_bwd_kernel<CDIM, false, float>;
 
         if (cudaFuncSetAttribute(
-                rasterize_to_pixels_bwd_kernel<CDIM, float>,
-                cudaFuncAttributeMaxDynamicSharedMemorySize,
-                shared_mem
+                kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, shared_mem
             ) != cudaSuccess) {
             AT_ERROR(
                 "Failed to set maximum shared memory size (requested ",
@@ -456,8 +482,7 @@ call_kernel_with_dim(
                 " bytes), try lowering tile_size."
             );
         }
-        rasterize_to_pixels_bwd_kernel<CDIM, float>
-            <<<blocks, threads, shared_mem, stream>>>(
+        kernel<<<blocks, threads, shared_mem, stream>>>(
                 C,
                 N,
                 n_isects,
@@ -524,11 +549,17 @@ rasterize_to_pixels_bwd_tensor(
     const torch::Tensor &v_render_colors, // [C, image_height, image_width, 3]
     const torch::Tensor &v_render_alphas, // [C, image_height, image_width, 1]
     // options
-    bool absgrad
+    bool absgrad,
+    int64_t backward_kernel
 ) {
 
     GSPLAT_CHECK_INPUT(colors);
     uint32_t COLOR_DIM = colors.size(-1);
+    TORCH_CHECK(
+        backward_kernel >= 0 && backward_kernel <= 1,
+        "Unknown backward kernel ",
+        backward_kernel
+    );
 
 #define __GS__CALL_(N)                                                         \
     case N:                                                                    \
@@ -548,7 +579,8 @@ rasterize_to_pixels_bwd_tensor(
             last_ids,                                                          \
             v_render_colors,                                                   \
             v_render_alphas,                                                   \
-            absgrad                                                            \
+            absgrad,                                                           \
+            static_cast<BackwardKernel>(backward_kernel)                       \
         );
 
     switch (COLOR_DIM) {

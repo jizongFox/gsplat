@@ -532,6 +532,7 @@ def rasterize_to_pixels(
     masks: Optional[Tensor] = None,  # [C, tile_height, tile_width]
     packed: bool = False,
     absgrad: bool = False,
+    backward: Literal["pixel", "pixel_lean"] = "pixel",
 ) -> Tuple[Tensor, Tensor]:
     """Rasterizes Gaussians to pixels.
 
@@ -549,6 +550,11 @@ def rasterize_to_pixels(
         masks: Optional tile mask to skip rendering GS to masked tiles. [C, tile_height, tile_width]. Default: None.
         packed: If True, the input tensors are expected to be packed with shape [nnz, ...]. Default: False.
         absgrad: If True, the backward pass will compute a `.absgrad` attribute for `means2d`. Default: False.
+        backward: Backward traversal. "pixel" (default) is the per-pixel kernel.
+            "pixel_lean" keeps, per pixel, only the dot product of the colors
+            behind the current Gaussian with dL/dcolor instead of one partial sum
+            per channel (PennyGS, arXiv 2611.27525 Sec. 3.6); same gradients up to
+            floating-point summation order.
 
     Returns:
         A tuple:
@@ -556,6 +562,8 @@ def rasterize_to_pixels(
         - **Rendered colors**. [C, image_height, image_width, channels]
         - **Rendered alphas**. [C, image_height, image_width, 1]
     """
+    if backward not in _BACKWARD_KERNELS:
+        raise ValueError(f"Unknown backward traversal {backward!r}")
 
     C = isect_offsets.size(0)
     device = means2d.device
@@ -646,11 +654,16 @@ def rasterize_to_pixels(
         isect_offsets.contiguous(),
         flatten_ids.contiguous(),
         absgrad,
+        _BACKWARD_KERNELS[backward],
     )
 
     if padded_channels > 0:
         render_colors = render_colors[..., :-padded_channels]
     return render_colors, render_alphas
+
+
+# Values of BackwardKernel in csrc/rasterize_to_pixels_bwd.cu.
+_BACKWARD_KERNELS = {"pixel": 0, "pixel_lean": 1}
 
 
 @torch.no_grad()
@@ -1200,6 +1213,7 @@ class _RasterizeToPixels(torch.autograd.Function):
         isect_offsets: Tensor,  # [C, tile_height, tile_width]
         flatten_ids: Tensor,  # [n_isects]
         absgrad: bool,
+        backward_kernel: int,
     ) -> Tuple[Tensor, Tensor]:
         render_colors, render_alphas, last_ids = _make_lazy_cuda_func(
             "rasterize_to_pixels_fwd"
@@ -1233,6 +1247,7 @@ class _RasterizeToPixels(torch.autograd.Function):
         ctx.height = height
         ctx.tile_size = tile_size
         ctx.absgrad = absgrad
+        ctx.backward_kernel = backward_kernel
 
         # double to float
         render_alphas = render_alphas.float()
@@ -1284,6 +1299,7 @@ class _RasterizeToPixels(torch.autograd.Function):
             v_render_colors.contiguous(),
             v_render_alphas.contiguous(),
             absgrad,
+            ctx.backward_kernel,
         )
 
         if absgrad:
@@ -1302,6 +1318,7 @@ class _RasterizeToPixels(torch.autograd.Function):
             v_colors,
             v_opacities,
             v_backgrounds,
+            None,
             None,
             None,
             None,

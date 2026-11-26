@@ -1,0 +1,194 @@
+{
+ "gsplat": "/home/jizong/workspace/dConstruct/gaussian-splatting/.worktrees/gsplat-pennygs/gsplat",
+ "device": "NVIDIA GeForce RTX 4090",
+ "gaussians": 2909851,
+ "scope": "render",
+ "views": [
+  {
+   "view": 0,
+   "image": "DECXIN20230102350/00000008",
+   "median_ms": {
+    "pixel": {
+     "forward": 5.454847812652588,
+     "backward": 10.807295799255371,
+     "total": 16.282655715942383
+    },
+    "pixel_lean": {
+     "forward": 5.465407848358154,
+     "backward": 10.710063934326172,
+     "total": 16.198991775512695
+    }
+   },
+   "checks": {
+    "pixel_lean": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "grad.means": 1.2408851773598865e-06,
+      "grad.quats": 2.7278368090328475e-06,
+      "grad.log_scales": 1.4517892239411396e-06,
+      "grad.opacity_logits": 7.072293567073052e-07,
+      "grad.dc": 1.0897902338708187e-07,
+      "grad.means2d_abs": 3.4395336163140776e-07
+     },
+     "finite": true,
+     "passed": true
+    }
+   }
+  },
+  {
+   "view": 250,
+   "image": "DECXIN20230102350/00001179",
+   "median_ms": {
+    "pixel": {
+     "forward": 9.880576133728027,
+     "backward": 16.64358425140381,
+     "total": 26.57356834411621
+    },
+    "pixel_lean": {
+     "forward": 9.893840312957764,
+     "backward": 16.752639770507812,
+     "total": 26.642735958099365
+    }
+   },
+   "checks": {
+    "pixel_lean": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "grad.means": 2.4874745979454272e-06,
+      "grad.quats": 4.1346493458973e-06,
+      "grad.log_scales": 2.9581586099609097e-06,
+      "grad.opacity_logits": 2.0671020589178467e-06,
+      "grad.dc": 1.0555607424135365e-07,
+      "grad.means2d_abs": 1.23889991879866e-06
+     },
+     "finite": true,
+     "passed": true
+    }
+   }
+  },
+  {
+   "view": 500,
+   "image": "DECXIN2023012346/00000865",
+   "median_ms": {
+    "pixel": {
+     "forward": 5.527520179748535,
+     "backward": 10.917376041412354,
+     "total": 16.5000159740448
+    },
+    "pixel_lean": {
+     "forward": 5.5251359939575195,
+     "backward": 10.7991042137146,
+     "total": 16.34932804107666
+    }
+   },
+   "checks": {
+    "pixel_lean": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "grad.means": 1.2841566826184178e-06,
+      "grad.quats": 2.248939063533788e-05,
+      "grad.log_scales": 2.199061455072432e-06,
+      "grad.opacity_logits": 1.330797180917261e-06,
+      "grad.dc": 9.725371520384122e-08,
+      "grad.means2d_abs": 2.8353683146428417e-07
+     },
+     "finite": true,
+     "passed": true
+    }
+   }
+  },
+  {
+   "view": 750,
+   "image": "DECXIN2023012347/00000637",
+   "median_ms": {
+    "pixel": {
+     "forward": 6.095168113708496,
+     "backward": 11.890096187591553,
+     "total": 18.021071910858154
+    },
+    "pixel_lean": {
+     "forward": 6.126032114028931,
+     "backward": 11.822223663330078,
+     "total": 17.964816093444824
+    }
+   },
+   "checks": {
+    "pixel_lean": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "grad.means": 9.340835549652347e-07,
+      "grad.quats": 3.111626454024889e-06,
+      "grad.log_scales": 1.545217727784692e-06,
+      "grad.opacity_logits": 1.4122244009101759e-06,
+      "grad.dc": 1.1253549925276524e-07,
+      "grad.means2d_abs": 3.89067611796258e-07
+     },
+     "finite": true,
+     "passed": true
+    }
+   }
+  },
+  {
+   "view": 1000,
+   "image": "DECXIN2023012348/00000409",
+   "median_ms": {
+    "pixel": {
+     "forward": 5.380223989486694,
+     "backward": 10.776895999908447,
+     "total": 16.174367904663086
+    },
+    "pixel_lean": {
+     "forward": 5.372416019439697,
+     "backward": 10.711919784545898,
+     "total": 16.08396816253662
+    }
+   },
+   "checks": {
+    "pixel_lean": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "grad.means": 1.8842637992536408e-06,
+      "grad.quats": 4.557668940088016e-06,
+      "grad.log_scales": 2.963475653115971e-06,
+      "grad.opacity_logits": 1.2155948812178361e-06,
+      "grad.dc": 1.3050419916329492e-07,
+      "grad.means2d_abs": 3.550787402150984e-07
+     },
+     "finite": true,
+     "passed": true
+    }
+   }
+  },
+  {
+   "view": 1250,
+   "image": "DECXIN20230102350/00000859",
+   "median_ms": {
+    "pixel": {
+     "forward": 5.240783929824829,
+     "backward": 10.405888080596924,
+     "total": 15.677855968475342
+    },
+    "pixel_lean": {
+     "forward": 5.232639789581299,
+     "backward": 10.3744478225708,
+     "total": 15.617215871810913
+    }
+   },
+   "checks": {
+    "pixel_lean": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "grad.means": 1.0516156316845412e-06,
+      "grad.quats": 6.626865763302505e-05,
+      "grad.log_scales": 1.6550162247959831e-06,
+      "grad.opacity_logits": 1.0732573170370516e-06,
+      "grad.dc": 1.1044390491142177e-07,
+      "grad.means2d_abs": 1.7995648819700962e-07
+     },
+     "finite": true,
+     "passed": true
+    }
+   }
+  }
+ ]
+}

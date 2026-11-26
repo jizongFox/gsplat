@@ -1,0 +1,152 @@
+{
+ "gsplat": "/home/jizong/workspace/dConstruct/gaussian-splatting/.worktrees/gsplat-pennygs/gsplat",
+ "device": "NVIDIA GeForce RTX 4090",
+ "gaussians": 2909851,
+ "scope": "raster",
+ "views": [
+  {
+   "view": 0,
+   "image": "DECXIN20230102350/00000008",
+   "intersections": 1011765,
+   "visible": 260011,
+   "median_ms": {
+    "pixel": 1.2576160430908203,
+    "pixel_lean": 1.1750400066375732
+   },
+   "checks": {
+    "pixel_lean": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 9.262650144587191e-07,
+      "conics": 4.168490860369637e-07,
+      "colors": 1.0840952786097844e-07,
+      "opacities": 3.923910852889585e-07,
+      "absgrad": 2.0117948810016154e-07
+     },
+     "finite": true,
+     "passed": true
+    }
+   }
+  },
+  {
+   "view": 250,
+   "image": "DECXIN20230102350/00001179",
+   "intersections": 4830907,
+   "visible": 2527193,
+   "median_ms": {
+    "pixel": 6.922896146774292,
+    "pixel_lean": 6.973952054977417
+   },
+   "checks": {
+    "pixel_lean": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 1.959530392183927e-06,
+      "conics": 7.743565132290411e-07,
+      "colors": 1.0086188165177417e-07,
+      "opacities": 9.051800444678456e-07,
+      "absgrad": 5.321610834764048e-07
+     },
+     "finite": true,
+     "passed": true
+    }
+   }
+  },
+  {
+   "view": 500,
+   "image": "DECXIN2023012346/00000865",
+   "intersections": 996736,
+   "visible": 320001,
+   "median_ms": {
+    "pixel": 1.36244797706604,
+    "pixel_lean": 1.2388319969177246
+   },
+   "checks": {
+    "pixel_lean": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 6.977737777138052e-07,
+      "conics": 6.868499179141861e-07,
+      "colors": 9.564724696482868e-08,
+      "opacities": 5.604483292529051e-07,
+      "absgrad": 1.5304367314771427e-07
+     },
+     "finite": true,
+     "passed": true
+    }
+   }
+  },
+  {
+   "view": 750,
+   "image": "DECXIN2023012347/00000637",
+   "intersections": 1781205,
+   "visible": 689503,
+   "median_ms": {
+    "pixel": 2.2425599098205566,
+    "pixel_lean": 2.183583974838257
+   },
+   "checks": {
+    "pixel_lean": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 8.795081948334004e-07,
+      "conics": 8.249070687641673e-07,
+      "colors": 1.1089778799109906e-07,
+      "opacities": 5.796797000564006e-07,
+      "absgrad": 1.9631037376986294e-07
+     },
+     "finite": true,
+     "passed": true
+    }
+   }
+  },
+  {
+   "view": 1000,
+   "image": "DECXIN2023012348/00000409",
+   "intersections": 754760,
+   "visible": 145831,
+   "median_ms": {
+    "pixel": 1.269760012626648,
+    "pixel_lean": 1.1860480308532715
+   },
+   "checks": {
+    "pixel_lean": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 8.198661245386356e-07,
+      "conics": 1.3739878931008504e-06,
+      "colors": 1.2955107186812612e-07,
+      "opacities": 5.853038127465929e-07,
+      "absgrad": 1.5618425537404214e-07
+     },
+     "finite": true,
+     "passed": true
+    }
+   }
+  },
+  {
+   "view": 1250,
+   "image": "DECXIN20230102350/00000859",
+   "intersections": 619808,
+   "visible": 146389,
+   "median_ms": {
+    "pixel": 1.0272319912910461,
+    "pixel_lean": 0.9522079825401306
+   },
+   "checks": {
+    "pixel_lean": {
+     "forward_identical": true,
+     "gradient_rel_l2": {
+      "means2d": 5.07373758797677e-07,
+      "conics": 4.2586692720851427e-07,
+      "colors": 1.0667705431190755e-07,
+      "opacities": 4.631680698482401e-07,
+      "absgrad": 1.152397596797045e-07
+     },
+     "finite": true,
+     "passed": true
+    }
+   }
+  }
+ ]
+}

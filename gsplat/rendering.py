@@ -55,6 +55,7 @@ def rasterization(
     distributed: bool = False,
     camera_model: Literal["pinhole", "ortho", "fisheye"] = "pinhole",
     covars: Optional[Tensor] = None,
+    rasterize_backward: Literal["pixel", "pixel_lean"] = "pixel",
 ) -> Tuple[Tensor, Tensor, Dict]:
     """Rasterize a set of 3D Gaussians (N) to a batch of image planes (C).
 
@@ -200,6 +201,8 @@ def rasterization(
             and "fisheye". Default is "pinhole".
         covars: Optional covariance matrices of the Gaussians. If provided, the `quats` and
             `scales` will be ignored. [N, 3, 3], Default is None.
+        rasterize_backward: Backward traversal of the pixel rasterizer, see
+            `rasterize_to_pixels(backward=...)`. Default is "pixel".
 
     Returns:
         A tuple:
@@ -574,6 +577,7 @@ def rasterization(
                 backgrounds=backgrounds_chunk,
                 packed=packed,
                 absgrad=absgrad,
+                backward=rasterize_backward,
             )
             render_colors.append(render_colors_)
             render_alphas.append(render_alphas_)
@@ -593,6 +597,7 @@ def rasterization(
             backgrounds=backgrounds,
             packed=packed,
             absgrad=absgrad,
+            backward=rasterize_backward,
         )
     if render_mode in ["ED", "RGB+ED"]:
         # normalize the accumulated depth to get the expected depth
