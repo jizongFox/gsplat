@@ -163,7 +163,8 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> isect_tiles_tensor(
     const bool compact_box_use_global_tau2,
     const bool compact_box_use_sweep,
     const bool sort,
-    const bool double_buffer
+    const bool double_buffer,
+    const bool short_keys
 );
 
 torch::Tensor isect_offset_encode_tensor(

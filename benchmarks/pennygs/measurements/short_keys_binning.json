@@ -1,0 +1,98 @@
+{
+ "gsplat": "/home/jizong/workspace/dConstruct/gaussian-splatting/.worktrees/gsplat-pennygs/gsplat",
+ "device": "NVIDIA GeForce RTX 4090",
+ "gaussians": 2909851,
+ "scope": "binning",
+ "views": [
+  {
+   "view": 0,
+   "image": "DECXIN20230102350/00000008",
+   "intersections": 1011765,
+   "median_ms": {
+    "default": 0.30720001459121704,
+    "short_keys": 0.2590720057487488
+   },
+   "checks": {
+    "short_keys": {
+     "intersections": 1011765,
+     "offsets_identical": true
+    }
+   }
+  },
+  {
+   "view": 250,
+   "image": "DECXIN20230102350/00001179",
+   "intersections": 4830907,
+   "median_ms": {
+    "default": 1.0843519568443298,
+    "short_keys": 0.6031360030174255
+   },
+   "checks": {
+    "short_keys": {
+     "intersections": 4830907,
+     "offsets_identical": true
+    }
+   }
+  },
+  {
+   "view": 500,
+   "image": "DECXIN2023012346/00000865",
+   "intersections": 996736,
+   "median_ms": {
+    "default": 0.31776000559329987,
+    "short_keys": 0.27238398790359497
+   },
+   "checks": {
+    "short_keys": {
+     "intersections": 996736,
+     "offsets_identical": true
+    }
+   }
+  },
+  {
+   "view": 750,
+   "image": "DECXIN2023012347/00000637",
+   "intersections": 1781205,
+   "median_ms": {
+    "default": 0.41676801443099976,
+    "short_keys": 0.3389439880847931
+   },
+   "checks": {
+    "short_keys": {
+     "intersections": 1781205,
+     "offsets_identical": true
+    }
+   }
+  },
+  {
+   "view": 1000,
+   "image": "DECXIN2023012348/00000409",
+   "intersections": 754760,
+   "median_ms": {
+    "default": 0.24371199309825897,
+    "short_keys": 0.20881599932909012
+   },
+   "checks": {
+    "short_keys": {
+     "intersections": 754760,
+     "offsets_identical": true
+    }
+   }
+  },
+  {
+   "view": 1250,
+   "image": "DECXIN20230102350/00000859",
+   "intersections": 619808,
+   "median_ms": {
+    "default": 0.23548800498247147,
+    "short_keys": 0.20377600193023682
+   },
+   "checks": {
+    "short_keys": {
+     "intersections": 619808,
+     "offsets_identical": true
+    }
+   }
+  }
+ ]
+}
