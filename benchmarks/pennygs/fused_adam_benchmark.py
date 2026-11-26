@@ -11,7 +11,7 @@ variants alternating inside each repeat:
 - ``proj_bwd+selective_adam``: the same backward, then gsplat `SelectiveAdam`
   (visible Gaussians only);
 - ``fused_fp32`` / ``fused_bf16``: `fused_projection_adam` with float32 or
-  bfloat16 moments.
+  bfloat16 first moments (second moments float32).
 
 The cumulative parameter update of 10 steps from identical states and zero
 moments is compared (relative L2 per parameter tensor, max over means /
@@ -88,8 +88,13 @@ def make_case(inputs, viewmat, K, width, height, generator):
                 betas=(0.9, 0.999),
             )
         else:
+            # compact first moment in bf16; second moment always float32
             dtype = torch.bfloat16 if variant == "fused_bf16" else torch.float32
-            opt = [torch.zeros_like(p, dtype=dtype) for p in params for _ in range(2)]
+            opt = [
+                torch.zeros_like(p, dtype=dtype if k == 0 else torch.float32)
+                for p in params
+                for k in range(2)
+            ]
         return params, opt
 
     def backward(params):

@@ -22,8 +22,12 @@ namespace cg = cooperative_groups;
  * moments are touched. A visible Gaussian computes the gradients of its mean,
  * raw quaternion and log-scale exactly as `fully_fused_projection_bwd` does
  * (then v_log_scale = v_scale * scale) and immediately applies the selective
- * Adam step of `SelectiveAdam` (no bias correction) in registers. Moments are
- * float32 or bfloat16 ("compact moments"); the arithmetic is float32.
+ * Adam step of `SelectiveAdam` (no bias correction) in registers. The first
+ * moment is float32 or bfloat16 ("compact moments"); the second moment stays
+ * float32: with beta2 = 0.999 its per-step change (1e-3 relative) is below half
+ * a bfloat16 ulp (2^-9), so rounding it back would freeze it. The first moment
+ * changes by (1 - beta1) = 10 % per step and stays within one ulp of float32.
+ * The arithmetic is float32.
  ****************************************************************************/
 
 template <typename M> inline __device__ float load_moment(const M *p) {
@@ -43,7 +47,7 @@ template <typename M, uint32_t D>
 inline __device__ void adam_update(
     float *__restrict__ param,
     M *__restrict__ exp_avg,
-    M *__restrict__ exp_avg_sq,
+    float *__restrict__ exp_avg_sq,
     const float (&grad)[D],
     const float lr,
     const float b1,
@@ -53,11 +57,10 @@ inline __device__ void adam_update(
     GSPLAT_PRAGMA_UNROLL
     for (uint32_t k = 0; k < D; ++k) {
         const float m = b1 * load_moment(exp_avg + k) + (1.0f - b1) * grad[k];
-        const float v =
-            b2 * load_moment(exp_avg_sq + k) + (1.0f - b2) * grad[k] * grad[k];
+        const float v = b2 * exp_avg_sq[k] + (1.0f - b2) * grad[k] * grad[k];
         param[k] += -lr * m / (sqrtf(v) + eps);
         store_moment(exp_avg + k, m);
-        store_moment(exp_avg_sq + k, v);
+        exp_avg_sq[k] = v;
     }
 }
 
@@ -77,11 +80,11 @@ __global__ void fused_projection_adam_kernel(
     const float *__restrict__ v_depths,  // [N]
     const float *__restrict__ v_conics,  // [N, 3]
     M *__restrict__ means_m,
-    M *__restrict__ means_v,
+    float *__restrict__ means_v,
     M *__restrict__ quats_m,
-    M *__restrict__ quats_v,
+    float *__restrict__ quats_v,
     M *__restrict__ scales_m,
-    M *__restrict__ scales_v,
+    float *__restrict__ scales_v,
     const float lr_means,
     const float lr_quats,
     const float lr_scales,
@@ -205,7 +208,14 @@ void fused_projection_adam_tensor(
     const auto moment_type = means_m.scalar_type();
     TORCH_CHECK(
         moment_type == torch::kFloat32 || moment_type == torch::kBFloat16,
-        "moments must be float32 or bfloat16"
+        "first moments must be float32 or bfloat16"
+    );
+    TORCH_CHECK(
+        means_v.scalar_type() == torch::kFloat32 &&
+            quats_v.scalar_type() == torch::kFloat32 &&
+            scales_v.scalar_type() == torch::kFloat32,
+        "second moments must be float32: in bfloat16 the beta2 = 0.999 update "
+        "is below half an ulp and the moment stops changing"
     );
     if (N == 0) {
         return;
@@ -221,12 +231,12 @@ void fused_projection_adam_tensor(
         v_means2d.data_ptr<float>(), v_depths.data_ptr<float>(),               \
         v_conics.data_ptr<float>(),                                            \
         reinterpret_cast<M *>(means_m.data_ptr<CPP>()),                        \
-        reinterpret_cast<M *>(means_v.data_ptr<CPP>()),                        \
+        means_v.data_ptr<float>(),                                             \
         reinterpret_cast<M *>(quats_m.data_ptr<CPP>()),                        \
-        reinterpret_cast<M *>(quats_v.data_ptr<CPP>()),                        \
+        quats_v.data_ptr<float>(),                                             \
         reinterpret_cast<M *>(scales_m.data_ptr<CPP>()),                       \
-        reinterpret_cast<M *>(scales_v.data_ptr<CPP>()), lr_means, lr_quats,   \
-        lr_scales, b1, b2, eps                                                 \
+        scales_v.data_ptr<float>(), lr_means, lr_quats, lr_scales, b1, b2,     \
+        eps                                                                    \
     )
     if (moment_type == torch::kBFloat16) {
         __GS__FUSED_ADAM_(__nv_bfloat16, at::BFloat16);

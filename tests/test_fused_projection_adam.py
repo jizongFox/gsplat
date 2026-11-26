@@ -120,7 +120,8 @@ def test_unseen_gaussians_are_untouched_and_bf16_moments_track_fp32():
     params = [means, quats, log_scales]
     upstream = _upstream(len(means), seed=7)
     fp32 = [torch.full_like(p, 0.5) for p in params for _ in range(2)]
-    bf16 = [m.to(torch.bfloat16) for m in fp32]
+    # compact first moments, float32 second moments
+    bf16 = [m.to(torch.bfloat16) if k % 2 == 0 else m for k, m in enumerate(fp32)]
     params32, moments32, radii = _fused_step(
         params, fp32, viewmat, K, width, height, upstream
     )
@@ -130,8 +131,8 @@ def test_unseen_gaussians_are_untouched_and_bf16_moments_track_fp32():
     unseen = radii <= 0
     for new, old in zip(params32 + params16, params + params):
         assert torch.equal(new[unseen], old[unseen])
-    for m in moments16:
-        assert m.dtype == torch.bfloat16
+    for k, m in enumerate(moments16):
+        assert m.dtype == (torch.bfloat16 if k % 2 == 0 else torch.float32)
         assert bool((m[unseen] == 0.5).all())
     for m16, m32 in zip(moments16, moments32):
         torch.testing.assert_close(m16.float(), m32, rtol=1e-2, atol=1e-6)
@@ -142,24 +143,80 @@ def test_unseen_gaussians_are_untouched_and_bf16_moments_track_fp32():
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
-def test_fused_step_rejects_mixed_moment_types():
+def test_fused_step_rejects_mixed_or_bf16_second_moments():
     from gsplat.cuda._wrapper import fused_projection_adam
 
     means, quats, log_scales, viewmat, K, width, height = _scene()
     params = [means, quats, log_scales]
-    moments = [torch.zeros_like(p) for p in params for _ in range(2)]
-    moments[3] = moments[3].to(torch.bfloat16)
     n = len(means)
-    with pytest.raises(AssertionError, match="mixed"):
+    args = (
+        *params,
+        viewmat,
+        K,
+        width,
+        height,
+        torch.zeros(n, dtype=torch.int32, device=device),
+        torch.zeros(n, 3, device=device),
+        *_upstream(n, 0),
+    )
+    moments = [torch.zeros_like(p) for p in params for _ in range(2)]
+    mixed = list(moments)
+    mixed[2] = mixed[2].to(torch.bfloat16)
+    with pytest.raises(AssertionError, match="mixed exp_avg"):
+        fused_projection_adam(*args, moments=tuple(mixed), lrs=LRS)
+    bf16_v = [m.to(torch.bfloat16) for m in moments]
+    with pytest.raises(RuntimeError, match="second moments must be float32"):
+        fused_projection_adam(*args, moments=tuple(bf16_v), lrs=LRS)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
+def test_second_moment_keeps_decaying_and_growing_over_long_runs():
+    """The bf16 failure modes from review: a second moment that stops decaying
+    with zero gradients, or stalls below its target under a constant gradient."""
+    from gsplat.cuda._wrapper import fully_fused_projection, fused_projection_adam
+
+    means, quats, log_scales, viewmat, K, width, height = _scene()
+    params = [means.clone(), quats.clone(), log_scales.clone()]
+    with torch.no_grad():
+        radii, _, _, conics, _ = fully_fused_projection(
+            params[0],
+            None,
+            params[1],
+            params[2].exp(),
+            viewmat[None],
+            K[None],
+            width,
+            height,
+        )
+    visible = radii[0] > 0
+    n = len(means)
+    zero = (
+        torch.zeros(n, 2, device=device),
+        torch.zeros(n, device=device),
+        torch.zeros(n, 3, device=device),
+    )
+    moments = [
+        torch.zeros_like(p, dtype=torch.bfloat16) if k == 0 else torch.ones_like(p)
+        for p in params
+        for k in range(2)
+    ]
+    for _ in range(3000):
         fused_projection_adam(
             *params,
             viewmat,
             K,
             width,
             height,
-            torch.zeros(n, dtype=torch.int32, device=device),
-            torch.zeros(n, 3, device=device),
-            *_upstream(n, 0),
+            radii[0],
+            conics[0],
+            *zero,
             moments=tuple(moments),
             lrs=LRS,
+            betas=BETAS,
+            eps=EPS,
         )
+    for v in moments[1::2]:
+        torch.testing.assert_close(
+            v[visible], torch.full_like(v[visible], BETAS[1] ** 3000), rtol=1e-3, atol=0
+        )
+        assert bool((v[~visible] == 1).all())

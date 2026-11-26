@@ -65,12 +65,15 @@ def fused_projection_adam(
     covariance input, no compensation, no camera gradients), and applies the
     `SelectiveAdam` update (no bias correction) in the same kernel. Unseen
     Gaussians are not touched. ``moments`` = (means exp_avg, means exp_avg_sq,
-    quats exp_avg, quats exp_avg_sq, scales exp_avg, scales exp_avg_sq), all
-    float32 or all bfloat16 (compact moments); ``lrs`` = (means, quats, scales).
+    quats exp_avg, quats exp_avg_sq, scales exp_avg, scales exp_avg_sq); the
+    exp_avg tensors are all float32 or all bfloat16 (compact first moments), the
+    exp_avg_sq tensors float32 (a bfloat16 second moment would stop changing:
+    beta2 = 0.999 moves it by less than half an ulp per step). ``lrs`` = (means,
+    quats, scales).
     It updates its inputs in place and bypasses autograd: gradients that other
     losses put on these parameters are not included.
     """
-    assert all(m.dtype == moments[0].dtype for m in moments), "mixed moment dtypes"
+    assert all(m.dtype == moments[0].dtype for m in moments[0::2]), "mixed exp_avg dtypes"
     _make_lazy_cuda_func("fused_projection_adam")(
         means,
         quats,

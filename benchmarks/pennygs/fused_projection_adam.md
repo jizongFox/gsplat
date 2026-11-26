@@ -23,8 +23,10 @@ one pinhole camera, one thread per Gaussian:
   `v_log_scale = v_scale * scale` in the kernel) and applies the `SelectiveAdam`
   update (no bias correction) in registers: no gradient tensors, no atomics
   (one camera), one pass over parameters and moments;
-- moments are float32 or bfloat16 (PennyGS's compact moments); arithmetic is
-  float32.
+- the first moment is float32 or bfloat16 (PennyGS's compact moments); the second
+  moment stays float32, because with beta2 = 0.999 its per-step change (1e-3
+  relative) is below half a bfloat16 ulp, so a bfloat16 second moment stops
+  changing (review finding); arithmetic is float32.
 
 It updates its inputs in place and bypasses autograd, so it cannot include
 gradients that other losses put on the same parameters, and it computes no
@@ -35,21 +37,20 @@ whole update, not a drop-in optimizer.
 
 Stage "projection backward, then update means / quaternions / log-scales" (ms):
 
-| View | Visible | proj bwd + dense `torch.optim.Adam` (fused, fp32) | proj bwd + `SelectiveAdam` | fused, fp32 moments | fused, bf16 moments |
+| View | Visible | proj bwd + dense `torch.optim.Adam` (fused, fp32) | proj bwd + `SelectiveAdam` | fused, fp32 moments | fused, bf16 first moment |
 |---|---:|---:|---:|---:|---:|
-| 0 | 260,011 | 2.171 | 0.809 (2.68x) | 0.613 (3.54x) | 0.441 (4.92x) |
-| 250 | 2,527,193 | 2.471 | 1.718 (1.44x) | 0.982 (2.52x) | 0.715 (3.46x) |
-| 500 | 320,001 | 2.151 | 0.880 (2.44x) | 0.716 (3.01x) | 0.504 (4.27x) |
-| 750 | 689,503 | 2.232 | 1.112 (2.01x) | 1.003 (2.23x) | 0.649 (3.44x) |
-| 1000 | 145,831 | 2.099 | 0.676 (3.11x) | 0.416 (5.05x) | 0.309 (6.80x) |
-| 1250 | 146,389 | 2.090 | 0.667 (3.13x) | 0.409 (5.11x) | 0.305 (6.85x) |
-| **geomean** | | 1.00x | **2.39x** | **3.40x** | **4.76x** |
+| 0 | 260,011 | 2.138 | 0.808 (2.65x) | 0.614 (3.48x) | 0.581 (3.68x) |
+| 250 | 2,527,193 | 2.479 | 1.715 (1.45x) | 0.979 (2.53x) | 0.883 (2.81x) |
+| 500 | 320,001 | 2.158 | 0.884 (2.44x) | 0.716 (3.02x) | 0.676 (3.19x) |
+| 750 | 689,503 | 2.237 | 1.112 (2.01x) | 1.005 (2.23x) | 0.933 (2.40x) |
+| 1000 | 145,831 | 2.101 | 0.678 (3.10x) | 0.413 (5.09x) | 0.394 (5.33x) |
+| 1250 | 146,389 | 2.096 | 0.667 (3.14x) | 0.411 (5.10x) | 0.389 (5.39x) |
+| **geomean** | | 1.00x | **2.38x** | **3.40x** | **3.63x** |
 
 Accuracy of the cumulative update of 10 steps from identical states (relative
 L2, max over the three parameters): fused fp32 vs `SelectiveAdam` 3.6e-06 to
 1.6e-03 (Adam's first steps are sign-sensitive for near-zero gradients, which the
-two evaluation orders round differently); bf16 vs fp32 moments 1.5e-03 on every
-view. Dense Adam also decays the moments of unseen Gaussians, which the sparse
+two evaluation orders round differently); bf16 vs fp32 first moment 1.3e-03 to 1.4e-03. Dense Adam also decays the moments of unseen Gaussians, which the sparse
 variants do not: a different optimizer, not only a faster one.
 
 Measurements: `measurements/fused_adam_stage.json`.
