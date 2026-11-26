@@ -56,6 +56,8 @@ def rasterization(
     camera_model: Literal["pinhole", "ortho", "fisheye"] = "pinhole",
     covars: Optional[Tensor] = None,
     isect_short_keys: bool = False,
+    isect_capacity: int = 0,
+    isect_restore_ties: bool = True,
 ) -> Tuple[Tensor, Tensor, Dict]:
     """Rasterize a set of 3D Gaussians (N) to a batch of image planes (C).
 
@@ -204,6 +206,11 @@ def rasterization(
         isect_short_keys: Sort 32-bit tile/depth keys instead of 64-bit ids, see
             `isect_tiles(short_keys=...)`. `meta["isect_ids"]` then holds Int32 keys.
             Default is False.
+        isect_capacity: If positive, single-pass tile binning into a buffer of this
+            many intersections, see `isect_tiles(single_pass_capacity=...)`.
+            Default is 0 (two passes).
+        isect_restore_ties: Experiment switch, see
+            `isect_tiles(single_pass_restore_ties=...)`. Default is True.
 
     Returns:
         A tuple:
@@ -535,6 +542,8 @@ def rasterization(
         compact_box_tau2=compact_box_tau2,
         compact_box_impl=compact_box_impl,
         short_keys=isect_short_keys,
+        single_pass_capacity=isect_capacity,
+        single_pass_restore_ties=isect_restore_ties,
     )
     # print("rank", world_rank, "Before isect_offset_encode")
     isect_offsets = isect_offset_encode(isect_ids, C, tile_width, tile_height)

@@ -1,0 +1,182 @@
+{
+ "gsplat": "/home/jizong/workspace/dConstruct/gaussian-splatting/.worktrees/gsplat-pennygs/gsplat",
+ "device": "NVIDIA GeForce RTX 4090",
+ "gaussians": 2909851,
+ "scope": "render",
+ "views": [
+  {
+   "view": 0,
+   "image": "DECXIN20230102350/00000008",
+   "median_ms": {
+    "default": {
+     "forward": 5.462975978851318,
+     "backward": 10.793135643005371,
+     "total": 16.265136003494263
+    },
+    "single_pass": {
+     "forward": 5.362591981887817,
+     "backward": 10.85321569442749,
+     "total": 16.212944269180298
+    }
+   },
+   "checks": {
+    "single_pass": {
+     "rgb_psnr_vs_default": Infinity,
+     "image_max_abs": 0.0,
+     "gradient_rel_l2": {
+      "means": 8.881355409739434e-08,
+      "quats": 4.965239012769459e-07,
+      "log_scales": 2.4609045290628004e-07,
+      "opacity_logits": 1.418846950779171e-07,
+      "dc": 1.0703209792471985e-07
+     }
+    }
+   }
+  },
+  {
+   "view": 250,
+   "image": "DECXIN20230102350/00001179",
+   "median_ms": {
+    "default": {
+     "forward": 9.869376182556152,
+     "backward": 16.70358371734619,
+     "total": 26.569168090820312
+    },
+    "single_pass": {
+     "forward": 9.760240077972412,
+     "backward": 16.739808082580566,
+     "total": 26.5031681060791
+    }
+   },
+   "checks": {
+    "single_pass": {
+     "rgb_psnr_vs_default": Infinity,
+     "image_max_abs": 0.0,
+     "gradient_rel_l2": {
+      "means": 7.121410851502421e-08,
+      "quats": 2.3398321395568346e-06,
+      "log_scales": 5.536563820374934e-07,
+      "opacity_logits": 7.233852457487731e-08,
+      "dc": 9.998986127714947e-08
+     }
+    }
+   }
+  },
+  {
+   "view": 500,
+   "image": "DECXIN2023012346/00000865",
+   "median_ms": {
+    "default": {
+     "forward": 5.520895957946777,
+     "backward": 10.948752403259277,
+     "total": 16.500320196151733
+    },
+    "single_pass": {
+     "forward": 5.44652795791626,
+     "backward": 10.957311630249023,
+     "total": 16.431471824645996
+    }
+   },
+   "checks": {
+    "single_pass": {
+     "rgb_psnr_vs_default": Infinity,
+     "image_max_abs": 0.0,
+     "gradient_rel_l2": {
+      "means": 1.5678588247796815e-07,
+      "quats": 9.586102808253997e-06,
+      "log_scales": 8.070652232395101e-07,
+      "opacity_logits": 9.625689097314194e-08,
+      "dc": 9.490579566594869e-08
+     }
+    }
+   }
+  },
+  {
+   "view": 750,
+   "image": "DECXIN2023012347/00000637",
+   "median_ms": {
+    "default": {
+     "forward": 6.18121600151062,
+     "backward": 11.850783824920654,
+     "total": 17.929247856140137
+    },
+    "single_pass": {
+     "forward": 6.002687931060791,
+     "backward": 11.84875202178955,
+     "total": 17.8232479095459
+    }
+   },
+   "checks": {
+    "single_pass": {
+     "rgb_psnr_vs_default": Infinity,
+     "image_max_abs": 0.0,
+     "gradient_rel_l2": {
+      "means": 7.746147942117187e-08,
+      "quats": 1.189450163520338e-06,
+      "log_scales": 5.365774019607604e-07,
+      "opacity_logits": 9.05285394726332e-08,
+      "dc": 1.0478049939104609e-07
+     }
+    }
+   }
+  },
+  {
+   "view": 1000,
+   "image": "DECXIN2023012348/00000409",
+   "median_ms": {
+    "default": {
+     "forward": 5.375296115875244,
+     "backward": 10.69873571395874,
+     "total": 16.09662389755249
+    },
+    "single_pass": {
+     "forward": 5.305263996124268,
+     "backward": 10.708927631378174,
+     "total": 16.027647972106934
+    }
+   },
+   "checks": {
+    "single_pass": {
+     "rgb_psnr_vs_default": Infinity,
+     "image_max_abs": 0.0,
+     "gradient_rel_l2": {
+      "means": 8.970200667117107e-08,
+      "quats": 2.0038374457297235e-06,
+      "log_scales": 5.221583516528397e-07,
+      "opacity_logits": 1.1254130132636094e-07,
+      "dc": 1.2842272831121322e-07
+     }
+    }
+   }
+  },
+  {
+   "view": 1250,
+   "image": "DECXIN20230102350/00000859",
+   "median_ms": {
+    "default": {
+     "forward": 5.236223936080933,
+     "backward": 10.549376010894775,
+     "total": 15.793567895889282
+    },
+    "single_pass": {
+     "forward": 5.176383972167969,
+     "backward": 10.54207992553711,
+     "total": 15.738160133361816
+    }
+   },
+   "checks": {
+    "single_pass": {
+     "rgb_psnr_vs_default": Infinity,
+     "image_max_abs": 0.0,
+     "gradient_rel_l2": {
+      "means": 1.6422616789418248e-07,
+      "quats": 6.203659091511347e-05,
+      "log_scales": 9.08459958929621e-07,
+      "opacity_logits": 1.38482059555015e-07,
+      "dc": 1.0908993284275405e-07
+     }
+    }
+   }
+  }
+ ]
+}
