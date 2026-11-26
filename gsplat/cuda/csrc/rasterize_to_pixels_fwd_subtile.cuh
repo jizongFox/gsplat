@@ -59,23 +59,37 @@ inline __device__ uint32_t subtile_y0(const uint32_t w) {
 // 16 * 2^-24 * (largest |term| sum at the tile's corners). Ill-conditioned
 // conics (det below 1e-4 * q00 * q11, where det loses its accuracy),
 // degenerate or nonfinite input reach every subtile.
+//
+// A NaN sigma passes gaussian_alpha at MAX_ALPHA whatever the opacity (the
+// clamp returns MAX_ALPHA and neither test fires), so the geometry checks come
+// before the opacity test: non-finite means or conics, or quadratic terms over
+// the tile large enough for sigma to overflow (inf - inf at some pixel), reach
+// every subtile.
 template <typename S>
 inline __device__ uint32_t subtile_mask(
     const S x, const S y, const vec3<S> conic, const S opac, const S tile_x0,
     const S tile_y0
 ) {
-    if (!(opac * ALPHA_THRESHOLD_INV >= 1.f)) {
-        return isfinite(opac) ? 0u : 0xffu;
-    }
-    const S det = conic.x * conic.z - conic.y * conic.y;
-    if (!(det > 1e-4f * conic.x * conic.z) || !isfinite(det) || !isfinite(x) ||
-        !isfinite(y)) {
+    if (!isfinite(x) || !isfinite(y) || !isfinite(conic.x) ||
+        !isfinite(conic.y) || !isfinite(conic.z)) {
         return 0xffu;
     }
     const S dx = fmaxf(fabsf(x - tile_x0), fabsf(x - tile_x0 - (S)TILE));
     const S dy = fmaxf(fabsf(y - tile_y0), fabsf(y - tile_y0 - (S)TILE));
+    // bounds each term of sigma at every pixel of the tile; below 1e30 sigma
+    // stays finite there
     const S terms = 0.5f * (fabsf(conic.x) * dx * dx + fabsf(conic.z) * dy * dy) +
                     fabsf(conic.y) * dx * dy;
+    if (!(terms <= 1e30f)) {
+        return 0xffu;
+    }
+    if (!(opac * ALPHA_THRESHOLD_INV >= 1.f)) {
+        return isfinite(opac) ? 0u : 0xffu;
+    }
+    const S det = conic.x * conic.z - conic.y * conic.y;
+    if (!(det > 1e-4f * conic.x * conic.z) || !isfinite(det)) {
+        return 0xffu;
+    }
     const S tau = __logf(opac * ALPHA_THRESHOLD_INV) * 1.01f + 1e-3f +
                   terms * 9.5367431640625e-7f;
     const S half_x = sqrtf(2.f * tau * conic.z / det) + 0.05f;

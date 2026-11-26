@@ -242,6 +242,29 @@ def test_subtile_forward_nonfinite_inputs():
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
+@pytest.mark.parametrize("opacity", [0.0, -1.0, 1e-3])
+@pytest.mark.parametrize(
+    "mean, conic",
+    [
+        ((8.0, 8.0), (float("nan"), 0.0, 1.0)),  # review example
+        ((float("nan"), 8.0), (1.0, 0.0, 1.0)),
+        ((8.0, 8.0), (float("inf"), 0.0, 1.0)),
+        # finite, but a dx^2 and b dx dy overflow to +inf and -inf
+        ((1e20, 1e20), (1.0, -0.5, 1.0)),
+    ],
+)
+def test_subtile_forward_nan_sigma_below_threshold_opacity(mean, conic, opacity):
+    """A NaN sigma passes the per-pixel test at MAX_ALPHA whatever the opacity,
+    so the subtile mask must not reject such a Gaussian for its low opacity."""
+    as_t = lambda v: torch.tensor([[v]], dtype=torch.float32, device=device)
+    inputs = (as_t(mean), as_t(conic), as_t((0.2, 0.5, 0.8)), as_t(opacity))
+    ref = _raw_forward(*inputs, "pixel")
+    out = _raw_forward(*inputs, "subtile")
+    for a, b in zip(out, ref):
+        torch.testing.assert_close(a, b, rtol=0, atol=0, equal_nan=True)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
 def test_unknown_forward_kernel_is_rejected():
     from gsplat.cuda._wrapper import rasterize_to_pixels
 
