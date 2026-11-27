@@ -533,6 +533,7 @@ def rasterize_to_pixels(
     packed: bool = False,
     absgrad: bool = False,
     forward: Literal["pixel", "subtile"] = "pixel",
+    backward: Literal["block", "warp_private"] = "block",
 ) -> Tuple[Tensor, Tensor]:
     """Rasterizes Gaussians to pixels.
 
@@ -560,6 +561,12 @@ def rasterize_to_pixels(
             Sec. 3.4). It needs tile_size 16. Faster on the measured scenes, but
             about 1.6 % slower with 32 channels at 3840x2160 (measurements in
             PR #25).
+        backward: Backward kernel. "block" (default) stages each batch of
+            Gaussians for the whole tile. "warp_private" lets each warp stage and
+            walk its own 32-entry slices; it applies to 8 or fewer channels with
+            a tile of whole warps, and other cases use "block". Same gradients up
+            to the order of float atomics; faster or slower depending on the
+            workload (PR #13).
 
     Returns:
         A tuple:
@@ -570,6 +577,8 @@ def rasterize_to_pixels(
 
     if forward not in ("pixel", "subtile"):
         raise ValueError(f"Unknown forward kernel: {forward!r}")
+    if backward not in ("block", "warp_private"):
+        raise ValueError(f"Unknown backward kernel: {backward!r}")
     C = isect_offsets.size(0)
     device = means2d.device
     if packed:
@@ -660,6 +669,7 @@ def rasterize_to_pixels(
         flatten_ids.contiguous(),
         absgrad,
         forward == "subtile",
+        backward == "warp_private",
     )
 
     if padded_channels > 0:
@@ -1215,6 +1225,7 @@ class _RasterizeToPixels(torch.autograd.Function):
         flatten_ids: Tensor,  # [n_isects]
         absgrad: bool,
         subtile: bool,
+        warp_private: bool,
     ) -> Tuple[Tensor, Tensor]:
         render_colors, render_alphas, last_ids = _make_lazy_cuda_func(
             "rasterize_to_pixels_fwd"
@@ -1249,6 +1260,7 @@ class _RasterizeToPixels(torch.autograd.Function):
         ctx.height = height
         ctx.tile_size = tile_size
         ctx.absgrad = absgrad
+        ctx.warp_private = warp_private
 
         # double to float
         render_alphas = render_alphas.float()
@@ -1300,6 +1312,7 @@ class _RasterizeToPixels(torch.autograd.Function):
             v_render_colors.contiguous(),
             v_render_alphas.contiguous(),
             absgrad,
+            ctx.warp_private,
         )
 
         if absgrad:
@@ -1318,6 +1331,7 @@ class _RasterizeToPixels(torch.autograd.Function):
             v_colors,
             v_opacities,
             v_backgrounds,
+            None,
             None,
             None,
             None,
