@@ -750,13 +750,15 @@ call_kernel_with_dim(
             );
     }
 
-    // Read the translation gradients only after every tile has accumulated them.
-    const torch::Tensor M = ray_transforms.reshape({-1, 9});
-    const torch::Tensor v_M = v_ray_transforms.reshape({-1, 9});
-    torch::Tensor v_densify =
-        (torch::stack({v_M.select(1, 2), v_M.select(1, 5)}, -1) *
-         M.select(1, 8).unsqueeze(-1))
-            .reshape(densify.sizes());
+    // Read the translation gradients only after every tile has accumulated
+    // them. Rows that no tile reached keep zero, even if their depth (left
+    // unwritten for culled surfels) is not finite.
+    const torch::Tensor v_translation =
+        v_ray_transforms.select(-1, 2).narrow(-1, 0, 2); // [..., 2]
+    const torch::Tensor depth =
+        ray_transforms.select(-1, 2).narrow(-1, 2, 1); // [..., 1]
+    torch::Tensor v_densify = v_translation * depth;
+    v_densify.masked_fill_(v_translation == 0, 0.0f);
 
     return std::make_tuple(
         v_means2d_abs,
