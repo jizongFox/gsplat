@@ -87,6 +87,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         "rasterize_to_indices_in_range_2dgs",
         &gsplat::rasterize_to_indices_in_range_2dgs_tensor
     );
+    m.def("projected_surfel_radii", &gsplat::projected_surfel_radii_tensor);
 
     m.def("selective_adam_update", &gsplat::selective_adam_update);
 }

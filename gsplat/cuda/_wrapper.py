@@ -1919,6 +1919,24 @@ def fully_fused_projection_2dgs(
         )
 
 
+@torch.no_grad()
+def projected_surfel_radii(
+    ray_transforms: Tensor,
+    raw_radii: Tensor,
+    width: int,
+    height: int,
+    radius_clip: float = 0.0,
+) -> Tensor:
+    """Compute local 3-sigma screen-space major-axis radii for 2DGS surfels."""
+    if ray_transforms.dim() != 3 or ray_transforms.shape[1:] != (3, 3):
+        raise ValueError(f"ray_transforms must have shape [N, 3, 3], got {ray_transforms.shape}")
+    if raw_radii.dim() != 1 or raw_radii.shape[0] != ray_transforms.shape[0]:
+        raise ValueError(f"raw_radii must have shape [N], got {raw_radii.shape}")
+    return _make_lazy_cuda_func("projected_surfel_radii")(
+        ray_transforms.contiguous(), raw_radii.contiguous(), width, height, radius_clip
+    )
+
+
 class _FullyFusedProjection2DGS(torch.autograd.Function):
     """Projects Gaussians to 2D."""
 
