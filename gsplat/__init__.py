@@ -14,6 +14,7 @@ from .cuda._wrapper import (
     spherical_harmonics,
     world_to_cam,
     fully_fused_projection_2dgs,
+    projected_surfel_radii,
     rasterize_to_pixels_2dgs,
     rasterize_to_indices_in_range_2dgs,
 )
@@ -45,6 +46,7 @@ all = [
     "accumulate",
     "rasterize_to_indices_in_range",
     "full_fused_projection_2dgs",
+    "projected_surfel_radii",
     "rasterize_to_pixels_2dgs",
     "rasterize_to_indices_in_range_2dgs",
     "accumulate_2dgs",

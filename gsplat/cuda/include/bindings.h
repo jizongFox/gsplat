@@ -31,6 +31,10 @@
 
 namespace gsplat {
 
+torch::Tensor projected_surfel_radii_tensor(
+    const torch::Tensor& ray_transforms, const torch::Tensor& raw_radii,
+    uint32_t width, uint32_t height, float radius_clip);
+
 enum CameraModelType
 {
     PINHOLE = 0,
