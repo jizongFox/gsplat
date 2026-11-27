@@ -428,6 +428,38 @@ def test_projection_2dgs_normal_viewmat_grad(test_data):
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
+def test_projection_2dgs_degenerate_surfel_has_zero_radius():
+    from gsplat.cuda._wrapper import fully_fused_projection_2dgs
+
+    # The camera turns the surfel's first axis (scale 2) onto the view direction
+    # at depth 2, so the third row of KWH is exactly (2, 0, 2) and the AABB
+    # distance sum((1, 1, -1) * M2 * M2) is exactly 0.
+    N = 1 << 20
+    means = torch.tensor([[2.0, 0.0, 0.0]], device=device).repeat(N, 1)
+    quats = torch.tensor([[1.0, 0.0, 0.0, 0.0]], device=device).repeat(N, 1)
+    scales = torch.tensor([[2.0, 1.0, 1.0]], device=device).repeat(N, 1)
+    viewmats = torch.tensor(
+        [
+            [0.0, 0.0, -1.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ],
+        device=device,
+    )[None]
+    Ks = torch.tensor(
+        [[100.0, 0.0, 32.0], [0.0, 100.0, 32.0], [0.0, 0.0, 1.0]], device=device
+    )[None]
+    # radii is allocated uninitialized: leave a block of its size holding 7s.
+    poison = torch.full((1, N), 7, dtype=torch.int32, device=device)
+    del poison
+
+    radii, *_ = fully_fused_projection_2dgs(means, quats, scales, viewmats, Ks, 64, 64)
+
+    assert bool((radii == 0).all())
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
 @pytest.mark.parametrize(
     "sparse_grad",
     [
