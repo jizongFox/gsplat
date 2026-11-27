@@ -1154,6 +1154,11 @@ def rasterization_2dgs(
         **render_median**: The rendered median depth. [C, height, width, 1].
 
         **meta**: A dictionary of intermediate results of the rasterization.
+        ``meta["radii"]`` contains scalar pixel bounds used for tile binning,
+        not the semi-major axes of locally projected Gaussian ellipses. The
+        perspective bound can become very large when the surfel contour
+        approaches zero camera-space depth, even if the center passes
+        near-plane clipping. This bound is not a count of covered pixels.
 
     Examples:
 
