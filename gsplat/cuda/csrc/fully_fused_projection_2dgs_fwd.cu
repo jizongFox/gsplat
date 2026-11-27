@@ -184,8 +184,10 @@ __global__ void fully_fused_projection_fwd_2dgs_kernel(
     const T distance = sum(temp_point * M2 * M2);
 
     // ill-conditioned primitives will have distance = 0.0f, we ignore them
-    if (distance == 0.0f)
+    if (distance == 0.0f) {
+        radii[idx] = 0;
         return;
+    }
 
     const vec3<T> f = (1 / distance) * temp_point;
     const vec2<T> mean2d = vec2<T>(sum(f * M0 * M2), sum(f * M1 * M2));
