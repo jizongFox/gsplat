@@ -2290,7 +2290,7 @@ def rasterize_to_pixels_2dgs(
 
     Args:
         means2d: Projected Gaussian means. [C, N, 2] if packed is False, [nnz, 2] if packed is True.
-        ray_transforms: transformation matrices that transforms xy-planes in pixel spaces into splat coordinates. [C, N, 3, 3] if packed is False, [nnz, channels] if packed is True.
+        ray_transforms: transformation matrices that transforms xy-planes in pixel spaces into splat coordinates. [C, N, 3, 3] if packed is False, [nnz, 3, 3] if packed is True.
         colors: Gaussian colors or ND features. [C, N, channels] if packed is False, [nnz, channels] if packed is True.
         opacities: Gaussian opacities that support per-view values. [C, N] if packed is False, [nnz] if packed is True.
         normals: The normals in camera space. [C, N, 3] if packed is False, [nnz, 3] if packed is True.
@@ -2535,7 +2535,6 @@ class _RasterizeToPixels2DGS(torch.autograd.Function):
             colors,
             opacities,
             normals,
-            densify,
             backgrounds,
             masks,
             isect_offsets,
@@ -2576,7 +2575,6 @@ class _RasterizeToPixels2DGS(torch.autograd.Function):
             colors,
             opacities,
             normals,
-            densify,
             backgrounds,
             masks,
             isect_offsets,
@@ -2605,7 +2603,6 @@ class _RasterizeToPixels2DGS(torch.autograd.Function):
             colors,
             opacities,
             normals,
-            densify,
             backgrounds,
             masks,
             width,

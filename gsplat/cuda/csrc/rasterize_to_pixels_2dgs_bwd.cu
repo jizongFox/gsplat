@@ -21,7 +21,7 @@ __global__ void rasterize_to_pixels_bwd_2dgs_kernel(
     const bool packed,       // whether the input tensors are packed
     // fwd inputs
     const vec2<S> *__restrict__ means2d,   // Projected Gaussian means. [C, N, 2] if packed is False, [nnz, 2] if packed is True.
-    const S *__restrict__ ray_transforms,  // transformation matrices that transforms xy-planes in pixel spaces into splat coordinates. [C, N, 3, 3] if packed is False, [nnz, channels] if packed is True.
+    const S *__restrict__ ray_transforms,  // transformation matrices that transforms xy-planes in pixel spaces into splat coordinates. [C, N, 3, 3] if packed is False, [nnz, 3, 3] if packed is True.
                                            // This is (KWH)^{-1} in the paper (takes screen [x,y] and map to [u,v])
     const S *__restrict__ colors,      // [C, N, COLOR_DIM] or [nnz, COLOR_DIM]  // Gaussian colors or ND features.
     const S *__restrict__ normals,     // [C, N, 3] or [nnz, 3]                  // The normals in camera space.
@@ -614,7 +614,6 @@ call_kernel_with_dim(
     const torch::Tensor &colors,    // [C, N, 3] or [nnz, 3]
     const torch::Tensor &opacities, // [C, N] or [nnz]
     const torch::Tensor &normals,   // [C, N, 3] or [nnz, 3]
-    const torch::Tensor &densify,
     const at::optional<torch::Tensor> &backgrounds, // [C, 3]
     const at::optional<torch::Tensor> &masks, // [C, tile_height, tile_width]
     // image size
@@ -646,7 +645,6 @@ call_kernel_with_dim(
     GSPLAT_CHECK_INPUT(colors);
     GSPLAT_CHECK_INPUT(opacities);
     GSPLAT_CHECK_INPUT(normals);
-    GSPLAT_CHECK_INPUT(densify);
     GSPLAT_CHECK_INPUT(tile_offsets);
     GSPLAT_CHECK_INPUT(flatten_ids);
     GSPLAT_CHECK_INPUT(render_colors);
@@ -750,13 +748,15 @@ call_kernel_with_dim(
             );
     }
 
-    // Read the translation gradients only after every tile has accumulated
-    // them. Rows that no tile reached keep zero, even if their depth (left
-    // unwritten for culled surfels) is not finite.
+    // The densification gradient is the image-space gradient of the surfel
+    // centre: the gradient of the translation column of KWH (x, y of K mean_c)
+    // times the camera depth mean_c.z. Read it only after every tile has
+    // accumulated v_ray_transforms. A zero translation gradient stays zero even
+    // where the depth is not finite: projection leaves culled rows unwritten.
     const torch::Tensor v_translation =
-        v_ray_transforms.select(-1, 2).narrow(-1, 0, 2); // [..., 2]
+        v_ray_transforms.select(-1, 2).narrow(-1, 0, 2); // [..., 0:2, 2]
     const torch::Tensor depth =
-        ray_transforms.select(-1, 2).narrow(-1, 2, 1); // [..., 1]
+        ray_transforms.select(-1, 2).narrow(-1, 2, 1); // [..., 2:3, 2]
     torch::Tensor v_densify = v_translation * depth;
     v_densify.masked_fill_(v_translation == 0, 0.0f);
 
@@ -786,7 +786,6 @@ rasterize_to_pixels_bwd_2dgs_tensor(
     const torch::Tensor &colors,    // [C, N, 3] or [nnz, 3]
     const torch::Tensor &opacities, // [C, N] or [nnz]
     const torch::Tensor &normals,   // [C, N, 3] or [nnz, 3]
-    const torch::Tensor &densify,
     const at::optional<torch::Tensor> &backgrounds, // [C, 3]
     const at::optional<torch::Tensor> &masks, // [C, tile_height, tile_width]
     // image size
@@ -823,7 +822,6 @@ rasterize_to_pixels_bwd_2dgs_tensor(
             colors,                                                            \
             opacities,                                                         \
             normals,                                                           \
-            densify,                                                           \
             backgrounds,                                                       \
             masks,                                                             \
             image_width,                                                       \
