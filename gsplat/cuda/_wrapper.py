@@ -2290,11 +2290,11 @@ def rasterize_to_pixels_2dgs(
 
     Args:
         means2d: Projected Gaussian means. [C, N, 2] if packed is False, [nnz, 2] if packed is True.
-        ray_transforms: transformation matrices that transforms xy-planes in pixel spaces into splat coordinates. [C, N, 3, 3] if packed is False, [nnz, channels] if packed is True.
+        ray_transforms: transformation matrices that transforms xy-planes in pixel spaces into splat coordinates. [C, N, 3, 3] if packed is False, [nnz, 3, 3] if packed is True.
         colors: Gaussian colors or ND features. [C, N, channels] if packed is False, [nnz, channels] if packed is True.
         opacities: Gaussian opacities that support per-view values. [C, N] if packed is False, [nnz] if packed is True.
         normals: The normals in camera space. [C, N, 3] if packed is False, [nnz, 3] if packed is True.
-        densify: Dummy variable to keep track of gradient for densification. [C, N, 2] if packed, [nnz, 3] if packed is True.
+        densify: Dummy variable to keep track of gradient for densification. Same shape as `means2d`: [C, N, 2] if packed is False, [nnz, 2] if packed is True.
         tile_size: Tile size.
         isect_offsets: Intersection offsets outputs from `isect_offset_encode()`. [C, tile_height, tile_width]
         flatten_ids: The global flatten indices in [C * N] or [nnz] from  `isect_tiles()`. [n_isects]
@@ -2335,6 +2335,10 @@ def rasterize_to_pixels_2dgs(
         assert ray_transforms.shape == (C, N, 3, 3), ray_transforms.shape
         assert colors.shape[:2] == (C, N), colors.shape
         assert opacities.shape == (C, N), opacities.shape
+    assert densify.shape == means2d.shape, (
+        f"densify must have the shape of means2d {tuple(means2d.shape)}, "
+        f"got {tuple(densify.shape)}"
+    )
     if backgrounds is not None:
         # assert backgrounds.shape == (C, colors.shape[-1]), backgrounds.shape
         backgrounds = backgrounds.contiguous()
@@ -2531,7 +2535,6 @@ class _RasterizeToPixels2DGS(torch.autograd.Function):
             colors,
             opacities,
             normals,
-            densify,
             backgrounds,
             masks,
             isect_offsets,
@@ -2572,7 +2575,6 @@ class _RasterizeToPixels2DGS(torch.autograd.Function):
             colors,
             opacities,
             normals,
-            densify,
             backgrounds,
             masks,
             isect_offsets,
@@ -2601,7 +2603,6 @@ class _RasterizeToPixels2DGS(torch.autograd.Function):
             colors,
             opacities,
             normals,
-            densify,
             backgrounds,
             masks,
             width,

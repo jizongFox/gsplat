@@ -25,8 +25,8 @@ __global__ void rasterize_to_pixels_fwd_2dgs_kernel(
     const uint32_t n_isects,  // number of ray-primitive intersections.
     const bool packed,       // whether the input tensors are packed
     const vec2<S> *__restrict__ means2d,   // Projected Gaussian means. [C, N, 2] if packed is False, [nnz, 2] if packed is True.
-    const S *__restrict__ ray_transforms,  // transformation matrices that transforms xy-planes in pixel spaces into splat coordinates. [C, N, 3, 3] if packed is False, [nnz, channels] if packed is True.
-                                           // This is (KWH)^{-1} in the paper (takes screen [x,y] and map to [u,v])
+    const S *__restrict__ ray_transforms,  // transformation matrices that transforms xy-planes in pixel spaces into splat coordinates. [C, N, 3, 3] if packed is False, [nnz, 3, 3] if packed is True.
+                                           // This is KWH in the paper, stored row-major: it maps splat [u, v, 1] to homogeneous screen coordinates.
     const S *__restrict__ colors,      // [C, N, COLOR_DIM] or [nnz, COLOR_DIM]  // Gaussian colors or ND features.
     const S *__restrict__ opacities,   // [C, N] or [nnz]                        // Gaussian opacities that support per-view values.
     const S *__restrict__ normals,     // [C, N, 3] or [nnz, 3]                  // The normals in camera space.

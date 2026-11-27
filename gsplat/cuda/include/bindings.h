@@ -415,7 +415,6 @@ rasterize_to_pixels_bwd_2dgs_tensor(
     const torch::Tensor &colors,    // [C, N, 3] or [nnz, 3]
     const torch::Tensor &opacities, // [C, N] or [nnz]
     const torch::Tensor &normals,   // [C, N, 3] or [nnz, 3],
-    const torch::Tensor &densify,
     const at::optional<torch::Tensor> &backgrounds, // [C, 3]
     const at::optional<torch::Tensor> &masks, // [C, tile_height, tile_width]
     // image size

@@ -703,6 +703,137 @@ def test_rasterize_to_pixels_2dgs(test_data):
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
+def test_rasterize_to_pixels_2dgs_densify_grad_sums_all_tiles():
+    from gsplat.cuda._wrapper import (
+        fully_fused_projection_2dgs,
+        isect_offset_encode,
+        isect_tiles,
+        rasterize_to_pixels_2dgs,
+    )
+
+    torch.manual_seed(0)
+    # Large translucent surfels, so many tiles accumulate the same gradients.
+    N, width, height, tile_size = 64, 640, 480, 16
+    means = torch.rand(N, 3, device=device) * 2 - 1
+    means[:, 2] = means[:, 2] * 2 + 4
+    quats = torch.nn.functional.normalize(torch.randn(N, 4, device=device), dim=-1)
+    scales = torch.ones(N, 3, device=device)
+    scales[:, :2] = torch.rand(N, 2, device=device) * 0.5 + 0.3
+    viewmats = torch.eye(4, device=device)[None]
+    Ks = torch.tensor(
+        [[width, 0.0, width / 2], [0.0, width, height / 2], [0.0, 0.0, 1.0]],
+        device=device,
+    )[None]
+    radii, means2d, depths, ray_transforms, normals = fully_fused_projection_2dgs(
+        means, quats, scales, viewmats, Ks, width, height
+    )
+    assert (radii > tile_size).sum() > N // 2
+
+    tile_width = math.ceil(width / tile_size)
+    tile_height = math.ceil(height / tile_size)
+    _, isect_ids, flatten_ids = isect_tiles(
+        means2d, radii, depths, tile_size, tile_width, tile_height
+    )
+    isect_offsets = isect_offset_encode(isect_ids, 1, tile_width, tile_height)
+    ray_transforms = ray_transforms.detach().requires_grad_()
+    densify = torch.zeros_like(means2d, requires_grad=True)
+    render_colors, *_ = rasterize_to_pixels_2dgs(
+        means2d,
+        ray_transforms,
+        torch.rand(1, N, 3, device=device),
+        torch.full((1, N), 0.1, device=device),
+        normals,
+        densify,
+        width,
+        height,
+        tile_size,
+        isect_offsets,
+        flatten_ids,
+    )
+    v_ray_transforms, v_densify = torch.autograd.grad(
+        (render_colors * torch.rand_like(render_colors)).sum(),
+        (ray_transforms, densify),
+    )
+
+    # Translation gradient of every tile, scaled by the surfel depth.
+    expected = v_ray_transforms[..., :2, 2] * ray_transforms[..., 2:, 2]
+    torch.testing.assert_close(v_densify, expected)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
+def test_rasterize_to_pixels_2dgs_densify_grad_is_zero_for_culled_rows():
+    from gsplat.cuda._wrapper import (
+        fully_fused_projection_2dgs,
+        isect_offset_encode,
+        isect_tiles,
+        rasterize_to_pixels_2dgs,
+    )
+
+    torch.manual_seed(0)
+    width, height, tile_size = 64, 48, 16
+    # The second surfel is behind the camera.
+    means = torch.tensor([[0.1, 0.1, 4.0], [0.0, 0.0, -1.0]], device=device)
+    quats = torch.tensor([[1.0, 0.0, 0.0, 0.0]], device=device).repeat(2, 1)
+    scales = torch.full((2, 3), 0.5, device=device)
+    viewmats = torch.eye(4, device=device)[None]
+    Ks = torch.tensor(
+        [[64.0, 0.0, 32.0], [0.0, 64.0, 24.0], [0.0, 0.0, 1.0]], device=device
+    )[None]
+    radii, means2d, depths, ray_transforms, normals = fully_fused_projection_2dgs(
+        means, quats, scales, viewmats, Ks, width, height
+    )
+    assert radii[0, 0] > 0 and radii[0, 1] == 0
+    # Projection leaves culled rows unwritten; make that memory non-finite.
+    ray_transforms[0, 1] = float("nan")
+
+    tile_width = math.ceil(width / tile_size)
+    tile_height = math.ceil(height / tile_size)
+    _, isect_ids, flatten_ids = isect_tiles(
+        means2d, radii, depths, tile_size, tile_width, tile_height
+    )
+    isect_offsets = isect_offset_encode(isect_ids, 1, tile_width, tile_height)
+    densify = torch.zeros_like(means2d, requires_grad=True)
+    render_colors, *_ = rasterize_to_pixels_2dgs(
+        means2d,
+        ray_transforms,
+        torch.rand(1, 2, 3, device=device),
+        torch.full((1, 2), 0.5, device=device),
+        normals,
+        densify,
+        width,
+        height,
+        tile_size,
+        isect_offsets,
+        flatten_ids,
+    )
+    (v_densify,) = torch.autograd.grad(
+        (render_colors * torch.rand_like(render_colors)).sum(), densify
+    )
+
+    assert v_densify[0, 0].abs().sum() > 0
+    assert v_densify[0, 1].tolist() == [0.0, 0.0]
+
+
+def test_rasterize_to_pixels_2dgs_rejects_densify_shape():
+    from gsplat.cuda._wrapper import rasterize_to_pixels_2dgs
+
+    with pytest.raises(AssertionError, match="densify"):
+        rasterize_to_pixels_2dgs(
+            torch.zeros(1, 2, 2),
+            torch.zeros(1, 2, 3, 3),
+            torch.zeros(1, 2, 3),
+            torch.zeros(1, 2),
+            torch.zeros(1, 2, 3),
+            torch.zeros(1, 2, 3),
+            16,
+            16,
+            16,
+            torch.zeros(1, 1, 1, dtype=torch.int32),
+            torch.zeros(0, dtype=torch.int32),
+        )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="No CUDA device")
 def test_isect_compact_box_2dgs(test_data):
     from gsplat.cuda._wrapper import fully_fused_projection_2dgs, isect_tiles
 
