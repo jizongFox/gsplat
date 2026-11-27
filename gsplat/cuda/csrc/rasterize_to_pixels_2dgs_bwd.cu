@@ -58,8 +58,7 @@ __global__ void rasterize_to_pixels_bwd_2dgs_kernel(
     S *__restrict__ v_ray_transforms,            // [C, N, 3, 3] or [nnz, 3, 3]
     S *__restrict__ v_colors,    // [C, N, COLOR_DIM] or [nnz, COLOR_DIM]
     S *__restrict__ v_opacities, // [C, N] or [nnz]
-    S *__restrict__ v_normals,   // [C, N, 3] or [nnz, 3]
-    S *__restrict__ v_densify
+    S *__restrict__ v_normals    // [C, N, 3] or [nnz, 3]
 ) {
     /**
      * ==============================
@@ -595,14 +594,6 @@ __global__ void rasterize_to_pixels_bwd_2dgs_kernel(
 
                 gpuAtomicAdd(v_opacities + g, v_opacity_local);
             }
-
-            if (valid) {
-                S *v_densify_ptr = (S *)(v_densify) + 2 * g;
-                S *v_ray_transforms_ptr = (S *)(v_ray_transforms) + 9 * g;
-                S depth = w_M.z;
-                v_densify_ptr[0] = v_ray_transforms_ptr[2] * depth;
-                v_densify_ptr[1] = v_ray_transforms_ptr[5] * depth;
-            }
         }
     }
 }
@@ -697,7 +688,6 @@ call_kernel_with_dim(
     if (absgrad) {
         v_means2d_abs = torch::zeros_like(means2d);
     }
-    torch::Tensor v_densify = torch::zeros_like(densify);
 
     if (n_isects) {
         const uint32_t shared_mem =
@@ -756,10 +746,17 @@ call_kernel_with_dim(
                 v_ray_transforms.data_ptr<float>(),
                 v_colors.data_ptr<float>(),
                 v_opacities.data_ptr<float>(),
-                v_normals.data_ptr<float>(),
-                v_densify.data_ptr<float>()
+                v_normals.data_ptr<float>()
             );
     }
+
+    // Read the translation gradients only after every tile has accumulated them.
+    const torch::Tensor M = ray_transforms.reshape({-1, 9});
+    const torch::Tensor v_M = v_ray_transforms.reshape({-1, 9});
+    torch::Tensor v_densify =
+        (torch::stack({v_M.select(1, 2), v_M.select(1, 5)}, -1) *
+         M.select(1, 8).unsqueeze(-1))
+            .reshape(densify.sizes());
 
     return std::make_tuple(
         v_means2d_abs,
